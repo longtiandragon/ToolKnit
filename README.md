@@ -1,16 +1,24 @@
 # ToolKnit
 
-> 把每一次卡住，织成下一次会的东西。
+> Windows 本地万能工具箱：让常见文件处理、内容整理和表达输出少依赖几个网站与临时软件。
 
-ToolKnit 是一个 Windows 优先、本地优先的学习工作台：收集图片、PDF、文本和代码；整理为带来源的 Markdown 错题；使用间隔复习回到真正薄弱的知识点。
+ToolKnit 以任务组织能力，而不是把所有文件或某个单一人群塞进同一个入口。默认工作流是：选择输入 → 调整参数 → 预览影响 → 生成新输出 → 查看任务历史。
 
-## 当前可运行功能
+## 当前状态
 
-- 统一收集箱：拖入、导入或从剪贴板收集图片、PDF、文本和代码。
-- 本地资料索引与去重演示、结构化 Markdown 错题、实时预览和标签。
-- 今日复习队列、四档评分、知识点薄弱度面板。
-- 长代码图分片 PNG 导出；安全批处理任务预览。
-- 可选 OCR/公式引擎与自带 OpenAI 兼容 API 配置入口。
+### 已验证
+
+- Windows Tauri 调试版可编译启动；应用图标、SQLite 资料库基础、Credential Manager API Key 存储已具备。
+- 文件处理中心：PDF 合并、按页拆分、旋转、提取页；图片缩放/压缩/PNG-JPG-WebP 转换；JSON 格式化、文本/Markdown 清理；哈希去重与批量命名预览报告。
+- 每次文件工具都下载/生成新输出，不覆盖输入文件，并在操作台保留本次输入、输出或错误记录。
+- 收集与归档、PDF 区域框选、Markdown 笔记/错题、FSRS 复习、超长代码图导出和用户自带 OpenAI 兼容 API 草稿动作。
+
+### 实验室（不作为正式能力承诺）
+
+- 本地 OCR 引擎与模型安装器。
+- 公式识别、滚动截图、音视频处理。
+
+实验室项目不会伪造“识别成功”或向正式资料库写入虚构结果。
 
 ## 开发
 
@@ -19,15 +27,21 @@ pnpm install
 pnpm dev
 ```
 
-安装 Rust stable 后可运行：
+安装 Rust stable 和 Visual Studio C++ Build Tools 后：
 
 ```powershell
 pnpm tauri dev
 ```
 
+Windows 本地构建工具可安装到非系统盘；本项目已在 `F:\UtilityTool\VSBuildTools` 环境中验证 Rust 原生层编译。
+
 ## 数据与隐私
 
-真实桌面资料库结构位于 `ToolKnitVault/`；其原始资料、Markdown 和数据库都不应提交到 Git。详见 [PRIVACY.md](PRIVACY.md) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- 处理工具默认临时读取文件并生成新输出；长期资料可选择归档到 `ToolKnitVault`。
+- API Key 仅存 Windows Credential Manager，不进入资料库、备份、日志或 Git。
+- AI 仅在用户明确点击动作后发送用户选择的文本；远程地址必须使用 HTTPS，`localhost` 除外。
+
+详见 [PRIVACY.md](PRIVACY.md)、[SECURITY.md](SECURITY.md) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## License
 
