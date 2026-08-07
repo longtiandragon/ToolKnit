@@ -53,6 +53,19 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     } satisfies PersistedWorkspace))
   }
 
+  function exportBrowserBackup() {
+    return JSON.stringify({
+      format: 'toolknit-browser-backup', schemaVersion: 1, exportedAt: now(),
+      sources: sources.value, documents: documents.value, jobs: jobs.value, aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value
+    }, null, 2)
+  }
+
+  function restoreBrowserBackup(serialized: string) {
+    const backup = JSON.parse(serialized) as PersistedWorkspace & { format?: string; schemaVersion?: number }
+    if (backup.format !== 'toolknit-browser-backup' || backup.schemaVersion !== 1 || !Array.isArray(backup.sources) || !Array.isArray(backup.documents)) throw new Error('这不是可恢复的 ToolKnit 浏览器备份。')
+    sources.value = backup.sources; documents.value = backup.documents; jobs.value = backup.jobs ?? []; aiProfiles.value = backup.aiProfiles ?? []; activeVaultName.value = backup.activeVaultName ?? '已恢复资料库'; persist()
+  }
+
   const dueDocuments = computed(() => documents.value.filter((document) => document.reviewEnabled && document.review && new Date(document.review.due) <= new Date()))
   const questionCount = computed(() => documents.value.filter((document) => document.kind === 'question').length)
   const weakTags = computed(() => {
@@ -157,6 +170,6 @@ export const useWorkbenchStore = defineStore('workbench', () => {
 
   return {
     sources, documents, jobs, aiProfiles, activeVaultName, engineInstalled, dueDocuments, questionCount, weakTags,
-    addSource, createQuestion, createNote, saveDocument, deleteDocument, gradeDocument, addJob, updateJob, saveAiProfile, setEngine, persist
+    addSource, createQuestion, createNote, saveDocument, deleteDocument, gradeDocument, addJob, updateJob, saveAiProfile, setEngine, persist, exportBrowserBackup, restoreBrowserBackup
   }
 })

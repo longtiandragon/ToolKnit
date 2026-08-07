@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import TagPill from '@/components/TagPill.vue'
+import AiAssistPanel from '@/components/AiAssistPanel.vue'
 import { renderMarkdown } from '@/lib/markdown'
 import type { StudyDocument } from '@/types'
 import { useWorkbenchStore } from '@/stores/workbench'
@@ -26,6 +27,7 @@ function save() { if (draft.value) { store.saveDocument(draft.value); saved.valu
 function addTag() { const tag = newTag.value.trim(); if (draft.value && tag && !draft.value.tags.includes(tag)) draft.value.tags.push(tag); newTag.value = '' }
 function removeTag(tag: string) { if (draft.value) draft.value.tags = draft.value.tags.filter((item) => item !== tag) }
 function remove() { if (!draft.value || !confirm(`删除“${draft.value.title}”？`)) return; store.deleteDocument(draft.value.id); selectedId.value = store.documents[0]?.id ?? '' }
+function insertAi(content: string) { if (!draft.value) return; draft.value.content += `\n\n---\n\n## AI 草稿（已确认）\n\n${content}\n`; save() }
 </script>
 
 <template>
@@ -38,6 +40,7 @@ function remove() { if (!draft.value || !confirm(`删除“${draft.value.title}�
         <div class="tag-editor"><TagPill v-for="tag in draft.tags" :key="tag" :label="`${tag} ×`" @click="removeTag(tag)" /><input v-model="newTag" placeholder="添加标签后回车" @keydown.enter.prevent="addTag" /></div>
         <div v-if="draft.sourceAnchor" class="source-anchor"><span>↗ 来源仍然系着：第 {{ draft.sourceAnchor.pageIndex + 1 }} 页，区域 {{ draft.sourceAnchor.bbox.map((n) => n.toFixed(2)).join(' · ') }}</span><button @click="router.push('/library')">回到原题</button></div>
         <div class="editor-grid"><textarea v-model="draft.content" spellcheck="false" aria-label="Markdown 正文"></textarea><article class="markdown-preview" v-html="preview"></article></div>
+        <AiAssistPanel :document="draft" @insert="insertAi" />
       </section>
       <section v-else class="panel detail-empty">先新建或选择一条错题。</section>
     </div>

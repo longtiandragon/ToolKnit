@@ -9,3 +9,7 @@ export async function storeApiKey(id: string, apiKey: string) {
   await invoke('write_api_key', { profile: { id, api_key: apiKey } })
   return true
 }
+
+export async function runDesktopAi(request: { profile_id: string; base_url: string; model: string; messages: unknown }) {
+  return invoke<string>('run_ai_action', { request })
+}

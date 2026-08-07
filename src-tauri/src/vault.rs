@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{fs, io::{Read, Write}, path::PathBuf};
 use uuid::Uuid;
@@ -19,6 +20,14 @@ pub struct ImportedSource { pub id: String, pub managed_path: String, pub sha256
 
 #[derive(Deserialize)]
 pub struct AiProfileInput { pub id: String, pub api_key: String }
+
+#[derive(Deserialize)]
+pub struct AiActionRequest {
+    pub profile_id: String,
+    pub base_url: String,
+    pub model: String,
+    pub messages: serde_json::Value,
+}
 
 impl VaultService {
     pub fn open(path: String) -> Result<Self> {
@@ -64,6 +73,19 @@ impl VaultService {
         if profile.id.is_empty() || profile.api_key.is_empty() { bail!("配置或 API Key 不能为空") }
         Entry::new("ToolKnit", &format!("ai-profile:{}", profile.id))?.set_password(&profile.api_key)?;
         Ok(())
+    }
+
+    pub async fn run_ai_action(request: AiActionRequest) -> Result<String> {
+        let mut base_url = request.base_url.trim().to_owned();
+        if !base_url.ends_with('/') { base_url.push('/'); }
+        let endpoint = url::Url::parse(&base_url)?.join("chat/completions")?;
+        let is_loopback = endpoint.host_str().map(|host| host == "localhost" || host == "127.0.0.1" || host == "::1").unwrap_or(false);
+        if endpoint.scheme() != "https" && !(endpoint.scheme() == "http" && is_loopback) { bail!("远程 AI 地址必须使用 HTTPS；仅 loopback 本地服务可使用 HTTP") }
+        let api_key = Entry::new("ToolKnit", &format!("ai-profile:{}", request.profile_id))?.get_password()?;
+        let response = reqwest::Client::new().post(endpoint).bearer_auth(api_key).json(&json!({ "model": request.model, "temperature": 0.25, "stream": false, "messages": request.messages })).send().await?;
+        let status = response.status(); let body: serde_json::Value = response.json().await.context("AI 服务返回了非 JSON 内容")?;
+        if !status.is_success() { bail!("AI 服务请求失败：{}", body.get("error").and_then(|value| value.get("message")).and_then(|value| value.as_str()).unwrap_or("未知错误")) }
+        body.pointer("/choices/0/message/content").and_then(|value| value.as_str()).map(str::to_owned).context("AI 服务没有返回文本结果")
     }
 
     pub fn backup(&self, output_path: String) -> Result<()> {
