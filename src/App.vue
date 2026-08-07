@@ -7,7 +7,7 @@ const route = useRoute()
 const store = useWorkbenchStore()
 const commandOpen = ref(false)
 const nav = [
-  ['/', '▦', '操作台'], ['/library', '↙', '收集与归档'], ['/tools', '◇', '文件处理中心'], ['/code-image', '</>', '代码分享'], ['/ai', '✦', 'AI 内容工作台'],
+  ['/', '▦', '操作台'], ['/library', '↙', '收集与归档'], ['/tools', '◇', '文件处理中心'], ['/visual', '▧', '图片表达'], ['/code-image', '</>', '代码分享'], ['/ai', '✦', 'AI 内容工作台'],
 ]
 const learning = [['/documents', '笔', '学习工作区'], ['/review', '复', '复习队列']]
 const title = computed(() => String(route.meta.title ?? 'ToolKnit'))

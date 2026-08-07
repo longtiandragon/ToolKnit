@@ -9,7 +9,7 @@ const recentJobs = computed(() => store.jobs.slice(0, 6))
 const quickTools = [
   ['PDF 页面整理', '合并、拆分、旋转、提取', '/tools', 'PDF'],
   ['图片处理', '缩放、压缩、转格式', '/tools', 'IMG'],
-  ['文本与 JSON', '格式化、清理、导出', '/tools', 'TXT'],
+  ['图片分享卡', '拼图、标题、水印、PNG 导出', '/visual', 'IMG'],
   ['代码分享图', '高亮、分页、PNG 导出', '/code-image', 'CODE']
 ]
 async function paste() { pasting.value = true; const payload = await readClipboardPayload(); pasting.value = false; if (!payload) return; await store.addSource({ name: payload.name, kind: payload.kind, mime: payload.kind === 'image' ? 'image/png' : 'text/plain', size: (payload.content ?? payload.preview ?? '').length, content: payload.content, preview: payload.preview }); router.push('/library') }
