@@ -1,0 +1,39 @@
+{
+  "name": "toolknit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first learning workbench for sources, mistakes and review.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "check": "vue-tsc -b && vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.3.0",
+    "@tauri-apps/plugin-fs": "^2.3.0",
+    "@vueuse/core": "^12.8.2",
+    "highlight.js": "^11.11.1",
+    "js-yaml": "^4.1.0",
+    "katex": "^0.16.22",
+    "markdown-it": "^14.1.0",
+    "pinia": "^3.0.2",
+    "ts-fsrs": "^5.2.1",
+    "uuid": "^11.1.0",
+    "vue": "^3.5.18",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.3",
+    "@types/js-yaml": "^4.0.9",
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^24.0.15",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.6",
+    "vue-tsc": "^2.2.12"
+  }
+}

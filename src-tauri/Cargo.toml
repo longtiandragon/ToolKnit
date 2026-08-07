@@ -1,0 +1,33 @@
+[package]
+name = "toolknit"
+version = "0.1.0"
+description = "Local-first learning workbench"
+authors = ["longtiandragon"]
+edition = "2021"
+
+[lib]
+name = "toolknit_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+keyring = "3"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+thiserror = "2"
+uuid = { version = "1", features = ["v7", "serde"] }
+walkdir = "2"
+zip = "2"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

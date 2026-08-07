@@ -1,0 +1,16 @@
+node_modules/
+dist/
+target/
+src-tauri/target/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.toolknit-backup
+ToolKnitVault/
+.toolknit/
+engines/
+models/
+coverage/
+*.log
