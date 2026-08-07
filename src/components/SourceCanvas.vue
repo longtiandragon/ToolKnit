@@ -6,7 +6,7 @@ import type { Source } from '@/types'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
-const props = defineProps<{ source: Source }>()
+const props = withDefaults(defineProps<{ source: Source; initialPage?: number }>(), { initialPage: 0 })
 const emit = defineEmits<{ select: [bbox: [number, number, number, number], crop?: string]; page: [pageIndex: number, pageCount: number] }>()
 const canvas = ref<HTMLCanvasElement>()
 const image = ref<HTMLImageElement>()
@@ -27,7 +27,7 @@ async function loadPdf() {
   try {
     const bytes = await fetch(props.source.preview).then((response) => response.arrayBuffer())
     pdfDocument?.destroy?.(); pdfDocument = await pdfjs.getDocument({ data: bytes }).promise
-    pageCount.value = pdfDocument.numPages; await renderPdf()
+    pageCount.value = pdfDocument.numPages; pageIndex.value = Math.min(pageIndex.value, Math.max(0, pageCount.value - 1)); await renderPdf()
   } catch (reason) { error.value = '这个 PDF 无法读取：可能受密码保护或文件已损坏。' }
   finally { loading.value = false }
 }
@@ -64,7 +64,7 @@ function cropSelection() {
 function previous() { if (pageIndex.value > 0) { pageIndex.value--; selection.value = null; renderPdf() } }
 function next() { if (pageIndex.value < pageCount.value - 1) { pageIndex.value++; selection.value = null; renderPdf() } }
 
-watch(() => props.source.id, async () => { pageIndex.value = 0; selection.value = null; await nextTick(); loadPdf() }, { immediate: true })
+watch(() => [props.source.id, props.initialPage] as const, async () => { pageIndex.value = Math.max(0, props.initialPage); selection.value = null; await nextTick(); loadPdf() }, { immediate: true })
 onBeforeUnmount(() => pdfDocument?.destroy?.())
 </script>
 

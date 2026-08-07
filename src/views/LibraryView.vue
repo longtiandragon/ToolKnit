@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import TagPill from '@/components/TagPill.vue'
 import SourceCanvas from '@/components/SourceCanvas.vue'
 import { blobToDataUrl, readClipboardPayload } from '@/lib/clipboard'
@@ -10,6 +10,7 @@ import { useWorkbenchStore } from '@/stores/workbench'
 
 const store = useWorkbenchStore()
 const router = useRouter()
+const route = useRoute()
 const fileInput = ref<HTMLInputElement>()
 const dragging = ref(false)
 const selected = ref<Source | null>(null)
@@ -19,6 +20,13 @@ const selectedBbox = ref<[number, number, number, number] | null>(null)
 const selectedPage = ref(0)
 const selectedCropId = ref<string>()
 const filtered = computed(() => filter.value === 'all' ? store.sources : store.sources.filter((source) => source.kind === filter.value))
+const sourcePage = computed(() => Math.max(0, Number(route.query.page ?? 0) || 0))
+
+watch([() => route.query.source, () => store.sources.length], () => {
+  const sourceId = typeof route.query.source === 'string' ? route.query.source : ''
+  const target = store.sources.find((source) => source.id === sourceId)
+  if (target) { selected.value = target; selectedBbox.value = null; selectedCropId.value = undefined }
+}, { immediate: true })
 
 function kindOf(file: File): SourceKind {
   if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) return 'pdf'
@@ -72,7 +80,7 @@ function captureSelection(bbox: [number, number, number, number], crop?: string)
       </section>
       <section class="source-detail panel">
         <template v-if="selected"><div class="detail-title"><div><p class="eyebrow">{{ selected.kind.toUpperCase() }}</p><h3>{{ selected.name }}</h3></div><span class="hash" :title="selected.sha256">#{{ selected.sha256?.slice(0, 8) }}</span></div>
-          <div class="source-preview"><SourceCanvas :source="selected" @select="captureSelection" @page="(page) => selectedPage = page" /></div>
+          <div class="source-preview"><SourceCanvas :source="selected" :initial-page="sourcePage" @select="captureSelection" @page="(page) => selectedPage = page" /></div>
           <div class="action-grid"><button v-for="item in toolActions.filter((tool) => tool.accepts.includes(selected!.kind))" :key="item.id" @click="action(selected!, item.id)"><b>{{ item.id === 'create-question' ? '题' : item.id === 'ocr' ? '字' : item.id === 'formula' ? '∑' : item.id === 'code-image' ? '码' : '批' }}</b><span>{{ item.title }}<small>{{ item.description }}</small></span></button></div>
           <div class="source-meta"><TagPill v-for="tag in selected.tags" :key="tag" :label="tag" /><span>来源定位：第 1 页 · 全页区域</span></div>
         </template><div v-else class="detail-empty">从左边选一份资料，查看它能变成什么。</div>
