@@ -67,6 +67,17 @@ export interface Job {
   createdAt: string
 }
 
+/** A reusable preset for one real file-processing operation. */
+export interface ToolRecipe {
+  id: string
+  title: string
+  group: 'pdf' | 'image' | 'text' | 'organize'
+  operation: string
+  parameters: Record<string, string | number>
+  createdAt: string
+  lastRunAt?: string
+}
+
 export interface AiProfile {
   id: string
   label: string

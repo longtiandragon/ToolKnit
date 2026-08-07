@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { createEmptyCard, fsrs, Rating } from 'ts-fsrs'
 import { v7 as uuid } from 'uuid'
-import type { AiProfile, Job, QuestionType, ReviewRating, Source, SourceAnchor, StudyDocument } from '@/types'
+import type { AiProfile, Job, QuestionType, ReviewRating, Source, SourceAnchor, StudyDocument, ToolRecipe } from '@/types'
 import { questionTemplate } from '@/lib/markdown'
 
 const STORE_KEY = 'toolknit:workspace:v1'
@@ -15,6 +15,7 @@ interface PersistedWorkspace {
   aiProfiles: AiProfile[]
   activeVaultName: string
   codeDraft?: { content: string; name: string }
+  recipes?: ToolRecipe[]
 }
 
 function now() { return new Date().toISOString() }
@@ -46,26 +47,27 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   const aiProfiles = ref<AiProfile[]>(initial.aiProfiles)
   const activeVaultName = ref(initial.activeVaultName)
   const codeDraft = ref(initial.codeDraft)
+  const recipes = ref<ToolRecipe[]>(initial.recipes ?? [])
   const engineInstalled = ref({ ocr: false, formula: false })
 
   function persist() {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       sources: sources.value, documents: documents.value, jobs: jobs.value,
-      aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value, codeDraft: codeDraft.value
+      aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value, codeDraft: codeDraft.value, recipes: recipes.value
     } satisfies PersistedWorkspace))
   }
 
   function exportBrowserBackup() {
     return JSON.stringify({
       format: 'toolknit-browser-backup', schemaVersion: 1, exportedAt: now(),
-      sources: sources.value, documents: documents.value, jobs: jobs.value, aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value
+      sources: sources.value, documents: documents.value, jobs: jobs.value, aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value, recipes: recipes.value
     }, null, 2)
   }
 
   function restoreBrowserBackup(serialized: string) {
     const backup = JSON.parse(serialized) as PersistedWorkspace & { format?: string; schemaVersion?: number }
     if (backup.format !== 'toolknit-browser-backup' || backup.schemaVersion !== 1 || !Array.isArray(backup.sources) || !Array.isArray(backup.documents)) throw new Error('这不是可恢复的 ToolKnit 浏览器备份。')
-    sources.value = backup.sources; documents.value = backup.documents; jobs.value = backup.jobs ?? []; aiProfiles.value = backup.aiProfiles ?? []; activeVaultName.value = backup.activeVaultName ?? '已恢复资料库'; persist()
+    sources.value = backup.sources; documents.value = backup.documents; jobs.value = backup.jobs ?? []; aiProfiles.value = backup.aiProfiles ?? []; recipes.value = backup.recipes ?? []; activeVaultName.value = backup.activeVaultName ?? '已恢复资料库'; persist()
   }
 
   const dueDocuments = computed(() => documents.value.filter((document) => document.reviewEnabled && document.review && new Date(document.review.due) <= new Date()))
@@ -169,6 +171,25 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     persist()
   }
 
+  function saveRecipe(input: Omit<ToolRecipe, 'id' | 'createdAt' | 'lastRunAt'>) {
+    const recipe: ToolRecipe = { ...input, id: uuid(), createdAt: now() }
+    recipes.value.unshift(recipe)
+    persist()
+    return recipe
+  }
+
+  function removeRecipe(id: string) {
+    recipes.value = recipes.value.filter((recipe) => recipe.id !== id)
+    persist()
+  }
+
+  function touchRecipe(id: string) {
+    const recipe = recipes.value.find((item) => item.id === id)
+    if (!recipe) return
+    recipe.lastRunAt = now()
+    persist()
+  }
+
   function saveAiProfile(profile: AiProfile) {
     const index = aiProfiles.value.findIndex((item) => item.id === profile.id)
     if (index < 0) aiProfiles.value.push(profile); else aiProfiles.value[index] = profile
@@ -185,7 +206,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   }
 
   return {
-    sources, documents, jobs, aiProfiles, activeVaultName, codeDraft, engineInstalled, dueDocuments, questionCount, weakTags,
-    addSource, createQuestion, createNote, saveDocument, deleteDocument, gradeDocument, attachCrop, addJob, updateJob, saveAiProfile, setEngine, prepareCodeImage, persist, exportBrowserBackup, restoreBrowserBackup
+    sources, documents, jobs, aiProfiles, activeVaultName, codeDraft, recipes, engineInstalled, dueDocuments, questionCount, weakTags,
+    addSource, createQuestion, createNote, saveDocument, deleteDocument, gradeDocument, attachCrop, addJob, updateJob, saveRecipe, removeRecipe, touchRecipe, saveAiProfile, setEngine, prepareCodeImage, persist, exportBrowserBackup, restoreBrowserBackup
   }
 })
