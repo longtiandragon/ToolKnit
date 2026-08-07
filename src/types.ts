@@ -23,6 +23,8 @@ export interface Source {
   content?: string
   pageCount?: number
   tags: string[]
+  /** Browser fallback keeps cropped source snippets here; desktop mode writes assets/crops instead. */
+  crops?: Record<string, string>
 }
 
 export interface ReviewState {

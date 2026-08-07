@@ -107,6 +107,13 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     return document
   }
 
+  function attachCrop(sourceId: string, dataUrl?: string) {
+    if (!dataUrl) return undefined
+    const source = sources.value.find((item) => item.id === sourceId)
+    if (!source) return undefined
+    const id = uuid(); source.crops = { ...(source.crops ?? {}), [id]: dataUrl }; persist(); return id
+  }
+
   function createNote(title = '未命名笔记') {
     const created = now()
     const document: StudyDocument = { id: uuid(), title, kind: 'note', subject: '未分类', tags: [], difficulty: 0, content: `# ${title}\n`, createdAt: created, updatedAt: created, reviewEnabled: false, errorTypes: [] }
@@ -170,6 +177,6 @@ export const useWorkbenchStore = defineStore('workbench', () => {
 
   return {
     sources, documents, jobs, aiProfiles, activeVaultName, engineInstalled, dueDocuments, questionCount, weakTags,
-    addSource, createQuestion, createNote, saveDocument, deleteDocument, gradeDocument, addJob, updateJob, saveAiProfile, setEngine, persist, exportBrowserBackup, restoreBrowserBackup
+    addSource, createQuestion, createNote, saveDocument, deleteDocument, gradeDocument, attachCrop, addJob, updateJob, saveAiProfile, setEngine, persist, exportBrowserBackup, restoreBrowserBackup
   }
 })

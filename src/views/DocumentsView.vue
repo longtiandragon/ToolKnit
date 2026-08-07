@@ -17,6 +17,10 @@ const saved = ref(false)
 const docs = computed(() => store.documents.filter((document) => `${document.title} ${document.tags.join(' ')} ${document.content}`.toLowerCase().includes(query.value.toLowerCase())))
 const selected = computed(() => store.documents.find((document) => document.id === selectedId.value))
 const preview = computed(() => draft.value ? renderMarkdown(draft.value.content.replace(/^---[\s\S]*?---\s*/, '')) : '')
+const anchorCrop = computed(() => {
+  const anchor = draft.value?.sourceAnchor
+  return anchor?.cropAssetId ? store.sources.find((source) => source.id === anchor.sourceId)?.crops?.[anchor.cropAssetId] : undefined
+})
 
 watch(selected, (document) => { draft.value = document ? structuredClone(document) : null }, { immediate: true })
 
@@ -38,7 +42,7 @@ function insertAi(content: string) { if (!draft.value) return; draft.value.conte
       <section v-if="draft" class="editor-shell panel">
         <header class="editor-header"><div><input v-model="draft.title" class="title-input" aria-label="标题" /><div class="metadata-row"><select v-model="draft.subject"><option>算法</option><option>数学</option><option>物理</option><option>计算机</option><option>英语</option><option>未分类</option></select><select v-if="draft.kind === 'question'" v-model="draft.difficulty"><option :value="1">难度 1</option><option :value="2">难度 2</option><option :value="3">难度 3</option><option :value="4">难度 4</option><option :value="5">难度 5</option></select><label v-if="draft.kind === 'question'" class="switch"><input v-model="draft.reviewEnabled" type="checkbox" /><span></span>加入复习</label></div></div><div class="editor-actions"><span v-if="saved" class="saved">已保存</span><button class="quiet-button danger" @click="remove">删除</button><button class="primary-button" @click="save">保存</button></div></header>
         <div class="tag-editor"><TagPill v-for="tag in draft.tags" :key="tag" :label="`${tag} ×`" @click="removeTag(tag)" /><input v-model="newTag" placeholder="添加标签后回车" @keydown.enter.prevent="addTag" /></div>
-        <div v-if="draft.sourceAnchor" class="source-anchor"><span>↗ 来源仍然系着：第 {{ draft.sourceAnchor.pageIndex + 1 }} 页，区域 {{ draft.sourceAnchor.bbox.map((n) => n.toFixed(2)).join(' · ') }}</span><button @click="router.push('/library')">回到原题</button></div>
+        <div v-if="draft.sourceAnchor" class="source-anchor"><img v-if="anchorCrop" :src="anchorCrop" alt="原题选区" /><span>↗ 来源仍然系着：第 {{ draft.sourceAnchor.pageIndex + 1 }} 页，区域 {{ draft.sourceAnchor.bbox.map((n) => n.toFixed(2)).join(' · ') }}</span><button @click="router.push('/library')">回到原题</button></div>
         <div class="editor-grid"><textarea v-model="draft.content" spellcheck="false" aria-label="Markdown 正文"></textarea><article class="markdown-preview" v-html="preview"></article></div>
         <AiAssistPanel :document="draft" @insert="insertAi" />
       </section>
