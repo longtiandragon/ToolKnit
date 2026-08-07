@@ -158,8 +158,8 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     persist()
   }
 
-  function addJob(kind: Job['kind'], label: string) {
-    const job: Job = { id: uuid(), kind, label, status: 'queued', progress: 0, createdAt: now() }
+  function addJob(kind: Job['kind'], label: string, inputNames: string[] = []) {
+    const job: Job = { id: uuid(), kind, label, inputNames, status: 'queued', progress: 0, createdAt: now() }
     jobs.value.unshift(job); persist(); return job
   }
 

@@ -2,6 +2,7 @@ export type SourceKind = 'image' | 'pdf' | 'code' | 'text'
 export type QuestionType = 'algorithm' | 'math' | 'science' | 'general'
 export type ReviewRating = 'Again' | 'Hard' | 'Good' | 'Easy'
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+export type JobKind = 'pdf' | 'image' | 'text' | 'code' | 'ocr' | 'ai' | 'archive'
 
 export interface SourceAnchor {
   sourceId: string
@@ -55,11 +56,14 @@ export interface StudyDocument {
 
 export interface Job {
   id: string
-  kind: 'ocr' | 'formula' | 'batch' | 'download'
+  kind: JobKind
   label: string
   status: JobStatus
   progress: number
   errorCode?: string
+  inputNames?: string[]
+  outputNames?: string[]
+  detail?: string
   createdAt: string
 }
 
