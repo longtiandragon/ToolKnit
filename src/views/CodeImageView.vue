@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { splitCodeForExport } from '@/lib/code-image'
+import { useWorkbenchStore } from '@/stores/workbench'
 
-const code = ref(`#include <bits/stdc++.h>
+const store = useWorkbenchStore()
+const defaultCode = `#include <bits/stdc++.h>
 using namespace std;
 
 bool feasible(long long x, const vector<int>& a) {
@@ -20,12 +22,20 @@ int main() {
     else left = mid + 1;
   }
   cout << left << '\\n';
-}`)
+}`
+const code = ref(store.codeDraft?.content ?? defaultCode)
+const sourceName = ref(store.codeDraft?.name ?? '示例代码')
 const theme = ref<'forest' | 'paper'>('forest')
 const fontSize = ref(16)
 const showLineNumbers = ref(true)
 const watermark = ref('ToolKnit')
 const pages = computed(() => splitCodeForExport(code.value, 42))
+
+watch(() => store.codeDraft, (draft) => {
+  if (!draft || draft.content === code.value) return
+  code.value = draft.content
+  sourceName.value = draft.name
+})
 
 function exportPage(page: string, pageNumber: number) {
   const lines = page.split('\n')
@@ -39,14 +49,15 @@ function exportPage(page: string, pageNumber: number) {
   ctx.fillStyle = dark ? '#dbf1dd' : '#25382a'; ctx.font = `600 ${12}px ui-monospace, Consolas`; ctx.fillText(`${watermark.value || 'ToolKnit'} · ${pageNumber}/${pages.value.length}`, padding, 21)
   ctx.font = `${fontSize.value}px ui-monospace, Consolas, monospace`; ctx.textBaseline = 'middle'
   lines.forEach((line, index) => { const y = padding + 12 + index * lineHeight; if (showLineNumbers.value) { ctx.fillStyle = dark ? '#789383' : '#9a8972'; ctx.textAlign = 'right'; ctx.fillText(String(index + 1 + (pageNumber - 1) * 42), padding + 35, y); } ctx.fillStyle = dark ? '#f2f7e9' : '#223327'; ctx.textAlign = 'left'; ctx.fillText(line || ' ', padding + gutter, y) })
-  const link = document.createElement('a'); link.download = `toolknit-code-${String(pageNumber).padStart(2, '0')}.png`; link.href = canvas.toDataURL('image/png'); link.click()
+  const stem = sourceName.value.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff]+/g, '-') || 'code'
+  const link = document.createElement('a'); link.download = `${stem}-${String(pageNumber).padStart(2, '0')}.png`; link.href = canvas.toDataURL('image/png'); link.click()
 }
 function exportAll() { pages.value.forEach((page, index) => setTimeout(() => exportPage(page, index + 1), index * 180)) }
 </script>
 
 <template>
   <div class="code-image page-enter">
-    <section class="section-heading"><div><p class="eyebrow">LONG CODE IMAGE</p><h2>长一点没关系，<em>别让思路被截断。</em></h2><p>按行自动分页导出，适合刷题记录、代码讲解和发给同学。</p></div><button class="primary-button" @click="exportAll">导出 {{ pages.length }} 张 PNG <span>↓</span></button></section>
+    <section class="section-heading"><div><p class="eyebrow">LONG CODE IMAGE</p><h2>长一点没关系，<em>别让思路被截断。</em></h2><p>正在处理：{{ sourceName }}。按行自动分页导出，适合刷题记录、代码讲解和发给同学。</p></div><button class="primary-button" @click="exportAll">导出 {{ pages.length }} 张 PNG <span>↓</span></button></section>
     <section class="code-layout"><div class="code-controls panel"><label>主题<div class="segmented"><button :class="{ active: theme === 'forest' }" @click="theme = 'forest'">深林</button><button :class="{ active: theme === 'paper' }" @click="theme = 'paper'">纸页</button></div></label><label>字号 <output>{{ fontSize }} px</output><input v-model="fontSize" type="range" min="12" max="24" /></label><label class="checkline"><input v-model="showLineNumbers" type="checkbox" /> 显示行号</label><label>水印<input v-model="watermark" placeholder="ToolKnit" /></label><p class="control-note">超过 42 行会按行切分，绝不会悄悄吞掉尾部代码。</p></div><div class="code-editor panel"><textarea v-model="code" spellcheck="false" aria-label="代码"></textarea></div><div class="code-preview-wrap"><article v-for="(page, index) in pages" :key="index" class="code-export-preview" :class="`theme-${theme}`"><header><span>{{ watermark || 'ToolKnit' }}</span><span>{{ index + 1 }} / {{ pages.length }}</span></header><pre><code><span v-for="(line, lineIndex) in page.split('\n')" :key="lineIndex"><i v-if="showLineNumbers">{{ String(lineIndex + 1 + index * 42).padStart(3, ' ') }}</i>{{ line || ' ' }}
 </span></code></pre><button @click="exportPage(page, index + 1)">导出本页</button></article></div></section>
   </div>

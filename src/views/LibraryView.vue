@@ -47,7 +47,10 @@ async function paste() {
 function action(source: Source, id: string) {
   const anchor = { sourceId: source.id, pageIndex: selectedPage.value, bbox: selectedBbox.value ?? [0, 0, 1, 1] as [number, number, number, number], cropAssetId: selectedCropId.value }
   if (id === 'create-question') { store.createQuestion(source, anchor); router.push('/documents') }
-  else if (id === 'code-image') { router.push('/code-image') }
+  else if (id === 'code-image') {
+    try { store.prepareCodeImage(source); router.push('/code-image') }
+    catch (error) { notice.value = error instanceof Error ? error.message : '无法读取这份代码。' }
+  }
   else if (id === 'batch') { router.push('/batch') }
   else { notice.value = `${id === 'ocr' ? '文字 OCR' : '公式 OCR'} 引擎未安装。请在设置中安装可选离线引擎包。` }
 }

@@ -14,6 +14,7 @@ interface PersistedWorkspace {
   jobs: Job[]
   aiProfiles: AiProfile[]
   activeVaultName: string
+  codeDraft?: { content: string; name: string }
 }
 
 function now() { return new Date().toISOString() }
@@ -44,12 +45,13 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   const jobs = ref<Job[]>(initial.jobs)
   const aiProfiles = ref<AiProfile[]>(initial.aiProfiles)
   const activeVaultName = ref(initial.activeVaultName)
+  const codeDraft = ref(initial.codeDraft)
   const engineInstalled = ref({ ocr: false, formula: false })
 
   function persist() {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       sources: sources.value, documents: documents.value, jobs: jobs.value,
-      aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value
+      aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value, codeDraft: codeDraft.value
     } satisfies PersistedWorkspace))
   }
 
@@ -175,8 +177,15 @@ export const useWorkbenchStore = defineStore('workbench', () => {
 
   function setEngine(engine: 'ocr' | 'formula', installed: boolean) { engineInstalled.value[engine] = installed }
 
+  function prepareCodeImage(source: Source) {
+    const content = source.content?.trim()
+    if (!content) throw new Error('这份资料没有可导出的文本内容。')
+    codeDraft.value = { content, name: source.name }
+    persist()
+  }
+
   return {
-    sources, documents, jobs, aiProfiles, activeVaultName, engineInstalled, dueDocuments, questionCount, weakTags,
-    addSource, createQuestion, createNote, saveDocument, deleteDocument, gradeDocument, attachCrop, addJob, updateJob, saveAiProfile, setEngine, persist, exportBrowserBackup, restoreBrowserBackup
+    sources, documents, jobs, aiProfiles, activeVaultName, codeDraft, engineInstalled, dueDocuments, questionCount, weakTags,
+    addSource, createQuestion, createNote, saveDocument, deleteDocument, gradeDocument, attachCrop, addJob, updateJob, saveAiProfile, setEngine, prepareCodeImage, persist, exportBrowserBackup, restoreBrowserBackup
   }
 })
