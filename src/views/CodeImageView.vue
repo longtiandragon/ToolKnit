@@ -224,15 +224,31 @@ async function exportPdf() {
     </section>
 
     <section class="codesnap-workspace">
-      <aside class="code-controls panel">
-        <FileDropZone v-model="codeFiles" accept=".txt,.md,.js,.ts,.tsx,.jsx,.py,.java,.cpp,.c,.cs,.go,.rs,.vue,.html,.css,.sql,text/*" :multiple="false" title="拖入代码文件" hint="自动识别语言并实时预览"/>
-        <label>语言<select v-model="language"><option v-for="item in codeLanguages" :key="item.id" :value="item.id">{{ item.label }}</option></select></label>
-        <label>窗口主题<div class="segmented theme-segmented"><button :class="{ active: theme === 'midnight' }" @click="theme = 'midnight'">午夜</button><button :class="{ active: theme === 'forest' }" @click="theme = 'forest'">深林</button><button :class="{ active: theme === 'paper' }" @click="theme = 'paper'">纸页</button></div></label>
-        <label>字号 <output>{{ fontSize }} px</output><input v-model.number="fontSize" type="range" min="13" max="26" /></label>
-        <label>每张行数 <output>{{ linesPerPage }} 行</output><input v-model.number="linesPerPage" type="range" min="12" max="80" /></label>
-        <label class="checkline"><input v-model="showLineNumbers" type="checkbox" /> 显示行号</label>
-        <label>图片署名<input v-model="watermark" placeholder="ToolKnit" /></label>
-      </aside>
+      <div class="code-control-bar panel">
+        <details class="code-control-menu code-import-menu">
+          <summary><AppIcon name="file-code" :size="14"/><span>导入代码</span><small>{{ codeFiles[0]?.name || '拖入或选择文件' }}</small></summary>
+          <div class="code-control-popover">
+            <FileDropZone v-model="codeFiles" accept=".txt,.md,.js,.ts,.tsx,.jsx,.py,.java,.cpp,.c,.cs,.go,.rs,.vue,.html,.css,.sql,text/*" :multiple="false" title="拖入代码文件" hint="自动识别语言并实时预览"/>
+          </div>
+        </details>
+
+        <label class="code-inline-select"><span>语言</span><select v-model="language" aria-label="代码语言"><option v-for="item in codeLanguages" :key="item.id" :value="item.id">{{ item.label }}</option></select></label>
+
+        <div class="code-inline-theme" role="group" aria-label="窗口主题">
+          <span>主题</span>
+          <div class="segmented theme-segmented"><button :class="{ active: theme === 'midnight' }" @click="theme = 'midnight'">午夜</button><button :class="{ active: theme === 'forest' }" @click="theme = 'forest'">深林</button><button :class="{ active: theme === 'paper' }" @click="theme = 'paper'">纸页</button></div>
+        </div>
+
+        <details class="code-control-menu code-advanced-menu">
+          <summary><AppIcon name="settings" :size="14"/><span>画面设置</span><small>{{ fontSize }}px · {{ linesPerPage }}行</small></summary>
+          <div class="code-control-popover code-advanced-popover">
+            <header><div><p class="eyebrow">IMAGE SETTINGS</p><strong>画面设置</strong></div><small>仅影响预览与导出</small></header>
+            <label>字号 <output>{{ fontSize }} px</output><input v-model.number="fontSize" type="range" min="13" max="26" /></label>
+            <label>每张行数 <output>{{ linesPerPage }} 行</output><input v-model.number="linesPerPage" type="range" min="12" max="80" /></label>
+            <div class="code-advanced-row"><label class="checkline"><input v-model="showLineNumbers" type="checkbox" /> 显示行号</label><label class="watermark-field"><span>图片署名</span><input v-model="watermark" placeholder="ToolKnit" /></label></div>
+          </div>
+        </details>
+      </div>
 
       <div class="codesnap-main">
         <section class="code-editor panel">
