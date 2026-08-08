@@ -22,6 +22,7 @@ const copying = ref(false)
 const lastOutputs = ref<FileReference[]>([])
 const activePage = ref(0)
 const selectedPages = ref(new Set([0]))
+const previewStage = ref<HTMLElement>()
 const contextMenu = ref({ open: false, x: 0, y: 0, page: 0 })
 
 const defaultCode = `#include <bits/stdc++.h>
@@ -109,11 +110,19 @@ function selectAllPages() {
 
 function openPreviewMenu(event: MouseEvent, page = activePage.value) {
   activePage.value = page
+  const card = previewStage.value?.querySelector<HTMLElement>('.codesnap-card')
+  const bounds = card?.getBoundingClientRect()
+  const menuWidth = 216
+  const menuHeight = selectedPageIndexes.value.length > 1 ? 238 : 168
+  const minX = bounds ? bounds.left + 8 : 8
+  const minY = bounds ? bounds.top + 8 : 8
+  const maxX = bounds ? Math.max(minX, bounds.right - menuWidth - 8) : window.innerWidth - menuWidth - 8
+  const maxY = bounds ? Math.max(minY, bounds.bottom - menuHeight - 8) : window.innerHeight - menuHeight - 8
   contextMenu.value = {
     open: true,
     page,
-    x: Math.max(8, Math.min(event.clientX, window.innerWidth - 224)),
-    y: Math.max(8, Math.min(event.clientY, window.innerHeight - 250))
+    x: Math.max(minX, Math.min(event.clientX, maxX)),
+    y: Math.max(minY, Math.min(event.clientY, maxY))
   }
 }
 
@@ -309,7 +318,7 @@ async function exportPdf() {
 
         <section class="live-code-preview panel">
           <header><div><p class="eyebrow">LIVE PREVIEW</p><strong>实时图片预览</strong></div><span>右键复制 · 2× 高清</span></header>
-          <div class="codesnap-stage" title="右键可复制当前图片" @contextmenu.prevent.stop="openPreviewMenu($event)">
+          <div ref="previewStage" class="codesnap-stage" title="右键可复制当前图片">
             <CodeSnapCard
               :code-html="highlightedPages[activePage]"
               :line-count="pageLineCounts[activePage]"
@@ -322,6 +331,7 @@ async function exportPdf() {
               :show-line-numbers="showLineNumbers"
               :watermark="watermark"
               :theme="theme"
+              @contextmenu.prevent.stop="openPreviewMenu($event)"
             />
           </div>
           <div v-if="pages.length > 1" class="page-selection-strip">
@@ -337,15 +347,17 @@ async function exportPdf() {
       </div>
     </section>
 
-    <div v-if="contextMenu.open" class="codesnap-context-menu" role="menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop>
-      <header><span>第 {{ contextMenu.page + 1 }} 张</span><small>代码图片</small></header>
-      <button role="menuitem" :disabled="copying" @click="copyCurrentImage(contextMenu.page); closePreviewMenu()"><AppIcon name="duplicate" :size="14"/>复制当前图片</button>
-      <button role="menuitem" @click="toggleSelectedPage(contextMenu.page); closePreviewMenu()"><AppIcon name="plus" :size="14"/>{{ selectedPages.has(contextMenu.page) && selectedPages.size > 1 ? '从多选中移除' : '加入多选' }}</button>
-      <button v-if="selectedPageIndexes.length > 1" role="menuitem" :disabled="copying" @click="copySelectedImages(); closePreviewMenu()"><AppIcon name="image" :size="14"/>复制所选 {{ selectedPageIndexes.length }} 张</button>
-      <button v-if="selectedPageIndexes.length > 1" role="menuitem" :disabled="copying" @click="copySelectedAsLongImage(); closePreviewMenu()"><AppIcon name="merge" :size="14"/>合并所选为长图</button>
-      <hr />
-      <button role="menuitem" :disabled="exporting" @click="exportCurrentPage(); closePreviewMenu()"><AppIcon name="file-image" :size="14"/>导出当前 PNG</button>
-    </div>
+    <Teleport to="body">
+      <div v-if="contextMenu.open" class="codesnap-context-menu" role="menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop>
+        <header><span>第 {{ contextMenu.page + 1 }} 张</span><small>代码图片</small></header>
+        <button role="menuitem" :disabled="copying" @click="copyCurrentImage(contextMenu.page); closePreviewMenu()"><AppIcon name="duplicate" :size="14"/>复制当前图片</button>
+        <button role="menuitem" @click="toggleSelectedPage(contextMenu.page); closePreviewMenu()"><AppIcon name="plus" :size="14"/>{{ selectedPages.has(contextMenu.page) && selectedPages.size > 1 ? '从多选中移除' : '加入多选' }}</button>
+        <button v-if="selectedPageIndexes.length > 1" role="menuitem" :disabled="copying" @click="copySelectedImages(); closePreviewMenu()"><AppIcon name="image" :size="14"/>复制所选 {{ selectedPageIndexes.length }} 张</button>
+        <button v-if="selectedPageIndexes.length > 1" role="menuitem" :disabled="copying" @click="copySelectedAsLongImage(); closePreviewMenu()"><AppIcon name="merge" :size="14"/>合并所选为长图</button>
+        <hr />
+        <button role="menuitem" :disabled="exporting" @click="exportCurrentPage(); closePreviewMenu()"><AppIcon name="file-image" :size="14"/>导出当前 PNG</button>
+      </div>
+    </Teleport>
 
     <section v-if="lastOutputs.length" class="code-output-result panel">
       <header><div><p class="eyebrow">EXPORT COMPLETE</p><h3>刚刚生成的文件</h3></div><button v-if="lastOutputs[0]?.path" class="primary-button" @click="openLocation(lastOutputs[0].path)">打开输出位置</button></header>
