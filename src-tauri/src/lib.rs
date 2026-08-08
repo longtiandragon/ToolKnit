@@ -116,6 +116,22 @@ fn copy_clipboard(kind: String, content: Option<String>, asset_path: Option<Stri
 }
 
 #[tauri::command]
+fn copy_png_bytes(data: Vec<u8>) -> Result<(), String> {
+    let image = image::load_from_memory_with_format(&data, image::ImageFormat::Png)
+        .map_err(|error| error.to_string())?
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    arboard::Clipboard::new()
+        .map_err(|error| error.to_string())?
+        .set_image(arboard::ImageData {
+            width: width as usize,
+            height: height as usize,
+            bytes: Cow::Owned(image.into_raw()),
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn cleanup_clipboard_assets(active_paths: Vec<String>, app: tauri::AppHandle) -> Result<(), String> {
     let directory = app.path().app_data_dir().map_err(|error| error.to_string())?.join("clipboard");
     if !directory.exists() { return Ok(()); }
@@ -209,7 +225,7 @@ pub fn run() {
             tray.build(app)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![init_vault, import_source, save_markdown, write_api_key, delete_api_key, run_ai_action, create_backup, set_clipboard_monitor, copy_clipboard, cleanup_clipboard_assets, save_output, copy_output_file, file_exists, read_input_file, reveal_in_folder, directory_size, check_github_update, quit_app])
+        .invoke_handler(tauri::generate_handler![init_vault, import_source, save_markdown, write_api_key, delete_api_key, run_ai_action, create_backup, set_clipboard_monitor, copy_clipboard, copy_png_bytes, cleanup_clipboard_assets, save_output, copy_output_file, file_exists, read_input_file, reveal_in_folder, directory_size, check_github_update, quit_app])
         .run(tauri::generate_context!())
         .expect("error while running ToolKnit");
 }
