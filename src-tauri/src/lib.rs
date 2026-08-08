@@ -59,10 +59,6 @@ struct GitHubRelease { tag_name: String, html_url: String, published_at: Option<
 #[serde(rename_all = "camelCase")]
 struct InputFilePayload { name: String, path: String, mime: String, size: u64, data: Vec<u8> }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClipboardPngFile { name: String, data: Vec<u8> }
-
 fn digest(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
 
 fn persist_clipboard_image(app: &tauri::AppHandle, image: arboard::ImageData<'_>) -> Result<ClipboardPayload, String> {
@@ -137,14 +133,23 @@ fn copy_png_bytes(data: Vec<u8>) -> Result<(), String> {
         .map_err(|error| error.to_string())?
         .to_rgba8();
     let (width, height) = image.dimensions();
-    arboard::Clipboard::new()
-        .map_err(|error| error.to_string())?
-        .set_image(arboard::ImageData {
-            width: width as usize,
-            height: height as usize,
-            bytes: Cow::Owned(image.into_raw()),
-        })
-        .map_err(|error| error.to_string())
+    let pixels = image.into_raw();
+    let mut last_error = String::from("系统剪贴板暂时不可用");
+    for _ in 0..8 {
+        let result = arboard::Clipboard::new().and_then(|mut clipboard| {
+            clipboard.set_image(arboard::ImageData {
+                width: width as usize,
+                height: height as usize,
+                bytes: Cow::Borrowed(pixels.as_slice()),
+            })
+        });
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error.to_string(),
+        }
+        thread::sleep(Duration::from_millis(45));
+    }
+    Err(format!("系统剪贴板正被占用：{}", last_error))
 }
 
 fn safe_png_name(name: &str, index: usize) -> String {
@@ -160,34 +165,48 @@ fn safe_png_name(name: &str, index: usize) -> String {
     if stem.is_empty() { format!("code-snapshot-{:02}.png", index + 1) } else { format!("{}.png", stem) }
 }
 
-#[cfg(target_os = "windows")]
 #[tauri::command]
-fn copy_png_files(files: Vec<ClipboardPngFile>, app: tauri::AppHandle) -> Result<Vec<String>, String> {
-    use clipboard_win::{formats, Clipboard, Setter};
-
-    if files.is_empty() { return Err("没有可复制的图片".into()); }
+fn stage_clipboard_png(name: String, data: Vec<u8>, app: tauri::AppHandle) -> Result<String, String> {
+    image::load_from_memory_with_format(&data, image::ImageFormat::Png)
+        .map_err(|error| format!("生成的 PNG 无效：{}", error))?;
     let directory = app.path().app_cache_dir()
         .map_err(|error| error.to_string())?
-        .join("clipboard-files")
-        .join(uuid::Uuid::now_v7().to_string());
+        .join("clipboard-files");
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let path = directory.join(format!("{}-{}", uuid::Uuid::now_v7(), safe_png_name(&name, 0)));
+    fs::write(&path, data).map_err(|error| error.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
 
-    let mut paths = Vec::with_capacity(files.len());
-    for (index, file) in files.into_iter().enumerate() {
-        image::load_from_memory_with_format(&file.data, image::ImageFormat::Png)
-            .map_err(|error| format!("第 {} 张图片无效：{}", index + 1, error))?;
-        let path = directory.join(safe_png_name(&file.name, index));
-        fs::write(&path, file.data).map_err(|error| error.to_string())?;
-        paths.push(path.to_string_lossy().into_owned());
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn copy_staged_png_files(paths: Vec<String>, app: tauri::AppHandle) -> Result<(), String> {
+    use clipboard_win::{formats, Clipboard, Setter};
+
+    if paths.is_empty() { return Err("没有可复制的图片".into()); }
+    let root = app.path().app_cache_dir()
+        .map_err(|error| error.to_string())?
+        .join("clipboard-files");
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let canonical_root = root.canonicalize().map_err(|error| error.to_string())?;
+    let mut verified = Vec::with_capacity(paths.len());
+    for path in paths {
+        let candidate = Path::new(&path).canonicalize().map_err(|_| "暂存图片已不存在，请重新复制".to_string())?;
+        if !candidate.starts_with(&canonical_root)
+            || !candidate.is_file()
+            || candidate.extension().and_then(|value| value.to_str()).map(|value| !value.eq_ignore_ascii_case("png")).unwrap_or(true)
+        {
+            return Err("检测到无效的图片暂存路径".into());
+        }
+        verified.push(candidate.to_string_lossy().into_owned());
     }
-    let _clipboard = Clipboard::new_attempts(10).map_err(|error| error.to_string())?;
-    formats::FileList.write_clipboard(paths.as_slice()).map_err(|error| error.to_string())?;
-    Ok(paths)
+    let _clipboard = Clipboard::new_attempts(20).map_err(|error| error.to_string())?;
+    formats::FileList.write_clipboard(verified.as_slice()).map_err(|error| error.to_string())
 }
 
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
-fn copy_png_files(_files: Vec<ClipboardPngFile>, _app: tauri::AppHandle) -> Result<Vec<String>, String> {
+fn copy_staged_png_files(_paths: Vec<String>, _app: tauri::AppHandle) -> Result<(), String> {
     Err("多张独立图片复制目前仅支持 Windows 桌面端".into())
 }
 
@@ -285,7 +304,7 @@ pub fn run() {
             tray.build(app)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![init_vault, import_source, save_markdown, write_api_key, delete_api_key, run_ai_action, create_backup, set_clipboard_monitor, read_clipboard_current, copy_clipboard, copy_png_bytes, copy_png_files, cleanup_clipboard_assets, save_output, copy_output_file, file_exists, read_input_file, reveal_in_folder, directory_size, check_github_update, quit_app])
+        .invoke_handler(tauri::generate_handler![init_vault, import_source, save_markdown, write_api_key, delete_api_key, run_ai_action, create_backup, set_clipboard_monitor, read_clipboard_current, copy_clipboard, copy_png_bytes, stage_clipboard_png, copy_staged_png_files, cleanup_clipboard_assets, save_output, copy_output_file, file_exists, read_input_file, reveal_in_folder, directory_size, check_github_update, quit_app])
         .run(tauri::generate_context!())
         .expect("error while running ToolKnit");
 }
