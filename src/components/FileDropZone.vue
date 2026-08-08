@@ -1,0 +1,17 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { listenWindowFileDrops, readDesktopInputFile } from '@/lib/native'
+import AppIcon from '@/components/AppIcon.vue'
+const props=withDefaults(defineProps<{modelValue:File[];accept?:string;multiple?:boolean;title?:string;hint?:string}>(),{accept:'*/*',multiple:true,title:'拖入文件立即开始',hint:'支持批量文件；原件保持只读'})
+const emit=defineEmits<{ 'update:modelValue':[files:File[]]; error:[message:string] }>();const input=ref<HTMLInputElement>();const active=ref(false);const loading=ref(false);const previews=ref(new Map<File,string>());let unlisten:()=>void=()=>{}
+const files=computed(()=>props.modelValue)
+function accepted(file:File){if(props.accept==='*/*')return true;return props.accept.split(',').some(raw=>{const token=raw.trim();return token.startsWith('.')?file.name.toLowerCase().endsWith(token.toLowerCase()):token.endsWith('/*')?file.type.startsWith(token.slice(0,-1)):file.type===token})}
+function update(next:File[]){const valid=next.filter(accepted);if(valid.length!==next.length)emit('error',`${next.length-valid.length} 个文件类型不受当前工具支持。`);emit('update:modelValue',props.multiple?valid.slice(0,100):valid.slice(0,1))}
+function receive(list:FileList|File[]){update(Array.from(list))}function drop(event:DragEvent){active.value=false;if(event.dataTransfer?.files.length)receive(event.dataTransfer.files)}function remove(index:number){update(files.value.filter((_,i)=>i!==index))}function clear(){update([]);if(input.value)input.value.value=''}
+function preview(file:File){if(!file.type.startsWith('image/'))return '';if(!previews.value.has(file))previews.value.set(file,URL.createObjectURL(file));return previews.value.get(file)!}
+const formatSize=(size:number)=>size<1048576?`${Math.max(1,Math.round(size/1024))} KB`:`${(size/1048576).toFixed(1)} MB`
+watch(files,current=>{for(const[file,url]of previews.value)if(!current.includes(file)){URL.revokeObjectURL(url);previews.value.delete(file)}})
+onMounted(async()=>{unlisten=await listenWindowFileDrops(async paths=>{loading.value=true;try{const loaded:File[]=[];for(const path of paths)loaded.push(await readDesktopInputFile(path));update(loaded)}catch(error){emit('error',error instanceof Error?error.message:'无法读取拖入的文件。')}finally{loading.value=false}})})
+onBeforeUnmount(()=>{unlisten();previews.value.forEach(URL.revokeObjectURL)})
+</script>
+<template><section class="unified-drop" :class="{active,filled:files.length}" @dragenter.prevent="active=true" @dragover.prevent @dragleave.prevent="active=false" @drop.prevent="drop"><div class="drop-intro"><b><AppIcon name="inbox" :size="22"/></b><span><strong>{{loading?'正在读取文件…':title}}</strong><small>{{hint}}</small></span><button class="select-files" @click="input?.click()">选择文件</button><input ref="input" class="visually-hidden" type="file" :multiple="multiple" :accept="accept" @change="receive(($event.target as HTMLInputElement).files||[])"/></div><ul v-if="files.length" class="drop-file-list"><li v-for="(file,index) in files" :key="`${file.name}-${file.lastModified}-${index}`"><img v-if="preview(file)" :src="preview(file)" alt=""/><b v-else><AppIcon :name="file.type==='application/pdf'?'file-pdf':file.type.startsWith('text/')?'file-text':'file-code'" :size="16"/></b><span><strong>{{file.name}}</strong><small>{{file.type||'未知类型'}} · {{formatSize(file.size)}}</small></span><button title="移除" @click="remove(index)">×</button></li></ul><button v-if="files.length>1" class="drop-clear" @click="clear">清空全部</button></section></template>

@@ -24,6 +24,7 @@ const contentPrompts: Record<ContentAiAction, string> = {
 
 export function setSessionApiKey(profileId: string, value: string) { sessionStorage.setItem(`toolknit:api-key:${profileId}`, value) }
 export function getSessionApiKey(profileId: string) { return sessionStorage.getItem(`toolknit:api-key:${profileId}`) ?? '' }
+export function removeSessionApiKey(profileId: string) { sessionStorage.removeItem(`toolknit:api-key:${profileId}`) }
 
 export function makeAiPayload(document: StudyDocument, action: AiAction, selection?: string) {
   const context = selection?.trim() || document.content.replace(/^---[\s\S]*?---\s*/, '')

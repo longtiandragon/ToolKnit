@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Minimal window capabilities; filesystem work is mediated by Rust commands.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]
+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save", "notification:default", "shell:allow-open"]
 }

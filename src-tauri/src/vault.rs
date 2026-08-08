@@ -75,6 +75,12 @@ impl VaultService {
         Ok(())
     }
 
+    pub fn delete_api_key(profile_id: String) -> Result<()> {
+        if profile_id.is_empty() { bail!("配置 ID 不能为空") }
+        Entry::new("ToolKnit", &format!("ai-profile:{profile_id}"))?.delete_credential()?;
+        Ok(())
+    }
+
     pub async fn run_ai_action(request: AiActionRequest) -> Result<String> {
         let mut base_url = request.base_url.trim().to_owned();
         if !base_url.ends_with('/') { base_url.push('/'); }

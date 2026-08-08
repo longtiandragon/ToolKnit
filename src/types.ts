@@ -20,6 +20,9 @@ export interface Source {
   size: number
   sha256?: string
   importedAt: string
+  lastOpenedAt?: string
+  originalPath?: string
+  managedPath?: string
   preview?: string
   content?: string
   pageCount?: number
@@ -63,8 +66,75 @@ export interface Job {
   errorCode?: string
   inputNames?: string[]
   outputNames?: string[]
+  toolId?: string
+  route?: string
+  parameters?: Record<string, string | number | boolean | string[]>
+  inputs?: FileReference[]
+  outputs?: FileReference[]
+  startedAt?: string
+  completedAt?: string
+  retryable?: boolean
   detail?: string
   createdAt: string
+}
+
+export interface FileReference {
+  name: string
+  path?: string
+  size?: number
+  mime?: string
+}
+
+export interface FavoriteTool {
+  toolId: string
+  order: number
+  shortcut?: number
+}
+
+export interface ToolUsage {
+  toolId: string
+  route: string
+  usedAt: string
+}
+
+export type ActivityKind = 'tool' | 'job' | 'source' | 'output' | 'clipboard' | 'backup' | 'system'
+
+export interface ActivityRecord {
+  id: string
+  kind: ActivityKind
+  title: string
+  detail?: string
+  route?: string
+  relatedId?: string
+  createdAt: string
+}
+
+export type ClipboardKind = 'text' | 'code' | 'image'
+
+export interface ClipboardItem {
+  id: string
+  kind: ClipboardKind
+  content?: string
+  assetPath?: string
+  preview?: string
+  hash: string
+  capturedAt: string
+  pinned?: boolean
+}
+
+export type CloseBehavior = 'ask' | 'tray' | 'quit'
+
+export interface WorkbenchSettings {
+  outputDirectory: string
+  clipboardEnabled: boolean
+  clipboardPaused: boolean
+  clipboardLimit: number
+  clipboardRetentionDays: number
+  closeBehavior: CloseBehavior
+  notificationsEnabled: boolean
+  autoCheckUpdates: boolean
+  lastUpdateCheck?: string
+  lastBackupAt?: string
 }
 
 /** A reusable preset for one real file-processing operation. */

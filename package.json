@@ -9,12 +9,15 @@
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "check": "vue-tsc -b && vite build",
+    "test": "vitest run",
     "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-dialog": "^2.3.0",
     "@tauri-apps/plugin-fs": "^2.3.0",
+    "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "@vueuse/core": "^12.8.2",
     "highlight.js": "^11.11.1",
     "js-yaml": "^4.1.0",
@@ -24,7 +27,6 @@
     "pdfjs-dist": "^6.2.108",
     "pinia": "^3.0.2",
     "ts-fsrs": "^5.2.1",
-    "uuid": "^11.1.0",
     "vue": "^3.5.18",
     "vue-router": "^4.5.1"
   },
@@ -36,6 +38,7 @@
     "@vitejs/plugin-vue": "^6.0.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.6",
+    "vitest": "^3.2.4",
     "vue-tsc": "^2.2.12"
   }
 }

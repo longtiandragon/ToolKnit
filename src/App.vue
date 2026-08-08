@@ -1,33 +1,33 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useWorkbenchStore } from '@/stores/workbench'
-
-const route = useRoute()
-const store = useWorkbenchStore()
-const commandOpen = ref(false)
-const nav = [
-  ['/', '▦', '操作台'], ['/library', '↙', '收集与归档'], ['/tools', '◇', '文件处理中心'], ['/visual', '▧', '图片表达'], ['/code-image', '</>', '代码分享'], ['/ai', '✦', 'AI 内容工作台'],
-]
-const learning = [['/documents', '笔', '学习工作区'], ['/review', '复', '复习队列']]
-const title = computed(() => String(route.meta.title ?? 'ToolKnit'))
-const runningJobs = computed(() => store.jobs.filter((job) => job.status === 'running' || job.status === 'queued'))
+import { useUiStore } from '@/stores/ui'
+import { searchTools, toolCatalog } from '@/lib/tool-catalog'
+import { checkDesktopUpdate, hideMainWindow, isDesktop, listenDesktopEvent, quitDesktopApp, sendSystemNotification, setClipboardMonitor } from '@/lib/native'
+import AppIcon from '@/components/AppIcon.vue'
+import AppToastHost from '@/components/AppToastHost.vue'
+import AppConfirmDialog from '@/components/AppConfirmDialog.vue'
+import { looksLikeCode } from '@/lib/workbench-utils'
+const route=useRoute(),router=useRouter(),store=useWorkbenchStore(),ui=useUiStore();const commandOpen=ref(false),commandQuery=ref(''),commandInput=ref<HTMLInputElement>(),taskPanelOpen=ref(false),closePrompt=ref(false),rememberClose=ref(true);const unlisteners:Array<()=>void>=[]
+const navGroups=[{label:'工作',items:[['/tools','toolbox','文件处理'],['/visual','image','图片工作室'],['/code-image','terminal','代码工作室'],['/history','clock','处理历史'],['/clipboard','file-text','剪贴板']]},{label:'开发',items:[['/developer-tools','code','开发工具']]},{label:'知识',items:[['/library','inbox','资料库'],['/documents?kind=note','book','笔记'],['/documents?kind=question','review','错题'],['/review','review','复习']]},{label:'AI',items:[['/ai','sparkle','AI 工作台']]},{label:'设置',items:[['/settings?section=config','settings','配置'],['/settings?section=backup','inbox','备份']]}]
+const title=computed(()=>String(route.meta.title??'ToolKnit'));const runningJobs=computed(()=>store.jobs.filter(j=>j.status==='running'||j.status==='queued'));const commandResults=computed(()=>searchTools(commandQuery.value));const currentBreadcrumb=computed(()=>navGroups.flatMap(g=>g.items.map(i=>({group:g.label,path:i[0].split('?')[0],label:i[2]}))).find(i=>i.path===route.path))
+function isNavActive(to:string){const target=router.resolve(to);return route.path===target.path&&Object.entries(target.query).every(([key,value])=>String(route.query[key]??'')===String(value))}
+function openCommand(){commandOpen.value=true;nextTick(()=>commandInput.value?.focus())}function closeCommand(){commandOpen.value=false;commandQuery.value=''}function openFirstResult(){const first=commandResults.value[0];if(!first)return;store.recordToolUsage(first.id,first.to.path);router.push(first.to);closeCommand()}
+function handleShortcut(event:KeyboardEvent){if((event.ctrlKey||event.metaKey)&&!event.altKey&&event.key.toLowerCase()==='k'){event.preventDefault();commandOpen.value?closeCommand():openCommand()}else if(event.ctrlKey&&event.altKey&&/^[1-9]$/.test(event.key)){const favorite=store.favorites.slice().sort((a,b)=>a.order-b.order)[Number(event.key)-1];const tool=favorite&&toolCatalog.find(item=>item.id===favorite.toolId);if(tool){event.preventDefault();store.recordToolUsage(tool.id,tool.to.path);router.push(tool.to)}}else if(event.key==='Escape'){closeCommand();taskPanelOpen.value=false;closePrompt.value=false}}
+function toolForRoute(){return toolCatalog.find(item=>item.to.path===route.path&&Object.entries(item.to.query??{}).every(([key,value])=>String(route.query[key]??'')===value))}
+async function chooseClose(action:'tray'|'quit'){if(rememberClose.value)store.updateSettings({closeBehavior:action});closePrompt.value=false;if(action==='tray')await hideMainWindow();else await quitDesktopApp()}
+async function autoCheck(){if(!isDesktop()||!store.settings.autoCheckUpdates)return;const last=store.settings.lastUpdateCheck?new Date(store.settings.lastUpdateCheck).getTime():0;if(Date.now()-last<86400000)return;store.updateSettings({lastUpdateCheck:new Date().toISOString()});try{const release=await checkDesktopUpdate();if(release&&release.tag_name.replace(/^v/,'')!==__APP_VERSION__)ui.toast(`发现新版本 ${release.tag_name}`,release.name||'前往设置查看更新说明。','info','查看',()=>router.push({path:'/settings',query:{section:'update'}}))}catch{/* 离线时保持安静 */}}
+watch(()=>route.fullPath,()=>{closeCommand();const tool=toolForRoute();if(tool)store.recordToolUsage(tool.id,route.fullPath)})
+const previousStatus=new Map<string,string>();watch(()=>store.jobs.map(j=>({id:j.id,status:j.status,label:j.label,startedAt:j.startedAt})),async jobs=>{for(const job of jobs){const before=previousStatus.get(job.id);if(before&&before!==job.status&&(job.status==='succeeded'||job.status==='failed')&&store.settings.notificationsEnabled){const elapsed=job.startedAt?Date.now()-new Date(job.startedAt).getTime():0;if(job.status==='failed'||elapsed>5000)await sendSystemNotification(job.status==='succeeded'?'ToolKnit 任务完成':'ToolKnit 任务失败',job.label)}previousStatus.set(job.id,job.status)}},{deep:true})
+onMounted(async()=>{window.addEventListener('keydown',handleShortcut);await setClipboardMonitor(store.settings.clipboardEnabled,store.settings.clipboardPaused);unlisteners.push(await listenDesktopEvent<{kind:'text'|'image';content?:string;assetPath?:string;hash:string}>('toolknit://clipboard',payload=>store.addClipboardItem({kind:payload.kind==='text'&&looksLikeCode(payload.content||'')?'code':payload.kind,content:payload.content,assetPath:payload.assetPath,hash:payload.hash})));unlisteners.push(await listenDesktopEvent('toolknit://tray-clipboard',()=>{store.updateSettings({clipboardPaused:!store.settings.clipboardPaused});setClipboardMonitor(store.settings.clipboardEnabled,store.settings.clipboardPaused)}));unlisteners.push(await listenDesktopEvent('toolknit://tray-settings',()=>router.push('/settings')));if(isDesktop()){const{getCurrentWindow}=await import('@tauri-apps/api/window');unlisteners.push(await getCurrentWindow().onCloseRequested(async event=>{event.preventDefault();if(store.settings.closeBehavior==='tray')await hideMainWindow();else if(store.settings.closeBehavior==='quit')await quitDesktopApp();else closePrompt.value=true}))}autoCheck()})
+onBeforeUnmount(()=>{window.removeEventListener('keydown',handleShortcut);unlisteners.forEach(fn=>fn())})
 </script>
-
-<template>
-  <main class="app-shell">
-    <aside class="rail" aria-label="主导航">
-      <RouterLink to="/" class="brand" title="ToolKnit 操作台">TK</RouterLink>
-      <p class="rail-label">工作台</p>
-      <nav><RouterLink v-for="item in nav" :key="item[0]" :to="item[0]" class="rail-link" :title="item[2]"><b>{{ item[1] }}</b><span>{{ item[2] }}</span></RouterLink></nav>
-      <p class="rail-label">学习</p>
-      <nav><RouterLink v-for="item in learning" :key="item[0]" :to="item[0]" class="rail-link" :title="item[2]"><b>{{ item[1] }}</b><span>{{ item[2] }}</span></RouterLink></nav>
-      <div class="rail-bottom"><RouterLink to="/lab" class="rail-link"><b>⌁</b><span>实验室</span></RouterLink><RouterLink to="/settings" class="rail-link"><b>⚙</b><span>设置</span></RouterLink></div>
-    </aside>
-    <section class="workspace">
-      <header class="topbar"><div><p class="eyebrow">{{ store.activeVaultName }} · WINDOWS DESKTOP</p><h1>{{ title }}</h1></div><div class="topbar-actions"><button class="command-trigger" @click="commandOpen = true"><kbd>⌘ K</kbd> 快速操作</button><RouterLink to="/tools" class="new-task">＋ 新建任务</RouterLink></div></header>
-      <RouterView />
-    </section>
-    <div v-if="commandOpen" class="modal-backdrop" @click.self="commandOpen = false"><section class="command-palette"><header><span>快速操作</span><button @click="commandOpen = false">Esc</button></header><RouterLink to="/tools" @click="commandOpen = false"><b>◇</b><span>打开文件处理中心</span><kbd>F</kbd></RouterLink><RouterLink to="/library" @click="commandOpen = false"><b>↙</b><span>收集或归档资料</span><kbd>I</kbd></RouterLink><RouterLink to="/code-image" @click="commandOpen = false"><b>&lt;/&gt;</b><span>生成代码分享图</span><kbd>C</kbd></RouterLink><p v-if="runningJobs.length" class="command-jobs">{{ runningJobs.length }} 个任务正在执行</p></section></div>
-  </main>
-</template>
+<template><main class="app-shell">
+  <aside class="rail" aria-label="主导航"><RouterLink to="/" class="brand" title="ToolKnit 操作台"><span>TK</span><i></i></RouterLink><div class="rail-scroll"><section v-for="group in navGroups" :key="group.label"><p class="rail-label">{{group.label}}</p><nav><RouterLink v-for="item in group.items" :key="item[0]" :to="item[0]" class="rail-link" active-class="nav-parent" exact-active-class="nav-exact" :class="{'router-link-active':isNavActive(item[0])}" :title="item[2]"><b><AppIcon :name="item[1]"/></b><span>{{item[2]}}</span></RouterLink></nav></section></div><div class="rail-bottom"><RouterLink to="/lab" class="rail-link"><b><AppIcon name="flask"/></b><span>实验室</span></RouterLink><span class="privacy-mark"><i></i>LOCAL ONLY</span></div></aside>
+  <section class="workspace"><header class="topbar"><div><p class="eyebrow">{{currentBreadcrumb?.group||'工作台'}} / {{store.activeVaultName}}</p><h1>{{title}}</h1></div><div class="topbar-actions"><button class="command-trigger" aria-label="搜索工具或操作" @click="openCommand"><AppIcon name="search" :size="15"/><span>搜索工具或操作</span><kbd>Ctrl K</kbd></button><button class="task-indicator" :class="{active:runningJobs.length}" @click="taskPanelOpen=!taskPanelOpen"><i></i><span>{{runningJobs.length?`${runningJobs.length} 个任务`:'本地就绪'}}</span></button><RouterLink to="/tools" class="new-task"><AppIcon name="plus" :size="15"/>新建任务</RouterLink></div></header><RouterView/></section>
+  <aside v-if="taskPanelOpen" class="task-drawer"><header><div><p class="eyebrow">TASK CENTER</p><h3>任务中心</h3></div><button @click="taskPanelOpen=false">×</button></header><div v-if="store.jobs.length"><article v-for="job in store.jobs.slice(0,8)" :key="job.id"><span><b>{{job.label}}</b><small>{{job.detail||job.inputNames?.join('、')}}</small></span><i :class="job.status">{{job.status==='running'?`${job.progress}%`:job.status==='succeeded'?'完成':job.status==='failed'?'失败':'等待'}}</i><progress v-if="job.status==='running'" max="100" :value="job.progress"></progress></article></div><p v-else>暂无任务。处理进度会集中显示在这里。</p><RouterLink to="/history" @click="taskPanelOpen=false">查看全部历史 →</RouterLink></aside>
+  <div v-if="commandOpen" class="modal-backdrop" @click.self="closeCommand"><section class="command-palette" role="dialog" aria-modal="true" aria-label="搜索工具"><form class="command-search" @submit.prevent="openFirstResult"><span><AppIcon name="search" :size="21"/></span><input ref="commandInput" v-model="commandQuery" autocomplete="off" placeholder="搜索合并 PDF、压缩图片、JSON…" @keydown.enter.prevent="openFirstResult"/><button type="button" @click="closeCommand">Esc</button></form><div class="command-caption"><span>{{commandQuery?`找到 ${commandResults.length} 个工具`:'常用工具'}}</span><small>Enter 打开第一个结果</small></div><div v-if="commandResults.length" class="command-results"><RouterLink v-for="item in commandResults" :key="item.id" :to="item.to" @click="store.recordToolUsage(item.id,item.to.path);closeCommand()"><b><AppIcon :name="item.icon" :size="17"/></b><span><strong>{{item.title}}</strong><small>{{item.description}}</small></span><i>{{item.group}}</i><button class="command-favorite" :class="{active:store.favorites.some(f=>f.toolId===item.id)}" @click.prevent.stop="store.toggleFavorite(item.id)">★</button></RouterLink></div><div v-else class="command-empty"><b>没有匹配的工具</b><span>试试“PDF”“图片”“压缩”或“文本”。</span></div><footer class="command-footer"><span>所有文件工具默认在本地处理</span><b v-if="runningJobs.length">{{runningJobs.length}} 个任务执行中</b></footer></section></div>
+  <div v-if="closePrompt" class="modal-backdrop close-backdrop"><section class="close-dialog"><p class="eyebrow">WINDOW BEHAVIOR</p><h3>关闭 ToolKnit？</h3><p>隐藏到托盘后，已开启的剪贴板监听会继续在本机运行。</p><label><input v-model="rememberClose" type="checkbox"/>记住我的选择，不再询问</label><div><button class="quiet-button" @click="closePrompt=false">取消</button><button class="quiet-button" @click="chooseClose('tray')">隐藏到托盘</button><button class="primary-button danger" @click="chooseClose('quit')">彻底退出</button></div></section></div>
+  <AppToastHost/><AppConfirmDialog/>
+</main></template>

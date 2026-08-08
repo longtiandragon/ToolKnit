@@ -76,7 +76,7 @@ onBeforeUnmount(() => pdfDocument?.destroy?.())
       <img v-else-if="source.kind === 'image' && source.preview" ref="image" :src="source.preview" :alt="source.name" />
       <pre v-else>{{ source.content }}</pre>
       <span v-if="selection" class="crop-box" :style="selectionStyle"><i>已框选</i></span>
-      <span v-if="loading" class="canvas-status">正在渲染 PDF…</span><span v-if="error" class="canvas-status error">{{ error }}</span>
+      <div v-if="loading" class="canvas-skeleton"><i></i><i></i><i></i><b>正在解析并渲染 PDF 页面…</b></div><span v-if="error" class="canvas-status error">{{ error }}</span>
     </div>
     <p v-if="source.kind === 'pdf' || source.kind === 'image'" class="crop-tip">拖动框选一道题、公式或一段文字；选区会带着来源进入错题卡。</p>
   </div>

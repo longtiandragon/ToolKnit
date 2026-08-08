@@ -1,20 +1,22 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import TagPill from '@/components/TagPill.vue'
 import AiAssistPanel from '@/components/AiAssistPanel.vue'
 import { renderMarkdown } from '@/lib/markdown'
 import type { StudyDocument } from '@/types'
 import { useWorkbenchStore } from '@/stores/workbench'
+import { useUiStore } from '@/stores/ui'
 
 const store = useWorkbenchStore()
 const router = useRouter()
+const route = useRoute(); const ui=useUiStore()
 const query = ref('')
 const selectedId = ref(store.documents[0]?.id ?? '')
 const draft = ref<StudyDocument | null>(store.documents[0] ? structuredClone(store.documents[0]) : null)
 const newTag = ref('')
 const saved = ref(false)
-const docs = computed(() => store.documents.filter((document) => `${document.title} ${document.tags.join(' ')} ${document.content}`.toLowerCase().includes(query.value.toLowerCase())))
+const docs = computed(() => store.documents.filter((document) => (!route.query.kind || document.kind === route.query.kind) && `${document.title} ${document.tags.join(' ')} ${document.content}`.toLowerCase().includes(query.value.toLowerCase())))
 const selected = computed(() => store.documents.find((document) => document.id === selectedId.value))
 const preview = computed(() => draft.value ? renderMarkdown(draft.value.content.replace(/^---[\s\S]*?---\s*/, '')) : '')
 const anchorCrop = computed(() => {
@@ -23,6 +25,7 @@ const anchorCrop = computed(() => {
 })
 
 watch(selected, (document) => { draft.value = document ? structuredClone(document) : null }, { immediate: true })
+watch(()=>route.query.document,id=>{if(typeof id==='string'&&store.documents.some(doc=>doc.id===id))selectedId.value=id},{immediate:true})
 
 function pick(document: StudyDocument) { selectedId.value = document.id; saved.value = false }
 function createQuestion() { const document = store.createQuestion(); selectedId.value = document.id }
@@ -30,7 +33,7 @@ function createNote() { const document = store.createNote(); selectedId.value = 
 function save() { if (draft.value) { store.saveDocument(draft.value); saved.value = true; setTimeout(() => saved.value = false, 1600) } }
 function addTag() { const tag = newTag.value.trim(); if (draft.value && tag && !draft.value.tags.includes(tag)) draft.value.tags.push(tag); newTag.value = '' }
 function removeTag(tag: string) { if (draft.value) draft.value.tags = draft.value.tags.filter((item) => item !== tag) }
-function remove() { if (!draft.value || !confirm(`删除“${draft.value.title}”？`)) return; store.deleteDocument(draft.value.id); selectedId.value = store.documents[0]?.id ?? '' }
+async function remove() { if (!draft.value || !await ui.confirm({title:`删除“${draft.value.title}”？`,message:'删除后不会影响原始资料，但该笔记或错题无法恢复。',danger:true,confirmLabel:'删除'})) return; store.deleteDocument(draft.value.id); selectedId.value = docs.value[0]?.id ?? '';ui.toast('已删除文档',undefined,'success') }
 function insertAi(content: string) { if (!draft.value) return; draft.value.content += `\n\n---\n\n## AI 草稿（已确认）\n\n${content}\n`; save() }
 function returnToSource() {
   const anchor = draft.value?.sourceAnchor
