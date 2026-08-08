@@ -58,6 +58,15 @@ export async function copyPngToClipboard(blob: Blob) {
   if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') throw new Error('当前浏览器不支持复制图片。')
   await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
 }
+export async function copyPngFilesToClipboard(files: Array<{ name: string; blob: Blob }>) {
+  if (!isDesktop()) throw new Error('多张独立图片复制仅支持桌面开发模式，请使用“合并长图”或导出。')
+  return invoke<string[]>('copy_png_files', {
+    files: await Promise.all(files.map(async ({ name, blob }) => ({
+      name,
+      data: Array.from(new Uint8Array(await blob.arrayBuffer()))
+    })))
+  })
+}
 export async function cleanupClipboardAssets(activePaths:string[]) { if(isDesktop()) await invoke('cleanup_clipboard_assets',{activePaths}) }
 export function localAssetUrl(path?: string) { return path && isDesktop() ? convertFileSrc(path) : path ?? '' }
 

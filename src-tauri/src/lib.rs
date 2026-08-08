@@ -59,6 +59,10 @@ struct GitHubRelease { tag_name: String, html_url: String, published_at: Option<
 #[serde(rename_all = "camelCase")]
 struct InputFilePayload { name: String, path: String, mime: String, size: u64, data: Vec<u8> }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipboardPngFile { name: String, data: Vec<u8> }
+
 fn digest(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
 
 fn start_clipboard_monitor(app: tauri::AppHandle, state: ClipboardMonitorState) {
@@ -129,6 +133,50 @@ fn copy_png_bytes(data: Vec<u8>) -> Result<(), String> {
             bytes: Cow::Owned(image.into_raw()),
         })
         .map_err(|error| error.to_string())
+}
+
+fn safe_png_name(name: &str, index: usize) -> String {
+    let stem = Path::new(name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("code-snapshot")
+        .chars()
+        .map(|character| if character.is_alphanumeric() || matches!(character, '-' | '_' | '.') { character } else { '-' })
+        .collect::<String>()
+        .trim_matches(['-', '.'])
+        .to_string();
+    if stem.is_empty() { format!("code-snapshot-{:02}.png", index + 1) } else { format!("{}.png", stem) }
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn copy_png_files(files: Vec<ClipboardPngFile>, app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    use clipboard_win::{formats, Clipboard, Setter};
+
+    if files.is_empty() { return Err("没有可复制的图片".into()); }
+    let directory = app.path().app_cache_dir()
+        .map_err(|error| error.to_string())?
+        .join("clipboard-files")
+        .join(uuid::Uuid::now_v7().to_string());
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+
+    let mut paths = Vec::with_capacity(files.len());
+    for (index, file) in files.into_iter().enumerate() {
+        image::load_from_memory_with_format(&file.data, image::ImageFormat::Png)
+            .map_err(|error| format!("第 {} 张图片无效：{}", index + 1, error))?;
+        let path = directory.join(safe_png_name(&file.name, index));
+        fs::write(&path, file.data).map_err(|error| error.to_string())?;
+        paths.push(path.to_string_lossy().into_owned());
+    }
+    let _clipboard = Clipboard::new_attempts(10).map_err(|error| error.to_string())?;
+    formats::FileList.write_clipboard(paths.as_slice()).map_err(|error| error.to_string())?;
+    Ok(paths)
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn copy_png_files(_files: Vec<ClipboardPngFile>, _app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    Err("多张独立图片复制目前仅支持 Windows 桌面端".into())
 }
 
 #[tauri::command]
@@ -225,7 +273,7 @@ pub fn run() {
             tray.build(app)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![init_vault, import_source, save_markdown, write_api_key, delete_api_key, run_ai_action, create_backup, set_clipboard_monitor, copy_clipboard, copy_png_bytes, cleanup_clipboard_assets, save_output, copy_output_file, file_exists, read_input_file, reveal_in_folder, directory_size, check_github_update, quit_app])
+        .invoke_handler(tauri::generate_handler![init_vault, import_source, save_markdown, write_api_key, delete_api_key, run_ai_action, create_backup, set_clipboard_monitor, copy_clipboard, copy_png_bytes, copy_png_files, cleanup_clipboard_assets, save_output, copy_output_file, file_exists, read_input_file, reveal_in_folder, directory_size, check_github_update, quit_app])
         .run(tauri::generate_context!())
         .expect("error while running ToolKnit");
 }

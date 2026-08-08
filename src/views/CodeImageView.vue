@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { PDFDocument } from 'pdf-lib'
 import { toBlob } from 'html-to-image'
 import { splitCodeForExport } from '@/lib/code-image'
@@ -7,7 +7,7 @@ import { codeLanguages, detectCodeLanguage, highlightCode, type CodeLanguage } f
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useUiStore } from '@/stores/ui'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
-import { copyPngToClipboard, isDesktop, revealDesktopFile } from '@/lib/native'
+import { copyPngFilesToClipboard, copyPngToClipboard, isDesktop, revealDesktopFile } from '@/lib/native'
 import type { FileReference } from '@/types'
 import FileDropZone from '@/components/FileDropZone.vue'
 import CodeSnapCard from '@/components/CodeSnapCard.vue'
@@ -22,6 +22,7 @@ const copying = ref(false)
 const lastOutputs = ref<FileReference[]>([])
 const activePage = ref(0)
 const selectedPages = ref(new Set([0]))
+const contextMenu = ref({ open: false, x: 0, y: 0, page: 0 })
 
 const defaultCode = `#include <bits/stdc++.h>
 using namespace std;
@@ -47,7 +48,7 @@ const highlightedPages = computed(() => pages.value.map((page) => highlightCode(
 const pageLineCounts = computed(() => pages.value.map((page) => page.split('\n').length))
 const languageLabel = computed(() => codeLanguages.find((item) => item.id === language.value)?.label ?? language.value)
 const selectedPageIndexes = computed(() => [...selectedPages.value].filter((index) => index < pages.value.length).sort((a, b) => a - b))
-const copyLabel = computed(() => selectedPageIndexes.value.length > 1 ? `复制所选 ${selectedPageIndexes.value.length} 张` : '复制图片')
+const copyLabel = computed(() => selectedPageIndexes.value.length > 1 ? `复制为 ${selectedPageIndexes.value.length} 张` : '复制图片')
 
 watch(() => store.codeDraft, (draft) => {
   if (!draft || draft.content === code.value) return
@@ -106,6 +107,28 @@ function selectAllPages() {
     : new Set(pages.value.map((_, index) => index))
 }
 
+function openPreviewMenu(event: MouseEvent, page = activePage.value) {
+  activePage.value = page
+  contextMenu.value = {
+    open: true,
+    page,
+    x: Math.max(8, Math.min(event.clientX, window.innerWidth - 224)),
+    y: Math.max(8, Math.min(event.clientY, window.innerHeight - 250))
+  }
+}
+
+function closePreviewMenu() { contextMenu.value.open = false }
+onMounted(() => {
+  window.addEventListener('click', closePreviewMenu)
+  window.addEventListener('blur', closePreviewMenu)
+  window.addEventListener('resize', closePreviewMenu)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('click', closePreviewMenu)
+  window.removeEventListener('blur', closePreviewMenu)
+  window.removeEventListener('resize', closePreviewMenu)
+})
+
 async function combineImages(blobs: Blob[]) {
   if (blobs.length === 1) return blobs[0]
   const images = await Promise.all(blobs.map((blob) => createImageBitmap(blob)))
@@ -145,16 +168,43 @@ async function openLocation(path?: string) {
   catch (error) { ui.toast('无法打开文件位置', error instanceof Error ? error.message : '文件可能已移动。', 'error') }
 }
 
+async function copyCurrentImage(index = activePage.value) {
+  copying.value = true
+  try {
+    await copyPngToClipboard(await capturePage(index))
+    store.addActivity('output', '复制代码图片', `${sourceName.value} · 第 ${index + 1} 张`, '/code-image')
+    ui.toast('图片已复制', '可以直接粘贴到微信、QQ、邮件或文档。', 'success')
+  } catch (error) {
+    ui.toast('复制图片失败', error instanceof Error ? error.message : '系统剪贴板不可用。', 'error')
+  } finally { copying.value = false }
+}
+
 async function copySelectedImages() {
+  const indexes = selectedPageIndexes.value.length ? selectedPageIndexes.value : [activePage.value]
+  if (indexes.length === 1) return copyCurrentImage(indexes[0])
+  copying.value = true
+  try {
+    const blobs = await Promise.all(indexes.map(capturePage))
+    await copyPngFilesToClipboard(blobs.map((blob, index) => ({
+      name: `${stem()}-${String(indexes[index] + 1).padStart(2, '0')}.png`,
+      blob
+    })))
+    store.addActivity('output', '复制多张代码图片', `${sourceName.value} · ${indexes.map((index) => index + 1).join('、')} 页`, '/code-image')
+    ui.toast(`${indexes.length} 张独立图片已复制`, '可粘贴到资源管理器，或拖放/粘贴到支持多附件的软件。', 'success')
+  } catch (error) {
+    ui.toast('复制多张图片失败', error instanceof Error ? error.message : 'Windows 文件剪贴板不可用。', 'error')
+  } finally { copying.value = false }
+}
+
+async function copySelectedAsLongImage() {
   copying.value = true
   try {
     const indexes = selectedPageIndexes.value.length ? selectedPageIndexes.value : [activePage.value]
-    const blob = await combineImages(await Promise.all(indexes.map(capturePage)))
-    await copyPngToClipboard(blob)
-    store.addActivity('output', indexes.length > 1 ? '复制多页代码长图' : '复制代码图片', `${sourceName.value} · ${indexes.map((index) => index + 1).join('、')} 页`, '/code-image')
-    ui.toast(indexes.length > 1 ? `${indexes.length} 张图片已合并复制` : '图片已复制', '可以直接粘贴到微信、QQ、邮件或文档。', 'success')
+    await copyPngToClipboard(await combineImages(await Promise.all(indexes.map(capturePage))))
+    store.addActivity('output', '复制多页代码长图', `${sourceName.value} · ${indexes.map((index) => index + 1).join('、')} 页`, '/code-image')
+    ui.toast(indexes.length > 1 ? `${indexes.length} 张已合并为长图` : '图片已复制', '剪贴板中是一张 PNG 图片。', 'success')
   } catch (error) {
-    ui.toast('复制图片失败', error instanceof Error ? error.message : '系统剪贴板不可用。', 'error')
+    ui.toast('复制长图失败', error instanceof Error ? error.message : '系统剪贴板不可用。', 'error')
   } finally { copying.value = false }
 }
 
@@ -219,6 +269,7 @@ async function exportPdf() {
       <div class="code-export-actions">
         <button class="secondary-action" :disabled="exporting || copying" @click="exportCurrentPage"><AppIcon name="image" :size="15"/>导出 PNG</button>
         <button class="secondary-action" :disabled="exporting || copying" @click="exportPdf">导出 PDF</button>
+        <button v-if="selectedPageIndexes.length > 1" class="secondary-action" :disabled="exporting || copying" @click="copySelectedAsLongImage">合并长图</button>
         <button class="primary-button code-copy-primary" :disabled="exporting || copying" @click="copySelectedImages"><AppIcon name="duplicate" :size="15"/>{{ copying ? '正在复制…' : copyLabel }}</button>
       </div>
     </section>
@@ -257,8 +308,8 @@ async function exportPdf() {
         </section>
 
         <section class="live-code-preview panel">
-          <header><div><p class="eyebrow">LIVE PREVIEW</p><strong>实时图片预览</strong></div><span>2× 高清导出</span></header>
-          <div class="codesnap-stage">
+          <header><div><p class="eyebrow">LIVE PREVIEW</p><strong>实时图片预览</strong></div><span>右键复制 · 2× 高清</span></header>
+          <div class="codesnap-stage" title="右键可复制当前图片" @contextmenu.prevent.stop="openPreviewMenu($event)">
             <CodeSnapCard
               :code-html="highlightedPages[activePage]"
               :line-count="pageLineCounts[activePage]"
@@ -274,17 +325,27 @@ async function exportPdf() {
             />
           </div>
           <div v-if="pages.length > 1" class="page-selection-strip">
-            <span>多选复制</span>
-            <button v-for="(_, index) in pages" :key="index" :class="{ selected: selectedPages.has(index), current: activePage === index }" @click="toggleSelectedPage(index)"><i>{{ selectedPages.has(index) ? '✓' : '' }}</i>第 {{ index + 1 }} 张</button>
+            <span>选择图片</span>
+            <button v-for="(_, index) in pages" :key="index" :class="{ selected: selectedPages.has(index), current: activePage === index }" @click="toggleSelectedPage(index)" @contextmenu.prevent.stop="openPreviewMenu($event, index)"><i>{{ selectedPages.has(index) ? '✓' : '' }}</i>第 {{ index + 1 }} 张</button>
             <button class="select-all-pages" @click="selectAllPages">{{ selectedPages.size === pages.length ? '仅保留当前' : '全选' }}</button>
           </div>
           <footer class="preview-toolbar">
             <div class="page-switcher"><button :disabled="activePage === 0" @click="activePage--">←</button><span>第 {{ activePage + 1 }} / {{ pages.length }} 张</span><button :disabled="activePage === pages.length - 1" @click="activePage++">→</button></div>
-            <div><button class="quiet-button" :disabled="pages.length === 1 || exporting" @click="exportAll">导出全部 {{ pages.length }} 张</button><button class="primary-button" :disabled="copying" @click="copySelectedImages">{{ copying ? '正在复制…' : copyLabel }}</button></div>
+            <div><button class="quiet-button" :disabled="pages.length === 1 || exporting" @click="exportAll">导出全部 {{ pages.length }} 张</button><button v-if="selectedPageIndexes.length > 1" class="quiet-button" :disabled="copying" @click="copySelectedAsLongImage">合并长图</button><button class="primary-button" :disabled="copying" @click="copySelectedImages">{{ copying ? '正在复制…' : copyLabel }}</button></div>
           </footer>
         </section>
       </div>
     </section>
+
+    <div v-if="contextMenu.open" class="codesnap-context-menu" role="menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop>
+      <header><span>第 {{ contextMenu.page + 1 }} 张</span><small>代码图片</small></header>
+      <button role="menuitem" :disabled="copying" @click="copyCurrentImage(contextMenu.page); closePreviewMenu()"><AppIcon name="duplicate" :size="14"/>复制当前图片</button>
+      <button role="menuitem" @click="toggleSelectedPage(contextMenu.page); closePreviewMenu()"><AppIcon name="plus" :size="14"/>{{ selectedPages.has(contextMenu.page) && selectedPages.size > 1 ? '从多选中移除' : '加入多选' }}</button>
+      <button v-if="selectedPageIndexes.length > 1" role="menuitem" :disabled="copying" @click="copySelectedImages(); closePreviewMenu()"><AppIcon name="image" :size="14"/>复制所选 {{ selectedPageIndexes.length }} 张</button>
+      <button v-if="selectedPageIndexes.length > 1" role="menuitem" :disabled="copying" @click="copySelectedAsLongImage(); closePreviewMenu()"><AppIcon name="merge" :size="14"/>合并所选为长图</button>
+      <hr />
+      <button role="menuitem" :disabled="exporting" @click="exportCurrentPage(); closePreviewMenu()"><AppIcon name="file-image" :size="14"/>导出当前 PNG</button>
+    </div>
 
     <section v-if="lastOutputs.length" class="code-output-result panel">
       <header><div><p class="eyebrow">EXPORT COMPLETE</p><h3>刚刚生成的文件</h3></div><button v-if="lastOutputs[0]?.path" class="primary-button" @click="openLocation(lastOutputs[0].path)">打开输出位置</button></header>
