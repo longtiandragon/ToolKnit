@@ -28,7 +28,7 @@ defineProps<{
       <pre><code v-html="codeHtml"></code></pre>
     </div>
     <footer>
-      <span>{{ watermark || 'ToolKnit' }}</span>
+      <span>{{ watermark }}</span>
       <small v-if="totalPages > 1">{{ pageNumber }} / {{ totalPages }}</small>
     </footer>
   </article>

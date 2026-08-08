@@ -65,35 +65,34 @@ struct ClipboardPngFile { name: String, data: Vec<u8> }
 
 fn digest(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
 
+fn persist_clipboard_image(app: &tauri::AppHandle, image: arboard::ImageData<'_>) -> Result<ClipboardPayload, String> {
+    let hash = digest(image.bytes.as_ref());
+    let directory = app.path().app_data_dir().map_err(|error| error.to_string())?.join("clipboard");
+    let path = directory.join(format!("{}.png", hash));
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    image::save_buffer(&path, image.bytes.as_ref(), image.width as u32, image.height as u32, image::ColorType::Rgba8)
+        .map_err(|error| error.to_string())?;
+    Ok(ClipboardPayload { kind: "image".into(), content: None, asset_path: Some(path.to_string_lossy().into_owned()), hash })
+}
+
 fn start_clipboard_monitor(app: tauri::AppHandle, state: ClipboardMonitorState) {
     thread::spawn(move || {
         let mut clipboard = match arboard::Clipboard::new() { Ok(value) => value, Err(_) => return };
         let mut last_hash = String::new();
         loop {
             if state.enabled.load(Ordering::Relaxed) && !state.paused.load(Ordering::Relaxed) {
-                if let Ok(text) = clipboard.get_text() {
+                if let Ok(image) = clipboard.get_image() {
+                    if let Ok(payload) = persist_clipboard_image(&app, image) {
+                        if payload.hash != last_hash {
+                            last_hash = payload.hash.clone();
+                            let _ = app.emit("toolknit://clipboard", payload);
+                        }
+                    }
+                } else if let Ok(text) = clipboard.get_text() {
                     let hash = digest(text.as_bytes());
-                    if !text.is_empty() && hash != last_hash {
+                    if !text.trim().is_empty() && hash != last_hash {
                         last_hash = hash.clone();
                         let _ = app.emit("toolknit://clipboard", ClipboardPayload { kind: "text".into(), content: Some(text), asset_path: None, hash });
-                    }
-                } else if let Ok(image) = clipboard.get_image() {
-                    let hash = digest(image.bytes.as_ref());
-                    if hash != last_hash {
-                        last_hash = hash.clone();
-                        if let Ok(root) = app.path().app_data_dir() {
-                            let directory = root.join("clipboard");
-                            let path = directory.join(format!("{}.png", hash));
-                            let _ = fs::create_dir_all(&directory);
-                            let _ = image::save_buffer(
-                                &path,
-                                image.bytes.as_ref(),
-                                image.width as u32,
-                                image.height as u32,
-                                image::ColorType::Rgba8,
-                            );
-                            let _ = app.emit("toolknit://clipboard", ClipboardPayload { kind: "image".into(), content: None, asset_path: Some(path.to_string_lossy().into_owned()), hash });
-                        }
                     }
                 }
             }
@@ -106,6 +105,19 @@ fn start_clipboard_monitor(app: tauri::AppHandle, state: ClipboardMonitorState) 
 fn set_clipboard_monitor(enabled: bool, paused: bool, state: tauri::State<'_, ClipboardMonitorState>) {
     state.enabled.store(enabled, Ordering::Relaxed);
     state.paused.store(paused, Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn read_clipboard_current(app: tauri::AppHandle) -> Result<ClipboardPayload, String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|error| error.to_string())?;
+    if let Ok(image) = clipboard.get_image() { return persist_clipboard_image(&app, image); }
+    if let Ok(text) = clipboard.get_text() {
+        if !text.trim().is_empty() {
+            let hash = digest(text.as_bytes());
+            return Ok(ClipboardPayload { kind: "text".into(), content: Some(text), asset_path: None, hash });
+        }
+    }
+    Err("剪贴板中没有可读取的文本或图片".into())
 }
 
 #[tauri::command]
@@ -273,7 +285,7 @@ pub fn run() {
             tray.build(app)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![init_vault, import_source, save_markdown, write_api_key, delete_api_key, run_ai_action, create_backup, set_clipboard_monitor, copy_clipboard, copy_png_bytes, copy_png_files, cleanup_clipboard_assets, save_output, copy_output_file, file_exists, read_input_file, reveal_in_folder, directory_size, check_github_update, quit_app])
+        .invoke_handler(tauri::generate_handler![init_vault, import_source, save_markdown, write_api_key, delete_api_key, run_ai_action, create_backup, set_clipboard_monitor, read_clipboard_current, copy_clipboard, copy_png_bytes, copy_png_files, cleanup_clipboard_assets, save_output, copy_output_file, file_exists, read_input_file, reveal_in_folder, directory_size, check_github_update, quit_app])
         .run(tauri::generate_context!())
         .expect("error while running ToolKnit");
 }

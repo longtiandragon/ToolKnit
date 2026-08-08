@@ -9,11 +9,11 @@ describe('workbench utilities', () => {
     expect(result).toHaveLength(11)
     expect(result[9].shortcut).toBeUndefined()
   })
-  it('keeps pinned clipboard items outside retention and caps recent items', () => {
+  it('keeps pinned clipboard items outside retention and repairs unsafe one-item limits', () => {
     const now = new Date('2026-08-08T00:00:00Z').getTime()
     const item = (id: string, days: number, pinned = false): ClipboardItem => ({ id, kind: 'text', content: id, hash: id, capturedAt: new Date(now - days * 86_400_000).toISOString(), pinned })
     const result = pruneClipboardHistory([item('pinned', 100, true), item('fresh', 1), item('second', 2), item('old', 40)], 1, 30, now)
-    expect(result.map((entry) => entry.id)).toEqual(['pinned', 'fresh'])
+    expect(result.map((entry) => entry.id)).toEqual(['pinned', 'fresh', 'second'])
   })
   it('recognizes code without treating ordinary prose as code', () => {
     expect(looksLikeCode('const answer = value => value * 2;')).toBe(true)

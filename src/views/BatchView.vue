@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib'
 import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
@@ -21,6 +21,7 @@ type ToolOption = [id: string, label: string]
 const store = useWorkbenchStore()
 const ui = useUiStore()
 const route = useRoute()
+const router = useRouter()
 const group = ref<ToolGroup>('pdf')
 const operation = ref('merge')
 const files = ref<File[]>([])
@@ -50,7 +51,6 @@ const activeRecipeId = ref<string>()
 
 const groups: [ToolGroup, string, string, string][] = [
   ['pdf', 'file-pdf', 'PDF', '合并、拆页、旋转、提取页面'],
-  ['image', 'file-image', '图片', '缩放、压缩、裁剪与转换'],
   ['text', 'file-text', '文本', 'JSON 格式化与文本清理'],
   ['organize', 'sort', '整理', '命名预览与哈希去重报告']
 ]
@@ -160,11 +160,16 @@ function saveCurrentRecipe() {
 }
 
 watch(() => route.query, (query) => {
+  if (query.group === 'image') {
+    router.replace({ path: '/visual', query: { tool: typeof query.operation === 'string' ? query.operation : 'convert' } })
+    return
+  }
   const replayId = typeof query.replay === 'string' ? query.replay : undefined
   if (replayId) {
     const job = store.jobs.find((item) => item.id === replayId)
     if (job?.parameters && job.toolId) {
       const [nextGroup, ...parts] = job.toolId.split(':')
+      if (nextGroup === 'image') { router.replace({ path: '/visual', query: { tool: parts.join(':') || 'convert' } }); return }
       if (nextGroup in operationMap) applyRecipe({ id: `replay-${job.id}`, title: `上次参数 · ${job.label}`, group: nextGroup as ToolGroup, operation: parts.join(':'), parameters: job.parameters as ToolRecipe['parameters'], createdAt: job.createdAt })
       message.value = '已恢复上次参数。为保护隐私，请重新选择输入文件。'
       return
@@ -174,6 +179,7 @@ watch(() => route.query, (query) => {
   if (recipeId) {
     if (recipeId === activeRecipeId.value) return
     const recipe = store.recipes.find((item) => item.id === recipeId)
+    if (recipe?.group === 'image') { router.replace({ path: '/visual', query: { tool: recipe.operation } }); return }
     if (recipe) applyRecipe(recipe)
     return
   }

@@ -6,8 +6,9 @@ export function normalizeFavoriteOrder(toolIds: string[]): FavoriteTool[] {
 
 export function pruneClipboardHistory(items: ClipboardItem[], limit: number, retentionDays: number, at = Date.now()) {
   const threshold = at - Math.max(1, retentionDays) * 86_400_000
+  const safeLimit = Number.isFinite(limit) ? Math.max(10, Math.min(500, Math.round(limit))) : 100
   const pinned = items.filter((item) => item.pinned)
-  const recent = items.filter((item) => !item.pinned && new Date(item.capturedAt).getTime() >= threshold).sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)).slice(0, Math.max(1, limit))
+  const recent = items.filter((item) => !item.pinned && new Date(item.capturedAt).getTime() >= threshold).sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)).slice(0, safeLimit)
   return [...pinned, ...recent].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.capturedAt.localeCompare(a.capturedAt))
 }
 

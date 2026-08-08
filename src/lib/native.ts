@@ -45,6 +45,8 @@ export async function revealDesktopFile(path: string) { if (isDesktop()) await i
 export async function saveOutputAs(source:string,name:string) { if(!isDesktop())return;const {save}=await import('@tauri-apps/plugin-dialog');const destination=await save({title:'另存 ToolKnit 输出',defaultPath:name});if(!destination)return;return invoke<string>('copy_output_file',{source,destination}) }
 export async function getDirectorySize(path: string) { return isDesktop() && path ? invoke<number>('directory_size', { path }) : 0 }
 export async function setClipboardMonitor(enabled: boolean, paused: boolean) { if (isDesktop()) await invoke('set_clipboard_monitor', { enabled, paused }) }
+export interface NativeClipboardPayload { kind: 'text' | 'image'; content?: string; assetPath?: string; hash: string }
+export async function readDesktopClipboard() { return isDesktop() ? invoke<NativeClipboardPayload>('read_clipboard_current') : undefined }
 export async function copyClipboardItem(item: WorkbenchClipboardItem) {
   if (isDesktop()) return invoke('copy_clipboard', { kind: item.kind, content: item.content, assetPath: item.assetPath })
   if (item.content) return navigator.clipboard.writeText(item.content)

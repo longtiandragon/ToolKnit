@@ -1,6 +1,14 @@
 import type { SourceKind } from '@/types'
+import { isDesktop, readDesktopClipboard } from '@/lib/native'
 
-export async function readClipboardPayload(): Promise<{ kind: SourceKind; name: string; content?: string; preview?: string } | null> {
+export async function readClipboardPayload(): Promise<{ kind: SourceKind; name: string; content?: string; preview?: string; assetPath?: string; hash?: string } | null> {
+  if (isDesktop()) {
+    const payload = await readDesktopClipboard()
+    if (!payload) return null
+    return payload.kind === 'image'
+      ? { kind: 'image', name: '剪贴板图片.png', assetPath: payload.assetPath, hash: payload.hash }
+      : { kind: 'text', name: '剪贴板文本.md', content: payload.content, hash: payload.hash }
+  }
   try {
     const items = await navigator.clipboard.read()
     for (const item of items) {

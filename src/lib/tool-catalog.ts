@@ -16,6 +16,10 @@ function fileTool(id: string, title: string, description: string, group: 'pdf' |
   return { id: `${group}-${id}${query.mode ? `-${query.mode}` : ''}`, title, description, group: groupLabel[group], icon, to: { path: '/tools', query: { group, operation: id, ...query } }, keywords }
 }
 
+function imageTool(id: string, title: string, description: string, icon: string, keywords: string[]): ToolCatalogItem {
+  return { id: `image-${id}`, title, description, group: '图片', icon, to: { path: '/visual', query: { tool: id } }, keywords }
+}
+
 export const toolCatalog: ToolCatalogItem[] = [
   { ...fileTool('merge', '合并 PDF', '把多份 PDF 按顺序合成一份', 'pdf', 'merge', ['拼接', 'combine', 'merge']), popular: true },
   fileTool('split', '拆分 PDF', '把每一页导出为独立 PDF', 'pdf', 'split', ['分页', 'split']),
@@ -26,10 +30,10 @@ export const toolCatalog: ToolCatalogItem[] = [
   fileTool('page-number', 'PDF 添加页码', '设置起始数字和页码位置', 'pdf', 'number', ['编号', 'page number']),
   fileTool('images-to-pdf', '图片转 PDF', '把多张图片合成一份 PDF', 'pdf', 'file-image', ['照片', 'image to pdf']),
   fileTool('text', '提取 PDF 文字', '导出 PDF 已有的文字层', 'pdf', 'file-text', ['文本', '复制', 'extract text']),
-  { ...fileTool('convert', '转换图片格式', '在 PNG、JPG 与 WebP 之间转换', 'image', 'image', ['格式', 'png', 'jpg', 'webp']), popular: true },
-  fileTool('resize', '缩放压缩图片', '限制最大宽度并调整输出质量', 'image', 'resize', ['压缩', '尺寸', 'resize']),
-  fileTool('crop', '裁剪图片', '按百分比精确裁剪图片区域', 'image', 'crop', ['截图', 'crop']),
-  fileTool('rotate', '旋转图片', '批量旋转并导出新图片', 'image', 'rotate', ['方向', 'rotate']),
+  { ...imageTool('convert', '转换图片格式', '在 PNG、JPG 与 WebP 之间转换并实时预览', 'image', ['格式', 'png', 'jpg', 'webp']), popular: true },
+  imageTool('resize', '缩放压缩图片', '限制最大宽度、调整质量并实时预览', 'resize', ['压缩', '尺寸', 'resize']),
+  imageTool('crop', '裁剪图片', '在图片工作室实时查看裁剪结果', 'crop', ['截图', 'crop']),
+  imageTool('rotate', '旋转图片', '实时预览方向并批量导出', 'rotate', ['方向', 'rotate']),
   { ...fileTool('transform', '格式化 JSON', '整理缩进并检查 JSON 语法', 'text', 'json', ['json', '美化', '校验'], { mode: 'json' }), popular: true },
   fileTool('transform', '清理纯文本', '移除尾随空格和多余空行', 'text', 'file-text', ['trim', '空格'], { mode: 'trim' }),
   fileTool('transform', '清理 Markdown', '统一换行并压缩多余空行', 'text', 'file-code', ['markdown', 'md'], { mode: 'markdown' }),

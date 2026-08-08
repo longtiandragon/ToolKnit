@@ -38,16 +38,20 @@ bool isPrime(int x) {
 
 const code = ref(store.codeDraft?.content ?? defaultCode)
 const sourceName = ref(store.codeDraft?.name ?? 'is-prime.cpp')
-const language = ref<CodeLanguage>(detectCodeLanguage(sourceName.value, code.value))
+const languageOverride = ref<'auto' | CodeLanguage>('auto')
 const theme = ref<'midnight' | 'forest' | 'paper'>('midnight')
-const fontSize = ref(18)
 const showLineNumbers = ref(true)
-const watermark = ref('ToolKnit')
-const linesPerPage = ref(42)
+const author = ref('author')
+const detectedLanguage = computed(() => detectCodeLanguage(sourceName.value, code.value))
+const language = computed<CodeLanguage>(() => languageOverride.value === 'auto' ? detectedLanguage.value : languageOverride.value)
+const longestLine = computed(() => Math.max(1, ...code.value.split('\n').map((line) => [...line].length)))
+const fontSize = computed(() => Math.max(14, Math.min(20, Math.floor(700 / (longestLine.value * .58)))))
+const linesPerPage = computed(() => Math.max(20, Math.min(38, Math.round(38 - Math.max(0, longestLine.value - 76) / 10))))
+const byline = computed(() => `BY ${author.value.trim() || 'author'}`)
 const pages = computed(() => splitCodeForExport(code.value, linesPerPage.value))
 const highlightedPages = computed(() => pages.value.map((page) => highlightCode(page, language.value)))
 const pageLineCounts = computed(() => pages.value.map((page) => page.split('\n').length))
-const languageLabel = computed(() => codeLanguages.find((item) => item.id === language.value)?.label ?? language.value)
+const languageLabel = computed(() => `${languageOverride.value === 'auto' ? 'AUTO · ' : ''}${codeLanguages.find((item) => item.id === language.value)?.label ?? language.value}`)
 const selectedPageIndexes = computed(() => [...selectedPages.value].filter((index) => index < pages.value.length).sort((a, b) => a - b))
 const copyLabel = computed(() => selectedPageIndexes.value.length > 1 ? `复制为 ${selectedPageIndexes.value.length} 张` : '复制图片')
 
@@ -55,14 +59,14 @@ watch(() => store.codeDraft, (draft) => {
   if (!draft || draft.content === code.value) return
   code.value = draft.content
   sourceName.value = draft.name
-  language.value = detectCodeLanguage(draft.name, draft.content)
+  languageOverride.value = 'auto'
 })
 
 watch(codeFiles, async (files) => {
   if (!files[0]) return
   code.value = await files[0].text()
   sourceName.value = files[0].name
-  language.value = detectCodeLanguage(files[0].name, code.value)
+  languageOverride.value = 'auto'
   activePage.value = 0
 })
 
@@ -141,7 +145,7 @@ onBeforeUnmount(() => {
 async function combineImages(blobs: Blob[]) {
   if (blobs.length === 1) return blobs[0]
   const images = await Promise.all(blobs.map((blob) => createImageBitmap(blob)))
-  const gap = 28
+  const gap = 0
   const width = Math.max(...images.map((image) => image.width))
   const height = images.reduce((total, image) => total + image.height, 0) + gap * (images.length - 1)
   const canvas = document.createElement('canvas')
@@ -149,8 +153,6 @@ async function combineImages(blobs: Blob[]) {
   canvas.height = height
   const context = canvas.getContext('2d')
   if (!context) throw new Error('无法合并所选代码图片。')
-  context.fillStyle = '#8d9aa6'
-  context.fillRect(0, 0, width, height)
   let y = 0
   for (const image of images) {
     context.drawImage(image, Math.round((width - image.width) / 2), y)
@@ -165,7 +167,7 @@ async function combineImages(blobs: Blob[]) {
 function addExportJob(label: string, outputs: FileReference[], detail: string) {
   const job = store.addJob('code', label, [sourceName.value], {
     toolId: 'code-image', route: '/code-image', retryable: true,
-    parameters: { language: language.value, theme: theme.value, fontSize: fontSize.value, linesPerPage: linesPerPage.value, showLineNumbers: showLineNumbers.value, watermark: watermark.value },
+    parameters: { language: language.value, languageMode: languageOverride.value, theme: theme.value, fontSize: fontSize.value, linesPerPage: linesPerPage.value, showLineNumbers: showLineNumbers.value, author: author.value },
     inputs: inputReferences()
   })
   store.updateJob(job.id, { status: 'succeeded', progress: 100, outputNames: outputs.map((output) => output.name), outputs, detail })
@@ -292,7 +294,7 @@ async function exportPdf() {
           </div>
         </details>
 
-        <label class="code-inline-select"><span>语言</span><select v-model="language" aria-label="代码语言"><option v-for="item in codeLanguages" :key="item.id" :value="item.id">{{ item.label }}</option></select></label>
+        <span class="code-auto-badge"><AppIcon name="sparkle" :size="13"/><b>{{ languageLabel }}</b><small>{{ fontSize }}px · 自动 {{ linesPerPage }} 行/张</small></span>
 
         <div class="code-inline-theme" role="group" aria-label="窗口主题">
           <span>主题</span>
@@ -300,12 +302,11 @@ async function exportPdf() {
         </div>
 
         <details class="code-control-menu code-advanced-menu">
-          <summary><AppIcon name="settings" :size="14"/><span>画面设置</span><small>{{ fontSize }}px · {{ linesPerPage }}行</small></summary>
+          <summary><AppIcon name="settings" :size="14"/><span>偏好设置</span><small>{{ byline }}</small></summary>
           <div class="code-control-popover code-advanced-popover">
-            <header><div><p class="eyebrow">IMAGE SETTINGS</p><strong>画面设置</strong></div><small>仅影响预览与导出</small></header>
-            <label>字号 <output>{{ fontSize }} px</output><input v-model.number="fontSize" type="range" min="13" max="26" /></label>
-            <label>每张行数 <output>{{ linesPerPage }} 行</output><input v-model.number="linesPerPage" type="range" min="12" max="80" /></label>
-            <div class="code-advanced-row"><label class="checkline"><input v-model="showLineNumbers" type="checkbox" /> 显示行号</label><label class="watermark-field"><span>图片署名</span><input v-model="watermark" placeholder="ToolKnit" /></label></div>
+            <header><div><p class="eyebrow">SMART SETTINGS</p><strong>自动排版偏好</strong></div><small>字号与分页由内容自动计算</small></header>
+            <label>语言识别<select v-model="languageOverride" aria-label="代码语言"><option value="auto">自动识别（{{ codeLanguages.find(item => item.id === detectedLanguage)?.label }}）</option><option v-for="item in codeLanguages" :key="item.id" :value="item.id">{{ item.label }}</option></select></label>
+            <div class="code-advanced-row"><label class="checkline"><input v-model="showLineNumbers" type="checkbox" /> 显示行号</label><label class="watermark-field"><span>作者署名</span><input v-model="author" placeholder="author" /></label></div>
           </div>
         </details>
       </div>
@@ -329,7 +330,7 @@ async function exportPdf() {
               :total-pages="pages.length"
               :font-size="fontSize"
               :show-line-numbers="showLineNumbers"
-              :watermark="watermark"
+              :watermark="byline"
               :theme="theme"
               @contextmenu.prevent.stop="openPreviewMenu($event)"
             />
@@ -365,7 +366,7 @@ async function exportPdf() {
     </section>
 
     <div ref="captureHost" class="codesnap-capture-host" aria-hidden="true">
-      <div v-for="(page, index) in pages" :key="index" class="codesnap-export-frame" data-export-frame><CodeSnapCard :code-html="highlightedPages[index]" :line-count="pageLineCounts[index]" :start-line="index * linesPerPage + 1" :title="sourceName" :language-label="languageLabel" :page-number="index + 1" :total-pages="pages.length" :font-size="fontSize" :show-line-numbers="showLineNumbers" :watermark="watermark" :theme="theme"/></div>
+      <div v-for="(page, index) in pages" :key="index" class="codesnap-export-frame" data-export-frame><CodeSnapCard :code-html="highlightedPages[index]" :line-count="pageLineCounts[index]" :start-line="index * linesPerPage + 1" :title="sourceName" :language-label="languageLabel" :page-number="index + 1" :total-pages="pages.length" :font-size="fontSize" :show-line-numbers="showLineNumbers" :watermark="byline" :theme="theme"/></div>
     </div>
   </div>
 </template>
