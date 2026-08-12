@@ -135,7 +135,7 @@ async function run() {
 
   // ── Flow: the pages you land on ────────────────────────────────────────
   console.log('flow: 落地页')
-  for (const [route, label] of [['/', 'home'], ['/today', 'today'], ['/history', 'history'], ['/clipboard', 'clipboard']]) {
+  for (const [route, label] of [['/', 'home'], ['/today', 'today'], ['/history', 'history'], ['/clipboard', 'clipboard'], ['/quick', 'quick'], ['/lab', 'lab']]) {
     await page.goto(`${BASE}${route}`, { waitUntil: 'networkidle' })
     await page.waitForTimeout(900)
     await shot(label)
