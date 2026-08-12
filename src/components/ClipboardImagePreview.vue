@@ -97,6 +97,6 @@ onBeforeUnmount(revokeObjectUrl)
 }
 
 .clipboard-image-preview span {
-  font-size: 9px;
+  font-size: 11px;
 }
 </style>
