@@ -1,0 +1,318 @@
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Arrow as VArrow, Layer as VLayer, Rect as VRect, Stage as VStage, Text as VText, Transformer as VTransformer } from 'vue-konva/core'
+import 'konva/lib/shapes/Arrow'
+import 'konva/lib/shapes/Rect'
+import 'konva/lib/shapes/Text'
+import 'konva/lib/shapes/Transformer'
+import type { KonvaEventObject, Node as KonvaNode } from 'konva/lib/Node'
+import type { Arrow as KonvaArrow } from 'konva/lib/shapes/Arrow'
+import type { Stage as KonvaStage } from 'konva/lib/Stage'
+import type { Transformer as KonvaTransformer } from 'konva/lib/shapes/Transformer'
+import { arrowFromCanvasEndpoints, createAnnotation, normalizeAnnotation, type CanvasAnnotation, type CanvasTool } from '@/lib/annotation-canvas'
+
+type Point = { x: number; y: number }
+type Drawing = { kind: Exclude<CanvasTool, 'select'>; start: Point; point: Point }
+type KonvaRef<T> = { getNode: () => T }
+
+const props = defineProps<{
+  annotations: CanvasAnnotation[]
+  tool: CanvasTool
+  color: string
+  text: string
+  disabled?: boolean
+}>()
+
+const emit = defineEmits<{
+  create: [annotation: CanvasAnnotation]
+  update: [annotation: CanvasAnnotation]
+  remove: [id: number]
+  context: [payload: { id: number; x: number; y: number }]
+  canvasContext: [payload: { x: number; y: number }]
+  select: [id: number | null]
+}>()
+
+const host = ref<HTMLElement>()
+const stageRef = ref<KonvaRef<KonvaStage>>()
+const transformerRef = ref<KonvaRef<KonvaTransformer>>()
+const dimensions = ref({ width: 1, height: 1 })
+const selectedId = ref<number | null>(null)
+const drawing = ref<Drawing | null>(null)
+let resizeObserver: ResizeObserver | undefined
+
+const stageConfig = computed(() => ({ width: dimensions.value.width, height: dimensions.value.height }))
+const transformerConfig = { rotateEnabled: true, rotationSnaps: [0, 45, 90, 135, 180, 225, 270, 315], rotationSnapTolerance: 5, keepRatio: false, enabledAnchors: ['top-left', 'top-right', 'bottom-left', 'bottom-right'], borderStroke: '#0c6557', anchorFill: '#fffefa', anchorStroke: '#0c6557', anchorSize: 8, padding: 5, ignoreStroke: true }
+const draftAnnotation = computed(() => {
+  const current = drawing.value
+  if (!current) return null
+  if (current.kind === 'box') {
+    return createAnnotation({
+      kind: 'box',
+      x: Math.min(current.start.x, current.point.x),
+      y: Math.min(current.start.y, current.point.y),
+      width: Math.abs(current.point.x - current.start.x),
+      height: Math.abs(current.point.y - current.start.y),
+      text: '',
+      color: props.color,
+    })
+  }
+  return createAnnotation({
+    kind: 'arrow',
+    x: current.start.x,
+    y: current.start.y,
+    width: current.point.x - current.start.x,
+    height: current.point.y - current.start.y,
+    text: '',
+    color: props.color,
+  })
+})
+
+function pointFromEvent(event: KonvaEventObject<MouseEvent>): Point | null {
+  const stage = event.target.getStage()
+  const position = stage?.getPointerPosition()
+  if (!position || !dimensions.value.width || !dimensions.value.height) return null
+  return {
+    x: Math.max(0, Math.min(1, position.x / dimensions.value.width)),
+    y: Math.max(0, Math.min(1, position.y / dimensions.value.height)),
+  }
+}
+
+function shapeConfig(annotation: CanvasAnnotation) {
+  const normalized = normalizeAnnotation(annotation)
+  return {
+    id: `annotation-${normalized.id}`,
+    name: 'canvas-annotation',
+    x: normalized.x * dimensions.value.width,
+    y: normalized.y * dimensions.value.height,
+    width: (normalized.width ?? 0) * dimensions.value.width,
+    height: (normalized.height ?? 0) * dimensions.value.height,
+    rotation: normalized.rotation ?? 0,
+    stroke: normalized.color,
+    fill: normalized.kind === 'box' ? 'rgba(255,255,255,0.01)' : undefined,
+    strokeWidth: normalized.kind === 'box' ? 3 : undefined,
+    cornerRadius: normalized.kind === 'box' ? 4 : undefined,
+    draggable: props.tool === 'select' && !props.disabled,
+  }
+}
+
+function arrowConfig(annotation: CanvasAnnotation) {
+  const normalized = normalizeAnnotation(annotation)
+  const x = normalized.x * dimensions.value.width
+  const y = normalized.y * dimensions.value.height
+  return {
+    id: `annotation-${normalized.id}`,
+    name: 'canvas-annotation',
+    points: [x, y, x + (normalized.width ?? 0) * dimensions.value.width, y + (normalized.height ?? 0) * dimensions.value.height],
+    pointerLength: 11,
+    pointerWidth: 11,
+    stroke: normalized.color,
+    fill: normalized.color,
+    strokeWidth: 3,
+    lineCap: 'round',
+    lineJoin: 'round',
+    draggable: props.tool === 'select' && !props.disabled,
+  }
+}
+
+function textConfig(annotation: CanvasAnnotation) {
+  const normalized = normalizeAnnotation(annotation)
+  return {
+    ...shapeConfig(normalized),
+    text: normalized.text || '重点',
+    fill: normalized.color,
+    stroke: undefined,
+    fontSize: 18,
+    fontStyle: 'bold',
+    fontFamily: '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif',
+    padding: 4,
+  }
+}
+
+function updateDimensions() {
+  const bounds = host.value?.getBoundingClientRect()
+  if (!bounds?.width || !bounds.height) return
+  dimensions.value = { width: Math.round(bounds.width), height: Math.round(bounds.height) }
+  void nextTick(attachTransformer)
+}
+
+function attachTransformer() {
+  const transformer = transformerRef.value?.getNode()
+  const stage = stageRef.value?.getNode()
+  if (!transformer || !stage) return
+  const selected = selectedId.value === null ? undefined : props.annotations.find((annotation) => annotation.id === selectedId.value)
+  const node = selected ? stage.findOne<KonvaNode>(`#annotation-${selected.id}`) : undefined
+  transformer.nodes(node ? [node] : [])
+  transformer.getLayer()?.batchDraw()
+}
+
+function selectAnnotation(id: number, event?: KonvaEventObject<MouseEvent>) {
+  if (event) event.cancelBubble = true
+  selectedId.value = id
+  emit('select', id)
+  void nextTick(attachTransformer)
+}
+
+function clearSelection() {
+  selectedId.value = null
+  emit('select', null)
+  void nextTick(attachTransformer)
+}
+
+function beginDrawing(event: KonvaEventObject<MouseEvent>) {
+  if (props.disabled || event.evt.button !== 0) return
+  const stage = event.target.getStage()
+  if (!stage || event.target !== stage) return
+  const point = pointFromEvent(event)
+  if (!point) return
+  if (props.tool === 'select') { clearSelection(); return }
+  if (props.tool === 'text') {
+    const annotation = createAnnotation({ kind: 'text', x: point.x, y: point.y, text: props.text.trim() || '重点', color: props.color })
+    emit('create', annotation)
+    selectedId.value = annotation.id
+    emit('select', annotation.id)
+    return
+  }
+  drawing.value = { kind: props.tool, start: point, point }
+  clearSelection()
+}
+
+function moveDrawing(event: KonvaEventObject<MouseEvent>) {
+  if (!drawing.value) return
+  const point = pointFromEvent(event)
+  if (point) drawing.value = { ...drawing.value, point }
+}
+
+function finishDrawing() {
+  const annotation = draftAnnotation.value
+  drawing.value = null
+  if (!annotation) return
+  const isTiny = Math.abs(annotation.width ?? 0) < .015 || Math.abs(annotation.height ?? 0) < .015
+  if (isTiny) return
+  emit('create', annotation)
+  selectedId.value = annotation.id
+  emit('select', annotation.id)
+}
+
+function commitDrag(annotation: CanvasAnnotation, event: KonvaEventObject<MouseEvent>) {
+  const stage = event.target.getStage()
+  if (!stage) return
+  const node = event.target
+  if (annotation.kind === 'arrow') {
+    const normalized = normalizeAnnotation({ ...annotation, x: annotation.x + node.x() / dimensions.value.width, y: annotation.y + node.y() / dimensions.value.height })
+    node.position({ x: 0, y: 0 })
+    emit('update', normalized)
+    return
+  }
+  emit('update', normalizeAnnotation({ ...annotation, x: node.x() / dimensions.value.width, y: node.y() / dimensions.value.height }))
+}
+
+function commitTransform(annotation: CanvasAnnotation, event: KonvaEventObject<MouseEvent>) {
+  const node = event.target
+  if (annotation.kind === 'arrow') {
+    const arrow = node as KonvaArrow
+    const [startX = 0, startY = 0, endX = startX, endY = startY] = arrow.points()
+    const transform = arrow.getAbsoluteTransform()
+    const start = transform.point({ x: startX, y: startY })
+    const end = transform.point({ x: endX, y: endY })
+    // The Vue config stores endpoints directly, not Konva's transient node
+    // scale. Reset it before the parent applies the normalized update.
+    arrow.position({ x: 0, y: 0 })
+    arrow.scale({ x: 1, y: 1 })
+    arrow.rotation(0)
+    emit('update', arrowFromCanvasEndpoints(annotation, start, end, dimensions.value))
+    return
+  }
+  const width = node.width() * node.scaleX() / dimensions.value.width
+  const height = node.height() * node.scaleY() / dimensions.value.height
+  node.scaleX(1)
+  node.scaleY(1)
+  emit('update', normalizeAnnotation({ ...annotation, x: node.x() / dimensions.value.width, y: node.y() / dimensions.value.height, width, height, rotation: node.rotation() }))
+}
+
+function openContext(annotation: CanvasAnnotation, event: KonvaEventObject<MouseEvent>) {
+  event.evt.preventDefault()
+  selectAnnotation(annotation.id, event)
+  emit('context', { id: annotation.id, x: event.evt.clientX, y: event.evt.clientY })
+}
+
+function openCanvasContext(event: KonvaEventObject<MouseEvent>) {
+  const stage = event.target.getStage()
+  if (!stage || event.target !== stage) return
+  event.evt.preventDefault()
+  clearSelection()
+  emit('canvasContext', { x: event.evt.clientX, y: event.evt.clientY })
+}
+
+function handleKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') { clearSelection(); return }
+  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    const bounds = host.value?.getBoundingClientRect()
+    if (!bounds) return
+    event.preventDefault()
+    const annotation = selectedId.value === null ? undefined : props.annotations.find((item) => item.id === selectedId.value)
+    if (annotation) {
+      emit('context', {
+        id: annotation.id,
+        x: bounds.left + bounds.width * Math.min(.94, annotation.x + (annotation.width ?? .12) / 2),
+        y: bounds.top + bounds.height * Math.min(.94, annotation.y + Math.abs(annotation.height ?? .08) / 2),
+      })
+    } else {
+      emit('canvasContext', { x: bounds.left + Math.min(96, bounds.width / 2), y: bounds.top + Math.min(88, bounds.height / 2) })
+    }
+    return
+  }
+  if ((event.key === 'Backspace' || event.key === 'Delete') && selectedId.value !== null) {
+    event.preventDefault()
+    emit('remove', selectedId.value)
+    clearSelection()
+  }
+}
+
+function focusCanvas() {
+  host.value?.focus({ preventScroll: true })
+}
+
+defineExpose({
+  select(id: number | null) {
+    if (id === null) clearSelection()
+    else selectAnnotation(id)
+    focusCanvas()
+  },
+  focus: focusCanvas,
+})
+
+watch(() => props.annotations, () => {
+  if (selectedId.value !== null && !props.annotations.some((annotation) => annotation.id === selectedId.value)) clearSelection()
+  void nextTick(attachTransformer)
+}, { deep: true })
+
+watch(selectedId, () => { void nextTick(attachTransformer) })
+
+onMounted(() => {
+  updateDimensions()
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(updateDimensions)
+    if (host.value) resizeObserver.observe(host.value)
+  }
+})
+
+onBeforeUnmount(() => resizeObserver?.disconnect())
+</script>
+
+<template>
+  <div ref="host" class="annotation-canvas" :data-tool="tool" tabindex="0" role="application" aria-label="图片标注画布；选择工具后在图片上绘制，选中后可拖动、缩放和旋转" @pointerdown="focusCanvas" @keydown="handleKeydown">
+    <VStage ref="stageRef" :config="stageConfig" @mousedown="beginDrawing" @mousemove="moveDrawing" @mouseup="finishDrawing" @mouseleave="finishDrawing" @contextmenu="openCanvasContext">
+      <VLayer>
+        <template v-for="annotation in annotations" :key="annotation.id">
+          <VRect v-if="annotation.kind === 'box'" :config="shapeConfig(annotation)" @mousedown="selectAnnotation(annotation.id, $event)" @click="selectAnnotation(annotation.id, $event)" @dragend="commitDrag(annotation, $event)" @transformend="commitTransform(annotation, $event)" @contextmenu="openContext(annotation, $event)" />
+          <VArrow v-else-if="annotation.kind === 'arrow'" :config="arrowConfig(annotation)" @mousedown="selectAnnotation(annotation.id, $event)" @click="selectAnnotation(annotation.id, $event)" @dragend="commitDrag(annotation, $event)" @transformend="commitTransform(annotation, $event)" @contextmenu="openContext(annotation, $event)" />
+          <VText v-else :config="textConfig(annotation)" @mousedown="selectAnnotation(annotation.id, $event)" @click="selectAnnotation(annotation.id, $event)" @dragend="commitDrag(annotation, $event)" @transformend="commitTransform(annotation, $event)" @contextmenu="openContext(annotation, $event)" />
+        </template>
+        <VRect v-if="draftAnnotation?.kind === 'box'" :config="shapeConfig(draftAnnotation)" :listening="false" />
+        <VArrow v-else-if="draftAnnotation?.kind === 'arrow'" :config="arrowConfig(draftAnnotation)" :listening="false" />
+        <VTransformer ref="transformerRef" :config="transformerConfig" />
+      </VLayer>
+    </VStage>
+    <p v-if="tool !== 'select'" class="annotation-canvas__hint">{{ tool === 'text' ? '单击放置文字' : '按住并拖动绘制' }}</p>
+  </div>
+</template>

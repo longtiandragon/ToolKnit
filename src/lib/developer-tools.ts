@@ -20,6 +20,22 @@ export interface TimestampResult {
   local: string
 }
 
+export type DateOffsetUnit = 'days' | 'weeks' | 'months' | 'years'
+
+export interface DateDifferenceResult {
+  days: number
+  weeks: number
+  remainingDays: number
+  direction: 'same' | 'forward' | 'backward'
+  start: string
+  end: string
+}
+
+export interface DateOffsetResult {
+  date: string
+  weekday: string
+}
+
 export interface JwtResult {
   header: Record<string, unknown>
   payload: Record<string, unknown>
@@ -38,9 +54,32 @@ export function encodeBase64(value: string) {
 }
 
 export function decodeBase64(value: string) {
-  const binary = atob(value.replace(/\s+/g, ''))
+  const compact = value.replace(/\s+/g, '')
+  if (!compact) throw new Error('请输入需要解码的 Base64 内容。')
+
+  const normalized = compact.replace(/-/g, '+').replace(/_/g, '/')
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) {
+    throw new Error('Base64 包含无效字符；仅支持字母、数字、+、/、-、_ 和末尾补位符 =。')
+  }
+
+  const content = normalized.replace(/=+$/, '')
+  if (content.length % 4 === 1) {
+    throw new Error('Base64 长度无效：有效字符数量不能比 4 的倍数多 1。请检查内容是否缺失或多出字符。')
+  }
+
+  const padded = content.padEnd(Math.ceil(content.length / 4) * 4, '=')
+  let binary: string
+  try {
+    binary = atob(padded)
+  } catch {
+    throw new Error('无法解码 Base64，请检查字符与末尾补位符是否正确。')
+  }
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
-  return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw new Error('Base64 已成功还原为字节，但内容不是有效的 UTF-8 文本。')
+  }
 }
 
 function decodeBase64Url(value: string) {
@@ -133,6 +172,52 @@ export function convertTimestamp(value: string, locale = 'zh-CN'): TimestampResu
     iso: date.toISOString(),
     local: new Intl.DateTimeFormat(locale, { dateStyle: 'full', timeStyle: 'long' }).format(date)
   }
+}
+
+function parseLocalDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim())
+  if (!match) throw new Error('请输入有效日期。')
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  if (date.getFullYear() !== Number(match[1]) || date.getMonth() !== Number(match[2]) - 1 || date.getDate() !== Number(match[3])) throw new Error('日期不存在，请检查年月日。')
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function calculateDateDifference(startValue: string, endValue: string): DateDifferenceResult {
+  const start = parseLocalDate(startValue)
+  const end = parseLocalDate(endValue)
+  const signedDays = Math.round((end.getTime() - start.getTime()) / 86_400_000)
+  const days = Math.abs(signedDays)
+  return {
+    days,
+    weeks: Math.floor(days / 7),
+    remainingDays: days % 7,
+    direction: signedDays === 0 ? 'same' : signedDays > 0 ? 'forward' : 'backward',
+    start: formatLocalDate(start),
+    end: formatLocalDate(end)
+  }
+}
+
+export function calculateDateOffset(baseValue: string, amount: number, unit: DateOffsetUnit, locale = 'zh-CN'): DateOffsetResult {
+  if (!Number.isInteger(amount) || Math.abs(amount) > 100_000) throw new Error('偏移量需要是绝对值不超过 100000 的整数。')
+  const date = parseLocalDate(baseValue)
+  if (unit === 'days' || unit === 'weeks') date.setDate(date.getDate() + amount * (unit === 'weeks' ? 7 : 1))
+  else {
+    const originalDay = date.getDate()
+    date.setDate(1)
+    if (unit === 'months') date.setMonth(date.getMonth() + amount)
+    else date.setFullYear(date.getFullYear() + amount)
+    const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()
+    date.setDate(Math.min(originalDay, lastDay))
+  }
+  return { date: formatLocalDate(date), weekday: new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(date) }
 }
 
 export function testRegex(pattern: string, flags: string, input: string, limit = 1000): RegexMatch[] {

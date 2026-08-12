@@ -1,6 +1,6 @@
 # Third-party notices
 
-ToolKnit uses only dependencies whose licenses are checked during release preparation.
+Knitspace uses only dependencies whose licenses are checked during release preparation.
 
 - Tauri: MIT OR Apache-2.0
 - Vue, Pinia, Vue Router, Vite: MIT

@@ -1,5 +1,22 @@
 import type { ClipboardItem, FavoriteTool, Job } from '@/types'
 
+export function normalizeClipboardHistory(value: unknown): ClipboardItem[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const item = entry as Record<string, unknown>
+    if (typeof item.id !== 'string' || !['text', 'code', 'image'].includes(String(item.kind)) || typeof item.hash !== 'string' || typeof item.capturedAt !== 'string' || !Number.isFinite(new Date(item.capturedAt).getTime())) return []
+    const normalized: ClipboardItem = { id: item.id, kind: item.kind as ClipboardItem['kind'], hash: item.hash, capturedAt: item.capturedAt }
+    if (typeof item.content === 'string') normalized.content = item.content
+    if (typeof item.assetPath === 'string') normalized.assetPath = item.assetPath
+    if (typeof item.preview === 'string') normalized.preview = item.preview
+    if (typeof item.pinned === 'boolean') normalized.pinned = item.pinned
+    normalized.contentLoaded = typeof item.contentLoaded === 'boolean' ? item.contentLoaded : true
+    if (normalized.kind === 'image' ? !normalized.assetPath && !normalized.preview : normalized.content === undefined) return []
+    return [normalized]
+  })
+}
+
 export function normalizeFavoriteOrder(toolIds: string[]): FavoriteTool[] {
   return [...new Set(toolIds)].map((toolId, order) => ({ toolId, order, shortcut: order < 9 ? order + 1 : undefined }))
 }

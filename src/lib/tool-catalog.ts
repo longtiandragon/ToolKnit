@@ -1,4 +1,6 @@
-export type CatalogGroup = 'PDF' | '图片' | '文本' | '整理' | '开发' | '表达' | 'AI' | '资料'
+import { personalPackEnabled } from '@/lib/build-profile'
+
+export type CatalogGroup = 'PDF' | '图片' | '媒体' | '文本' | '整理' | '开发' | '表达' | 'AI' | '资料'
 
 export interface ToolCatalogItem {
   id: string
@@ -11,6 +13,41 @@ export interface ToolCatalogItem {
   popular?: boolean
 }
 
+export interface CommandToolGroup {
+  id: 'favorites' | 'recents' | 'suggested'
+  label: string
+  tools: ToolCatalogItem[]
+}
+
+export type ToolSpaceFilterId = 'all' | 'favorite' | 'pdf' | 'image-media' | 'text-organize' | 'developer'
+
+const toolSpaceFilterByGroup: Partial<Record<CatalogGroup, ToolSpaceFilterId>> = {
+  PDF: 'pdf',
+  图片: 'image-media',
+  媒体: 'image-media',
+  文本: 'text-organize',
+  整理: 'text-organize',
+  开发: 'developer',
+  // QR is the only small “表达” utility intentionally owned by Tools;
+  // creative canvases and code sharing still return from the branch below.
+  表达: 'developer',
+}
+
+/** Keep “show me where this belongs” aligned with the five-space model.
+ * Utility tools open the searchable directory with enough context to reveal
+ * the selected card; creation and source workflows stay in their own space. */
+export function toolCatalogOwnerLocation(tool: ToolCatalogItem) {
+  if (tool.group === '资料') return { path: '/knowledge' }
+  if ((tool.group === '表达' && tool.id !== 'utility-qrcode') || tool.group === 'AI') return { path: '/create' }
+  return {
+    path: '/tool-space',
+    query: {
+      filter: toolSpaceFilterByGroup[tool.group] ?? 'all',
+      focus: tool.id,
+    },
+  }
+}
+
 function fileTool(id: string, title: string, description: string, group: 'pdf' | 'image' | 'text' | 'organize', icon: string, keywords: string[], query: Record<string, string> = {}): ToolCatalogItem {
   const groupLabel = { pdf: 'PDF', image: '图片', text: '文本', organize: '整理' } as const
   return { id: `${group}-${id}${query.mode ? `-${query.mode}` : ''}`, title, description, group: groupLabel[group], icon, to: { path: '/tools', query: { group, operation: id, ...query } }, keywords }
@@ -21,6 +58,8 @@ function imageTool(id: string, title: string, description: string, icon: string,
 }
 
 export const toolCatalog: ToolCatalogItem[] = [
+  { id: 'universal-intake', title: '万能处理入口', description: '拖入或粘贴内容，自动推荐下一步', group: '整理', icon: 'inbox', to: { path: '/quick' }, keywords: ['快速处理', '万能', '粘贴', '拖入', '智能推荐'], popular: true },
+  { id: 'local-ocr', title: '离线文字识别', description: '用 Windows 本机语言包提取截图和扫描图片文字', group: '文本', icon: 'file-text', to: { path: '/ocr' }, keywords: ['OCR', '识字', '图片文字', '扫描题', '截图', '离线', 'Windows'], popular: true },
   { ...fileTool('merge', '合并 PDF', '把多份 PDF 按顺序合成一份', 'pdf', 'merge', ['拼接', 'combine', 'merge']), popular: true },
   fileTool('split', '拆分 PDF', '把每一页导出为独立 PDF', 'pdf', 'split', ['分页', 'split']),
   fileTool('rotate', '旋转 PDF', '批量旋转 PDF 页面方向', 'pdf', 'rotate', ['方向', 'rotate']),
@@ -34,11 +73,23 @@ export const toolCatalog: ToolCatalogItem[] = [
   imageTool('resize', '缩放压缩图片', '限制最大宽度、调整质量并实时预览', 'resize', ['压缩', '尺寸', 'resize']),
   imageTool('crop', '裁剪图片', '在图片工作室实时查看裁剪结果', 'crop', ['截图', 'crop']),
   imageTool('rotate', '旋转图片', '实时预览方向并批量导出', 'rotate', ['方向', 'rotate']),
+  { id: 'media-desk', title: '音视频转换', description: '桌面端调用本机 FFmpeg，转换或提取媒体并保留原件', group: '媒体', icon: 'play', to: { path: '/media' }, keywords: ['视频', '音频', 'mp3', 'mp4', 'm4a', 'ffmpeg', '提取音频'] },
+  { id: 'media-clip', title: '截取音视频片段', description: '按开始与结束时间生成新的本地片段', group: '媒体', icon: 'cut', to: { path: '/media', query: { operation: 'clip' } }, keywords: ['剪辑', '裁剪视频', '截取音频', 'trim', 'clip', '录课片段'] },
+  { id: 'media-speech-wav', title: '音频转语音 WAV', description: '生成适合本机转写和语音处理的 16 kHz 单声道 WAV', group: '媒体', icon: 'file-text', to: { path: '/media', query: { operation: 'transcode-wav' } }, keywords: ['wav', '16khz', '单声道', '语音预处理', '音频转码'] },
+  { id: 'media-mute-video', title: '生成静音视频', description: '移除视频音轨并生成新的 H.264 MP4，原件保持不变', group: '媒体', icon: 'play', to: { path: '/media', query: { operation: 'mute-video' } }, keywords: ['视频静音', '去声音', '移除音轨', 'mute', 'silent video'] },
+  { id: 'subtitle-editor', title: '字幕校对与转换', description: '本地编辑 SRT / WebVTT、平移时间轴并拆分合并字幕', group: '媒体', icon: 'file-text', to: { path: '/subtitles' }, keywords: ['字幕', 'srt', 'vtt', 'webvtt', '时间轴', '校对', '字幕转换', 'subtitle', 'caption'], popular: true },
+  { id: 'local-transcription', title: '本机语音转写', description: '调用 whisper.cpp，把本地媒体转成可校对 SRT', group: '媒体', icon: 'play', to: { path: '/subtitles', query: { transcribe: '1' } }, keywords: ['语音转文字', '音频转字幕', '视频转字幕', 'whisper', 'whisper.cpp', '转写', 'transcript', 'speech to text'], popular: true },
   { ...fileTool('transform', '格式化 JSON', '整理缩进并检查 JSON 语法', 'text', 'json', ['json', '美化', '校验'], { mode: 'json' }), popular: true },
   fileTool('transform', '清理纯文本', '移除尾随空格和多余空行', 'text', 'file-text', ['trim', '空格'], { mode: 'trim' }),
   fileTool('transform', '清理 Markdown', '统一换行并压缩多余空行', 'text', 'file-code', ['markdown', 'md'], { mode: 'markdown' }),
+  fileTool('transform', '删除文本重复行', '保留第一次出现的内容并清除空行', 'text', 'duplicate', ['去重', '名单', '行'], { mode: 'dedupe-lines' }),
+  fileTool('transform', '自然排序文本行', '按中文、数字和字母顺序整理清单', 'text', 'sort', ['排序', '名单', '自然排序'], { mode: 'sort-lines' }),
+  fileTool('transform', '提取链接与邮箱', '从长文本中汇总网址和邮箱地址', 'text', 'link', ['网址', 'url', 'email', '邮箱'], { mode: 'extract-contacts' }),
+  fileTool('transform', '统计字数与段落', '本地统计字符、词语、段落和行数', 'text', 'number', ['字数', '字符', '段落', '统计'], { mode: 'statistics' }),
   fileTool('rename-report', '批量命名预览', '生成安全的重命名结果清单', 'organize', 'rename', ['rename', '编号']),
-  fileTool('dedupe-report', '查找重复文件', '通过 SHA-256 找出内容相同的文件', 'organize', 'duplicate', ['去重', 'hash', 'duplicate']),
+  fileTool('dedupe-report', '文件去重检查', '通过 SHA-256 找出内容相同的文件', 'organize', 'duplicate', ['查找重复文件', '去重', 'hash', 'duplicate']),
+  { id: 'utility-qrcode', title: '二维码生成与识别', description: '把文字或网址生成二维码，也能读取图片', group: '表达', icon: 'qr-code', to: { path: '/developer-tools', query: { tool: 'qrcode' } }, keywords: ['二维码', 'QR', '扫码', '网址分享'] },
+  { id: 'utility-datecalc', title: '日期计算器', description: '计算日期间隔，或向前向后推算日期', group: '整理', icon: 'calendar', to: { path: '/developer-tools', query: { tool: 'datecalc' } }, keywords: ['日期', '天数', '倒计时', '间隔', '月末'] },
   { id: 'developer-base64', title: 'Base64 编解码', description: '支持中文与 Emoji 的文本转换', group: '开发', icon: 'code', to: { path: '/developer-tools', query: { tool: 'base64' } }, keywords: ['base64', '编码', '解码'] },
   { id: 'developer-url', title: 'URL 编解码', description: '处理查询参数和特殊字符', group: '开发', icon: 'link', to: { path: '/developer-tools', query: { tool: 'url' } }, keywords: ['url', 'encodeURIComponent', '百分号'] },
   { id: 'developer-json', title: 'JSON 格式化与压缩', description: '检查语法并切换可读或紧凑输出', group: '开发', icon: 'json', to: { path: '/developer-tools', query: { tool: 'json' } }, keywords: ['json', 'format', 'minify', '校验'] },
@@ -49,11 +100,35 @@ export const toolCatalog: ToolCatalogItem[] = [
   { id: 'developer-radix', title: '整数进制转换', description: '支持 2 到 36 进制与超大整数', group: '开发', icon: 'binary', to: { path: '/developer-tools', query: { tool: 'radix' } }, keywords: ['binary', 'hex', '二进制', '十六进制'] },
   { id: 'developer-regex', title: '正则表达式测试', description: '查看匹配索引和捕获组', group: '开发', icon: 'regex', to: { path: '/developer-tools', query: { tool: 'regex' } }, keywords: ['regex', 'regexp', '匹配'] },
   { id: 'developer-diff', title: '文本 Diff', description: '逐行比较新增、删除和相同行', group: '开发', icon: 'diff', to: { path: '/developer-tools', query: { tool: 'diff' } }, keywords: ['diff', '比较', '差异'] },
+  ...(personalPackEnabled ? [{ id: 'private-tools', title: '私人工具包', description: '用外部 JSON 清单安全运行你的本机脚本', group: '开发' as const, icon: 'terminal', to: { path: '/private-tools' }, keywords: ['python', '脚本', '自动化', 'dry run', '私人工具'], popular: true }] : []),
+  { id: 'job-history', title: '处理历史', description: '回看文件、媒体和脚本任务的结果与输出位置', group: '整理', icon: 'clock', to: { path: '/history' }, keywords: ['历史', '输出', '任务记录', 'recent runs'] },
+  { id: 'clipboard-history', title: '剪贴板历史', description: '重新复制、固定或归档最近收集的文本、代码和图片', group: '整理', icon: 'clipboard', to: { path: '/clipboard' }, keywords: ['剪贴板', '粘贴', '复制', '收集'] },
   { id: 'visual-card', title: '图片分享卡', description: '拼图、标题、水印与标注', group: '表达', icon: 'palette', to: { path: '/visual' }, keywords: ['拼图', '海报', '标注'], popular: true },
+  { id: 'scroll-capture', title: '滚动截图拼接', description: '自动识别连续截图重叠并生成 PNG 长图', group: '表达', icon: 'sort', to: { path: '/visual', query: { tool: 'stitch' } }, keywords: ['滚动截图', '长截图', '网页截图', '拼接', 'stitch', 'overlap'], popular: true },
   { id: 'code-image', title: '代码分享图', description: '高亮并按行分页导出 PNG 或 PDF', group: '表达', icon: 'terminal', to: { path: '/code-image' }, keywords: ['代码截图', '高亮', 'code'], popular: true },
   { id: 'ai-content', title: 'AI 内容处理', description: '摘要、翻译、改写与信息提取', group: 'AI', icon: 'sparkle', to: { path: '/ai' }, keywords: ['摘要', '翻译', '改写', '邮件'] },
+  { id: 'formula-image-recognition', title: '公式图片识别', description: '确认发送预览图后生成可校对的 LaTeX 草稿', group: 'AI', icon: 'math', to: { path: '/documents', query: { kind: 'note', create: 'note', mode: 'split', insert: 'formula', recognize: 'formula' } }, keywords: ['公式识别', '图片转公式', 'latex', '数学公式', 'mathpix', 'vision', '截图'] },
   { id: 'library', title: '收集与归档', description: '保存截图、PDF、文本和代码来源', group: '资料', icon: 'inbox', to: { path: '/library' }, keywords: ['资料库', '导入', 'archive'] }
 ]
+
+/** High-frequency desktop jobs exposed before the complete catalog. IDs are
+ * kept here, beside the canonical metadata, so the tool space never grows a
+ * second set of titles, routes or keywords that can drift out of sync. */
+export const toolSpaceQuickToolIds = [
+  'pdf-merge',
+  'image-convert',
+  'local-ocr',
+  'media-clip',
+  'local-transcription',
+  'text-transform-json',
+  'developer-json',
+  'clipboard-history',
+] as const
+
+export function toolSpaceQuickTools(catalog: readonly ToolCatalogItem[] = toolCatalog) {
+  const byId = new Map(catalog.map((tool) => [tool.id, tool]))
+  return toolSpaceQuickToolIds.flatMap((id) => byId.get(id) ?? [])
+}
 
 function searchableText(item: ToolCatalogItem) {
   return [item.title, item.description, item.group, ...item.keywords].join(' ').toLocaleLowerCase('zh-CN')
@@ -61,7 +136,7 @@ function searchableText(item: ToolCatalogItem) {
 
 export function searchTools(query: string, limit = 8) {
   const normalized = query.trim().toLocaleLowerCase('zh-CN')
-  if (!normalized) return toolCatalog.filter((item) => item.popular).slice(0, limit)
+  if (!normalized) return toolCatalog.filter((item) => item.popular).slice(0, Math.min(limit, 5))
   return toolCatalog
     .map((item, index) => {
       const title = item.title.toLocaleLowerCase('zh-CN')
@@ -73,4 +148,34 @@ export function searchTools(query: string, limit = 8) {
     .sort((a, b) => a.score - b.score || a.index - b.index)
     .slice(0, limit)
     .map((entry) => entry.item)
+}
+
+/**
+ * The command palette opens far more often than a broad search is typed. Keep
+ * that zero-query path intentionally small, deduplicated and entirely local:
+ * pinned tools first, then recent work, then a curated fallback.
+ */
+export function browseCommandTools(favoriteToolIds: readonly string[], recentToolIds: readonly string[]): CommandToolGroup[] {
+  const byId = new Map(toolCatalog.map((tool) => [tool.id, tool]))
+  const seen = new Set<string>()
+  const collect = (ids: readonly string[], limit: number) => {
+    const tools: ToolCatalogItem[] = []
+    for (const id of ids) {
+      if (tools.length >= limit || seen.has(id)) continue
+      const tool = byId.get(id)
+      if (!tool) continue
+      seen.add(id)
+      tools.push(tool)
+    }
+    return tools
+  }
+  const favorites = collect(favoriteToolIds, 5)
+  const recents = collect(recentToolIds, 5)
+  const suggested = searchTools('', 5).filter((tool) => !seen.has(tool.id)).slice(0, 5)
+  const groups: CommandToolGroup[] = [
+    { id: 'favorites', label: '已收藏', tools: favorites },
+    { id: 'recents', label: '最近使用', tools: recents },
+    { id: 'suggested', label: '推荐工具', tools: suggested },
+  ]
+  return groups.filter((group) => group.tools.length)
 }

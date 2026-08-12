@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "id": "json-report",
+      "title": "我的 JSON 报告脚本",
+      "description": "公开模板：把脚本和真实清单保留在工作区外，只通过参数传入。",
+      "icon": "terminal",
+      "executable": "python",
+      "operations": [
+        {
+          "id": "preview",
+          "title": "安全预览",
+          "description": "先由你的脚本返回 JSON 影响报告。",
+          "risk": "readOnly",
+          "fields": [
+            {
+              "key": "script",
+              "label": "脚本文件",
+              "kind": "file",
+              "placeholder": "选择你自己保存的 Python 脚本",
+              "help": "不要把该脚本放进 Knitspace Core 仓库。",
+              "required": true
+            },
+            {
+              "key": "inputDirectory",
+              "label": "输入目录",
+              "kind": "directory",
+              "placeholder": "选择需要分析的目录",
+              "help": "脚本应把预览结果作为一个 JSON 对象输出到 stdout。",
+              "required": true
+            }
+          ],
+          "arguments": ["${script}", "--input", "${inputDirectory}", "--dry-run"],
+          "previewArguments": ["${script}", "--input", "${inputDirectory}", "--dry-run"]
+        },
+        {
+          "id": "apply",
+          "title": "确认执行",
+          "description": "示例中的写入操作必须先完成预览。",
+          "risk": "changesFiles",
+          "confirmationText": "确认脚本预览的影响与当前参数一致后，再修改本机文件。",
+          "fields": [
+            {
+              "key": "script",
+              "label": "脚本文件",
+              "kind": "file",
+              "placeholder": "选择你自己保存的 Python 脚本",
+              "help": "不要把该脚本放进 Knitspace Core 仓库。",
+              "required": true
+            },
+            {
+              "key": "inputDirectory",
+              "label": "输入目录",
+              "kind": "directory",
+              "placeholder": "选择要处理的目录",
+              "help": "执行前 Knitspace 会比较预览时的参数。",
+              "required": true
+            }
+          ],
+          "arguments": ["${script}", "--input", "${inputDirectory}", "--apply"],
+          "previewArguments": ["${script}", "--input", "${inputDirectory}", "--dry-run"]
+        }
+      ]
+    }
+  ]
+}

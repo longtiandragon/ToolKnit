@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canRetryJob, looksLikeCode, normalizeFavoriteOrder, pruneClipboardHistory } from './workbench-utils'
+import { canRetryJob, looksLikeCode, normalizeClipboardHistory, normalizeFavoriteOrder, pruneClipboardHistory } from './workbench-utils'
 import type { ClipboardItem, Job } from '@/types'
 
 describe('workbench utilities', () => {
@@ -14,6 +14,14 @@ describe('workbench utilities', () => {
     const item = (id: string, days: number, pinned = false): ClipboardItem => ({ id, kind: 'text', content: id, hash: id, capturedAt: new Date(now - days * 86_400_000).toISOString(), pinned })
     const result = pruneClipboardHistory([item('pinned', 100, true), item('fresh', 1), item('second', 2), item('old', 40)], 1, 30, now)
     expect(result.map((entry) => entry.id)).toEqual(['pinned', 'fresh', 'second'])
+  })
+  it('drops corrupt clipboard records before the clipboard page renders them', () => {
+    const result = normalizeClipboardHistory([
+      { id: 'ok', kind: 'text', content: '内容', hash: 'hash', capturedAt: '2026-08-08T00:00:00Z' },
+      { id: 'broken', kind: 'image', hash: 'x', capturedAt: 'not-a-date' },
+      null
+    ])
+    expect(result).toEqual([{ id: 'ok', kind: 'text', content: '内容', hash: 'hash', capturedAt: '2026-08-08T00:00:00Z', contentLoaded: true }])
   })
   it('recognizes code without treating ordinary prose as code', () => {
     expect(looksLikeCode('const answer = value => value * 2;')).toBe(true)

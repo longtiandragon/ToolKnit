@@ -1,22 +1,30 @@
-export const questionTemplate = (title = '未命名错题') => `---
+import type { QuestionType } from '@/types'
+
+export interface QuestionTemplateOptions {
+  questionType?: QuestionType
+  subject?: string
+  tags?: string[]
+  difficulty?: number
+  reviewEnabled?: boolean
+}
+
+function yamlString(value: string) {
+  return JSON.stringify(value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ''))
+}
+
+export const questionTemplate = (title = '未命名错题', options: QuestionTemplateOptions = {}) => `---
 schema_version: 1
-title: ${title}
-type: algorithm
-subject: 算法
-tags: []
-difficulty: 3
-review_enabled: true
+title: ${yamlString(title)}
+type: ${options.questionType ?? 'algorithm'}
+subject: ${yamlString(options.subject?.trim() || '算法')}
+tags: [${(options.tags ?? []).map(tag => yamlString(tag.trim())).filter(tag => tag !== '""').slice(0, 12).join(', ')}]
+difficulty: ${Math.min(5, Math.max(1, Math.round(options.difficulty ?? 3)))}
+review_enabled: ${options.reviewEnabled ?? true}
 ---
 
-## 题目
+## 补充笔记
 
-## 我的尝试
-
-## 错误原因
-
-## 正确解法
-
-## 知识点
+记录推导过程、变式、链接与实现细节。
 
 ## 复盘
 `

@@ -1,17 +1,35 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ToolKnit",
+  "productName": "Knitspace",
   "version": "0.1.0",
   "identifier": "io.github.longtiandragon.toolknit",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://127.0.0.1:1420",
+    "devUrl": "http://127.0.0.1:1421",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "ToolKnit", "width": 1240, "height": 820, "minWidth": 900, "minHeight": 680 }],
-    "security": { "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*;" }
+    "windows": [{ "title": "Knitspace", "width": 1240, "height": 820, "minWidth": 900, "minHeight": 680, "decorations": false }],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*;",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/clipboard/**/*", "$DOCUMENT/KnitspaceVault/sources/**/*", "$APPDATA/KnitspaceVault/sources/**/*", "$DOCUMENT/KnitspaceVault/assets/diagrams/**/*", "$APPDATA/KnitspaceVault/assets/diagrams/**/*"]
+      }
+    }
   },
-  "bundle": { "active": true, "targets": ["nsis"], "windows": { "nsis": { "installMode": "currentUser" } } }
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "fileAssociations": [
+      {
+        "ext": ["md", "mdx", "markdown", "mkd"],
+        "mimeType": "text/markdown",
+        "name": "Markdown 文档",
+        "role": "Editor"
+      }
+    ],
+    "windows": { "nsis": { "installMode": "currentUser" } }
+  }
 }

@@ -1,9 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, generateUuids, sha256, testRegex, transformJson } from './developer-tools'
+import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, generateUuids, sha256, testRegex, transformJson } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
     expect(decodeBase64(encodeBase64('你好，ToolKnit 👋'))).toBe('你好，ToolKnit 👋')
+  })
+
+  it('accepts Base64URL and omitted padding', () => {
+    expect(decodeBase64('5L2g5aW9LVRvb2xLbml0Xw')).toBe('你好-ToolKnit_')
+  })
+
+  it('explains invalid Base64 length without exposing a browser error', () => {
+    expect(() => decodeBase64('dawas')).toThrow('Base64 长度无效')
+  })
+
+  it('explains when decoded bytes are not UTF-8 text', () => {
+    expect(() => decodeBase64('/w==')).toThrow('不是有效的 UTF-8 文本')
   })
 
   it('round-trips a URL component', () => {
@@ -22,6 +34,23 @@ describe('hash and time utilities', () => {
 
   it('rejects invalid dates', () => {
     expect(() => convertTimestamp('not-a-date')).toThrow('无法识别')
+  })
+})
+
+describe('date calculator', () => {
+  it('calculates forward and backward calendar intervals', () => {
+    expect(calculateDateDifference('2026-08-01', '2026-08-17')).toMatchObject({ days: 16, weeks: 2, remainingDays: 2, direction: 'forward' })
+    expect(calculateDateDifference('2026-08-17', '2026-08-01').direction).toBe('backward')
+  })
+
+  it('adds dates and clamps the end of a month', () => {
+    expect(calculateDateOffset('2025-01-31', 1, 'months', 'zh-CN')).toMatchObject({ date: '2025-02-28', weekday: '星期五' })
+    expect(calculateDateOffset('2024-02-29', 1, 'years', 'zh-CN').date).toBe('2025-02-28')
+  })
+
+  it('rejects impossible dates and unsafe offsets', () => {
+    expect(() => calculateDateDifference('2026-02-30', '2026-03-01')).toThrow('日期不存在')
+    expect(() => calculateDateOffset('2026-08-09', 100_001, 'days')).toThrow('偏移量')
   })
 })
 

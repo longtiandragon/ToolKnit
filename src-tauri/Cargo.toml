@@ -1,12 +1,12 @@
 [package]
-name = "toolknit"
+name = "knitspace"
 version = "0.1.0"
 description = "Local-first learning workbench"
 authors = ["longtiandragon"]
 edition = "2021"
 
 [lib]
-name = "toolknit_lib"
+name = "knitspace_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -14,29 +14,37 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
-keyring = "3"
+keyring = { version = "3", features = ["windows-native"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
 thiserror = "2"
 uuid = { version = "1", features = ["v7", "serde"] }
 url = "2"
 walkdir = "2"
 zip = "2"
 arboard = "3.6"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "gif"] }
 mime_guess = "2"
+notify = "8.2"
+percent-encoding = "2"
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4"
+windows = { version = "0.61", features = ["Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+public-core = []

@@ -1,0 +1,183 @@
+/*
+ * Knitspace design tokens.
+ *
+ * Every colour in the product resolves through one of these variables, so the
+ * dark and light themes are the same interface with two sets of values rather
+ * than two stylesheets. Dark is the default: this is a tool that stays open
+ * all day next to an editor.
+ *
+ * Naming is by role, never by appearance — `--surface` is "the plane a panel
+ * sits on", not "the light grey one". That is what lets the same token work in
+ * both themes.
+ */
+
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Planes, from furthest back to closest to the reader. */
+  --bg: #0b0d11;
+  --surface: #14171d;
+  --surface-2: #1a1e26;
+  --surface-3: #21262f;
+  --well: #0e1116;
+
+  /* Ink. Three steps is enough; a fourth always gets misused. */
+  --fg: #e7e9ee;
+  --fg-2: #99a1b0;
+  --fg-3: #69707e;
+
+  /* Hairlines do the structural work that shadows do in light mode. */
+  --line: #232833;
+  --line-strong: #2f3644;
+
+  /* One action colour. */
+  --accent: #5b8cff;
+  --accent-hover: #7aa2ff;
+  --accent-press: #4675e6;
+  --accent-fg: #ffffff;
+  --accent-soft: rgb(91 140 255 / 0.14);
+  --accent-ring: rgb(91 140 255 / 0.4);
+
+  --success: #3dd68c;
+  --success-soft: rgb(61 214 140 / 0.13);
+  --warn: #f5a524;
+  --warn-soft: rgb(245 165 36 / 0.13);
+  --danger: #f4655b;
+  --danger-soft: rgb(244 101 91 / 0.13);
+
+  /* The desktop build draws its own title bar over the top of the window.
+     Layout reads this instead of hard-coding 34px in a dozen places; the
+     browser build leaves it at zero. */
+  --titlebar-h: 0px;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 0.55);
+
+  /* Tool categories. Colour is an identifier here, not decoration, so the
+     hues stay far apart and are reused verbatim across nav, cards and chips. */
+  --cat-pdf: #f4655b;
+  --cat-image: #22c3a6;
+  --cat-text: #5b8cff;
+  --cat-media: #e85d9e;
+  --cat-dev: #a78bfa;
+  --cat-organize: #f5a524;
+  --cat-express: #34d399;
+  --cat-ai: #60a5fa;
+  --cat-source: #94a3b8;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #f2f4f7;
+  --surface-3: #e9ecf1;
+  --well: #ffffff;
+
+  --fg: #0f1319;
+  --fg-2: #5a6474;
+  --fg-3: #8b94a3;
+
+  --line: #e4e7ec;
+  --line-strong: #cdd3dc;
+
+  --accent: #3b6fe0;
+  --accent-hover: #2f5fc8;
+  --accent-press: #274fa8;
+  --accent-fg: #ffffff;
+  --accent-soft: rgb(59 111 224 / 0.09);
+  --accent-ring: rgb(59 111 224 / 0.3);
+
+  --success: #12875a;
+  --success-soft: rgb(18 135 90 / 0.1);
+  --warn: #a5680a;
+  --warn-soft: rgb(165 104 10 / 0.1);
+  --danger: #cf3b32;
+  --danger-soft: rgb(207 59 50 / 0.09);
+
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.05);
+  --shadow-md: 0 4px 12px rgb(16 24 40 / 0.08);
+  --shadow-lg: 0 16px 48px rgb(16 24 40 / 0.14);
+
+  --cat-pdf: #d9463c;
+  --cat-image: #0d9184;
+  --cat-text: #3b6fe0;
+  --cat-media: #c93d80;
+  --cat-dev: #7c56e8;
+  --cat-organize: #b06d05;
+  --cat-express: #0f9668;
+  --cat-ai: #2f6fd0;
+  --cat-source: #64748b;
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html {
+  /* Chrome inserts optical space between CJK and Latin runs. Mixed-script UI
+     text is the norm here, so it is on globally. */
+  text-autospace: normal;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* CJK is the primary script, so it leads the stack; the Latin faces only get
+   picked for glyphs the CJK fonts do not cover. */
+:root {
+  --font-ui: "Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC",
+    "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Microsoft YaHei UI",
+    "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Segoe UI Symbol",
+    "Microsoft YaHei UI", monospace;
+}
+
+h1, h2, h3, h4, h5, h6, p, figure { margin: 0; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: 0; padding: 0; }
+a { color: inherit; text-decoration: none; }
+code, pre, kbd, samp { font-family: var(--font-mono); }
+
+::placeholder { color: var(--fg-3); opacity: 1; }
+::selection { background: var(--accent-soft); color: var(--fg); }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Scrollbars are part of the surface, not an OS artefact pasted on top. */
+* { scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--fg-3); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}

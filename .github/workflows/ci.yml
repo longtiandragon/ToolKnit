@@ -19,9 +19,11 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - uses: dtolnay/rust-toolchain@stable
       - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm benchmark:markdown:gate
       - run: pnpm build
+      - run: pnpm check:startup
+      - run: pnpm build:public
+      - run: pnpm check:public
       - run: cargo check --manifest-path src-tauri/Cargo.toml
-      - name: Reject accidental secrets and personal vaults
-        shell: pwsh
-        run: |
-          if (git ls-files | Select-String -Pattern '(^|/)(\.env|ToolKnitVault|models|engines)/') { throw 'A local secret, vault or model file is tracked.' }
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --features public-core

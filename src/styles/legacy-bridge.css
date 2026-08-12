@@ -1,0 +1,273 @@
+/*
+ * Compatibility bridge for the not-yet-migrated views.
+ *
+ * The legacy stylesheets reference their own token vocabulary — `--text`,
+ * `--muted`, `--green`, `--surface-raised` and friends — roughly 2,700 times,
+ * and each of those layers declares its own `:root` values. This file loads
+ * after all of them and redefines that vocabulary in terms of the new design
+ * tokens, so a view still running on legacy CSS follows the theme switch
+ * without being rewritten first.
+ *
+ * It is scaffolding. Every entry here should disappear as its views migrate to
+ * UnoCSS, and the file should be deleted with the last of them.
+ */
+
+:root,
+:root[data-theme='dark'],
+:root[data-theme='light'] {
+  /* Planes */
+  --canvas: var(--bg);
+  --rail: var(--surface);
+  --surface-raised: var(--surface-2);
+  --surface-overlay: var(--surface);
+  --surface-hover: var(--surface-2);
+  --surface-sunken: var(--surface-3);
+  --paper-strong: var(--surface-3);
+
+  /* Ink */
+  --text: var(--fg);
+  --ink: var(--fg);
+  --text-secondary: var(--fg-2);
+  --muted: var(--fg-3);
+  --text-faint: var(--fg-3);
+  --text-disabled: var(--fg-3);
+  --text-inverse: var(--accent-fg);
+  --white: var(--fg);
+
+  /* Rules */
+  --line-weak: var(--line);
+
+  /* The legacy accent was green; the product now has exactly one action
+     colour, so both names resolve to it. */
+  --green: var(--accent);
+  --accent-soft: var(--accent-soft);
+  --green-bg: var(--accent-soft);
+  --green-bg-hover: var(--accent-soft);
+  --accent-ink: var(--accent-press);
+
+  /* Status */
+  --amber: var(--warn);
+  --amber-bg: var(--warn-soft);
+  --amber-bg-hover: var(--warn-soft);
+  --red: var(--danger);
+  --red-bg: var(--danger-soft);
+  --red-bg-hover: var(--danger-soft);
+
+  /* Markdown reading surface */
+  --reading-paper: var(--surface);
+  --reading-soft-paper: var(--surface-2);
+  --reading-ink: var(--fg);
+  --reading-heading: var(--fg);
+  --reading-muted: var(--fg-2);
+  --reading-border: var(--line);
+  --reading-accent: var(--accent);
+
+  /* Type */
+  --font-sans: var(--font-ui);
+  --font-serif: var(--font-display);
+
+  /* Shape and depth */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+  --shadow-xs: var(--shadow-sm);
+  --shadow-xl: var(--shadow-lg);
+  --shadow-accent: var(--shadow-md);
+  --shadow-glow-green: 0 0 0 3px var(--accent-ring);
+
+  /* Motion */
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --ease-spring: cubic-bezier(.34, 1.4, .5, 1);
+  --duration-instant: 80ms;
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 260ms;
+  --duration-modal: 200ms;
+
+  /* Stacking. Global dialogs must always eclipse page-owned context menus. */
+  --z-base: 0;
+  --z-rail: 10;
+  --z-sticky: 20;
+  --z-drawer: 25;
+  --z-popover: 100;
+  --z-context-menu: 120;
+  --z-modal: 150;
+  --z-global-modal: 160;
+  --z-toast: 200;
+
+  /* Spacing and type steps still referenced by a handful of legacy rules. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+
+  /* Remaining one-off aliases. */
+  --ink-2: var(--fg-2);
+  --ink-quiet: var(--fg-3);
+  --faint: var(--fg-3);
+  --soft-green: var(--accent-soft);
+  --danger-bg: var(--danger-soft);
+  --font-reading: var(--font-ui);
+}
+
+:root[data-theme='dark'] {
+  /* "Strong" meant "darker" against paper. Against a dark ground the emphatic
+     direction is brighter, so the alias flips rather than being shared. */
+  --green-strong: var(--accent-hover);
+}
+
+:root[data-theme='light'] {
+  --green-strong: var(--accent-press);
+}
+
+/* The legacy layers each painted their own page ground — a warm gradient, a
+   32px engineering grid. The theme owns the ground now. */
+body {
+  background: var(--bg) !important;
+  color: var(--fg);
+  font-family: var(--font-ui);
+}
+
+/* The rail is a component again (`AppRail.vue`, 240px). The legacy layers
+   still position the workspace against the old 246px aside, so the offset is
+   corrected here until the shell's own CSS is gone. */
+.workspace {
+  width: calc(100% - 240px);
+  margin-left: 240px;
+  background: transparent;
+}
+
+.topbar {
+  height: 56px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  backdrop-filter: none;
+}
+.topbar h1 { font: 600 16px/1.3 var(--font-display); letter-spacing: -.01em; }
+.workspace-content { height: calc(100vh - var(--titlebar-h) - 56px); }
+
+/* The desktop title bar is chrome, not a highlight. The automatic recolour
+   turned its dark evergreen ground into the accent, which put a saturated
+   blue band across the top of every window. */
+.has-desktop-titlebar { --titlebar-h: 34px; padding-top: var(--titlebar-h); }
+.has-desktop-titlebar .workspace { height: calc(100vh - var(--titlebar-h)); }
+.desktop-titlebar {
+  height: var(--titlebar-h);
+  color: var(--fg-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  box-shadow: none;
+}
+.desktop-titlebar__identity b { color: var(--fg); }
+.desktop-titlebar__identity span { color: var(--fg-2); border-color: var(--line); }
+.desktop-titlebar__route { color: var(--fg-2); }
+
+/* Page heroes were dark evergreen slabs designed to be islands inside a light
+   page: light text, decorative rings, gradient grounds. On a dark theme the
+   island is the same value as the page, so the slab has no job left — and the
+   automatic recolour turned its green gradients into a wall of accent. They
+   are flattened into ordinary section headers until each view is rebuilt. */
+.control-hero,
+.capability-hero,
+.intake-hero,
+.ocr-hero,
+.workbench-hero,
+.ai-workbench__hero,
+.create-space__hero,
+.knowledge-space__hero,
+.library-workbench__hero,
+.relation-graph__hero,
+.subtitle-studio__hero,
+.tools-space__hero {
+  /* Flattening the slab also has to drop its two-column grid, or whatever the
+     hero used to hold beside the copy stays wedged next to the new header. */
+  display: block;
+  min-height: 0;
+  padding: 0 0 20px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.control-hero::after,
+.capability-hero::after,
+.ocr-hero::after,
+.workbench-hero::after,
+.knowledge-space__hero::after,
+.tools-space__hero::after { display: none; }
+
+.hero-copy h2,
+.control-hero h2,
+.capability-hero h2,
+.intake-hero h2,
+.ocr-hero h2,
+.workbench-hero h2,
+.ai-workbench__hero h2,
+.create-space__hero h2,
+.knowledge-space__hero h2,
+.library-workbench__hero h2,
+.relation-graph__hero h2,
+.subtitle-studio__hero h2,
+.tools-space__hero h2 {
+  max-width: 46ch;
+  color: var(--fg);
+  font: 600 22px/1.35 var(--font-display);
+  letter-spacing: -.015em;
+}
+.hero-copy h2 em { color: var(--accent); font-style: normal; }
+.hero-copy > p:not(.eyebrow) { max-width: 62ch; color: var(--fg-2); font-size: 13px; }
+
+/* `.vocabulary` is both the route root and its own two-pane grid. The polish
+   layer turns every route root into a flex column so short pages can fill the
+   window, which collapsed those two panes into a stack. The page owns its
+   layout, so it wins here. */
+.workspace-content > .vocabulary.page-enter {
+  display: grid;
+  grid-template-columns: 286px minmax(0, 1fr);
+}
+
+/* The focus/anniversary pair draws its divider with a 1px grid gap over the
+   container background. That background was recoloured to the accent, so the
+   seam read as a blue line, and the shorter column stopped short of the taller
+   one instead of filling the row. */
+.today-focus {
+  align-items: stretch;
+  border-color: var(--line);
+  background: var(--line);
+}
+.today-focus > * { min-height: 100%; }
+
+/* Colour pickers were inheriting the generic `width: 100%` for inputs, so a
+   swatch became a full-width slab that dominated the parameter panel. A colour
+   is a value, not a field. */
+input[type='color'] {
+  width: 44px;
+  min-width: 44px;
+  height: 32px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--well);
+  cursor: pointer;
+}
+input[type='color']:hover { border-color: var(--line-strong); }
+
+/* Decorative counters and console panels inside the old heroes. */
+.hero-console,
+.hero-metric-grid,
+.hero-signal,
+.hero-privacy { border-color: var(--line); background: var(--surface); color: var(--fg-2); }

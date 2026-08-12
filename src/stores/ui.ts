@@ -9,6 +9,7 @@ export interface ConfirmRequest { title: string; message: string; confirmLabel: 
 export const useUiStore = defineStore('ui', () => {
   const toasts = ref<AppToast[]>([])
   const confirmRequest = ref<ConfirmRequest>()
+  const documentFocusMode = ref(false)
   let confirmResolver: ((value: boolean) => void) | undefined
 
   function toast(title: string, detail?: string, tone: ToastTone = 'info', actionLabel?: string, action?: () => void) {
@@ -24,6 +25,7 @@ export const useUiStore = defineStore('ui', () => {
     return new Promise<boolean>((resolve) => { confirmResolver = resolve })
   }
   function resolveConfirm(value: boolean) { confirmResolver?.(value); confirmResolver = undefined; confirmRequest.value = undefined }
+  function setDocumentFocusMode(value: boolean) { documentFocusMode.value = value }
 
-  return { toasts, confirmRequest, toast, dismiss, runAction, confirm, resolveConfirm }
+  return { toasts, confirmRequest, documentFocusMode, toast, dismiss, runAction, confirm, resolveConfirm, setDocumentFocusMode }
 })

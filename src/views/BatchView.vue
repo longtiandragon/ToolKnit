@@ -1,19 +1,17 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib'
-import * as pdfjs from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useUiStore } from '@/stores/ui'
 import type { FileReference, ToolRecipe } from '@/types'
-import { buildRenamePreview, cleanOutputName, parsePageIndexes, transformText } from '@/lib/file-tools'
+import type { PdfTaskOperation } from '@/lib/pdf-worker'
+import { buildRenamePreview, cleanOutputName, transformText, type TextTransformMode } from '@/lib/file-tools'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
-import { isDesktop } from '@/lib/native'
+import { isDesktop, revealDesktopFile, saveOutputAs } from '@/lib/native'
+import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import AppIcon from '@/components/AppIcon.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import FileDropZone from '@/components/FileDropZone.vue'
-
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
 type ToolGroup = 'pdf' | 'image' | 'text' | 'organize'
 type ToolOption = [id: string, label: string]
@@ -27,13 +25,17 @@ const operation = ref('merge')
 const files = ref<File[]>([])
 const input = ref<HTMLInputElement>()
 const running = ref(false)
+const cancelling = ref(false)
+const activeJobId = ref('')
 const message = ref('选择工具和文件后，会先显示本次任务的输入与输出。')
-const outputName = ref('toolknit-output')
+const outputName = ref('knitspace-output')
 const pageRange = ref('1')
 const rotation = ref(90)
 const watermarkText = ref('CONFIDENTIAL')
 const watermarkOpacity = ref(18)
-const watermarkColor = ref('#536b62')
+// A watermark should read as a mark, not as brand colour. The old default was
+// left over from the previous palette's green.
+const watermarkColor = ref('#8a8f98')
 const pageNumberStart = ref(1)
 const pageNumberPosition = ref<'bottom-center' | 'bottom-right'>('bottom-center')
 const imageFormat = ref<'image/png' | 'image/jpeg' | 'image/webp'>('image/png')
@@ -44,10 +46,21 @@ const cropHeight = ref(100)
 const maxWidth = ref(1920)
 const quality = ref(88)
 const textInput = ref('')
-const textMode = ref<'json' | 'trim' | 'markdown'>('json')
+const textMode = ref<TextTransformMode>('json')
 const renamePrefix = ref('整理文件')
+const renameSuffix = ref('')
+const renameStart = ref(1)
+const renameDigits = ref(3)
+const renameSeparator = ref('-')
+const renameKeepOriginal = ref(false)
 const recipeTitle = ref('')
 const activeRecipeId = ref<string>()
+const recentOutputs = ref<FileReference[]>([])
+const resultMenu = ref<{ output: FileReference; x: number; y: number }>()
+const resultMenuElement = ref<HTMLElement>()
+const TASK_CANCELLED_MESSAGE = '任务已停止。已完成的输出会保留。'
+let cancellationRequested = false
+let resultMenuTrigger: HTMLElement | undefined
 
 const groups: [ToolGroup, string, string, string][] = [
   ['pdf', 'file-pdf', 'PDF', '合并、拆页、旋转、提取页面'],
@@ -63,6 +76,31 @@ const operationMap: Record<ToolGroup, ToolOption[]> = {
 }
 
 const operations = computed(() => operationMap[group.value])
+
+/** What each operation actually does to your files, in one line.
+ *  The page used to introduce itself as "文件处理中心" no matter which of the
+ *  fourteen operations you arrived on, so the heading never told you where you
+ *  were or what was about to happen. */
+const operationNotes: Record<string, string> = {
+  merge: '按你排列的顺序把多份 PDF 合成一份',
+  split: '把每一页导出成独立的 PDF 文件',
+  rotate: '批量旋转页面方向,不重新编码内容',
+  extract: '按页码范围导出成新的 PDF',
+  reorder: '按你指定的页序重新组织后导出',
+  watermark: '在每页叠加文字水印,可调透明度与角度',
+  'page-number': '按起始数字和位置批量添加页码',
+  'images-to-pdf': '把多张图片按顺序合成一份 PDF',
+  'extract-text': '导出 PDF 里已有的文字层,不做 OCR',
+  convert: '在 PNG、JPG 与 WebP 之间转换',
+  resize: '限制最大宽度并调整压缩质量',
+  crop: '按选区裁剪并批量导出',
+  transform: '格式化、清理或重排文本内容',
+  'rename-report': '预览批量重命名结果,先看再改',
+  'dedupe-report': '按内容哈希找出重复文件并生成报告',
+}
+
+const activeOperationLabel = computed(() => operations.value.find((item) => item[0] === operation.value)?.[1] ?? '文件处理')
+const activeOperationNote = computed(() => operationNotes[operation.value] ?? '选择输入后生成新文件,原件保持不变')
 const accept = computed(() => group.value === 'pdf' && operation.value !== 'images-to-pdf'
   ? '.pdf,application/pdf'
   : group.value === 'pdf'
@@ -81,13 +119,42 @@ const outputHint = computed(() => {
   if (group.value === 'organize') return '仅生成预览报告，不修改原文件'
   return `将为 ${Math.max(files.value.length, 1)} 个输入生成新输出`
 })
+const renamePreview = computed(() => buildRenamePreview(files.value.map((file) => file.name), {
+  prefix: renamePrefix.value,
+  suffix: renameSuffix.value,
+  start: renameStart.value,
+  digits: renameDigits.value,
+  separator: renameSeparator.value,
+  keepOriginalName: renameKeepOriginal.value
+}).slice(0, 5))
+const textPreview = computed(() => {
+  if (group.value !== 'text' || !textInput.value.trim()) return undefined
+  try {
+    const result = transformText(textInput.value, textMode.value)
+    return { content: result.content.slice(0, 1800), truncated: result.content.length > 1800, error: false }
+  } catch (error) {
+    return { content: error instanceof Error ? error.message : '暂时无法生成预览。', truncated: false, error: true }
+  }
+})
+const visibleRecentOutputs = computed(() => recentOutputs.value.slice(0, 12))
+const inputFileLimit = computed(() => group.value === 'text' ? 8 * 1024 * 1024 : group.value === 'image' || operation.value === 'images-to-pdf' ? 32 * 1024 * 1024 : 96 * 1024 * 1024)
+const inputTotalLimit = computed(() => group.value === 'text' ? 32 * 1024 * 1024 : group.value === 'image' || operation.value === 'images-to-pdf' ? 96 * 1024 * 1024 : 192 * 1024 * 1024)
+
+function formatSize(value?: number) {
+  if (value === undefined) return '大小由系统管理'
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
 
 function clearFiles() {
+  if (running.value) return
   files.value = []
   if (input.value) input.value.value = ''
 }
 
 function setGroup(next: ToolGroup) {
+  if (running.value) return
   group.value = next
   operation.value = operationMap[next][0][0]
   activeRecipeId.value = undefined
@@ -96,17 +163,20 @@ function setGroup(next: ToolGroup) {
 }
 
 function setOperation(next: string) {
+  if (running.value) return
   operation.value = next
   clearFiles()
   message.value = '已切换操作。请重新选择符合要求的输入。'
 }
 
 function choose(event: Event) {
+  if (running.value) return
   files.value = Array.from((event.target as HTMLInputElement).files ?? [])
   message.value = files.value.length ? `已选择 ${files.value.length} 个输入文件。原件不会被修改。` : '未选择文件。'
 }
 
 function dropFiles(event: DragEvent) {
+  if (running.value) return
   files.value = Array.from(event.dataTransfer?.files ?? [])
   message.value = files.value.length ? `已拖入 ${files.value.length} 个文件。执行前请核对参数。` : '没有读取到文件。'
 }
@@ -118,7 +188,9 @@ function recipeParameters() {
     cropWidth: cropWidth.value, cropHeight: cropHeight.value, maxWidth: maxWidth.value,
     quality: quality.value, watermarkText: watermarkText.value, watermarkOpacity: watermarkOpacity.value,
     watermarkColor: watermarkColor.value, pageNumberStart: pageNumberStart.value,
-    pageNumberPosition: pageNumberPosition.value, textMode: textMode.value, renamePrefix: renamePrefix.value
+    pageNumberPosition: pageNumberPosition.value, textMode: textMode.value, renamePrefix: renamePrefix.value,
+    renameSuffix: renameSuffix.value, renameStart: renameStart.value, renameDigits: renameDigits.value,
+    renameSeparator: renameSeparator.value, renameKeepOriginal: renameKeepOriginal.value ? 1 : 0
   }
 }
 
@@ -141,8 +213,14 @@ function applyRecipe(recipe: ToolRecipe) {
   watermarkColor.value = String(params.watermarkColor ?? watermarkColor.value)
   pageNumberStart.value = Number(params.pageNumberStart ?? pageNumberStart.value)
   pageNumberPosition.value = params.pageNumberPosition === 'bottom-right' ? 'bottom-right' : 'bottom-center'
-  textMode.value = params.textMode === 'trim' || params.textMode === 'markdown' || params.textMode === 'json' ? params.textMode : textMode.value
+  const supportedTextModes: TextTransformMode[] = ['json', 'trim', 'markdown', 'dedupe-lines', 'sort-lines', 'extract-contacts', 'statistics']
+  textMode.value = supportedTextModes.includes(params.textMode as TextTransformMode) ? params.textMode as TextTransformMode : textMode.value
   renamePrefix.value = String(params.renamePrefix ?? renamePrefix.value)
+  renameSuffix.value = String(params.renameSuffix ?? renameSuffix.value)
+  renameStart.value = Math.max(0, Number(params.renameStart ?? renameStart.value))
+  renameDigits.value = Math.max(1, Math.min(8, Number(params.renameDigits ?? renameDigits.value)))
+  renameSeparator.value = String(params.renameSeparator ?? renameSeparator.value)
+  renameKeepOriginal.value = Number(params.renameKeepOriginal ?? (renameKeepOriginal.value ? 1 : 0)) === 1
   recipeTitle.value = recipe.title
   activeRecipeId.value = recipe.id
   clearFiles()
@@ -190,14 +268,34 @@ watch(() => route.query, (query) => {
     : operationMap[requestedGroup][0][0]
   group.value = requestedGroup
   operation.value = requestedOperation
-  if (query.mode === 'json' || query.mode === 'trim' || query.mode === 'markdown') textMode.value = query.mode
+  const supportedTextModes: TextTransformMode[] = ['json', 'trim', 'markdown', 'dedupe-lines', 'sort-lines', 'extract-contacts', 'statistics']
+  if (typeof query.mode === 'string' && supportedTextModes.includes(query.mode as TextTransformMode)) textMode.value = query.mode as TextTransformMode
   activeRecipeId.value = undefined
   clearFiles()
+  const stagedFiles = store.consumeIntakeFiles()
+  const stagedText = store.consumeIntakeText()
+  if (stagedFiles.length) files.value = stagedFiles
+  if (requestedGroup === 'text' && stagedText.trim()) textInput.value = stagedText
   message.value = typeof query.group === 'string' ? `已打开“${operations.value.find(([id]) => id === operation.value)?.[1]}”。请选择输入。` : '选择工具和文件后，会先显示本次任务的输入与输出。'
+  if (stagedFiles.length || (requestedGroup === 'text' && stagedText.trim())) message.value = `已从快速处理带入 ${stagedFiles.length || 1} 个输入，可以直接核对参数。`
 }, { immediate: true })
+
+watch(files, async (nextFiles) => {
+  if (group.value !== 'text' || textInput.value.trim() || !nextFiles[0]) return
+  try {
+    textInput.value = await nextFiles[0].text()
+    message.value = `已读取“${nextFiles[0].name}”，可以先查看处理结果再导出。`
+  } catch {
+    message.value = `无法读取“${nextFiles[0].name}”的文本内容。`
+  }
+})
 
 function bytes(data: Uint8Array) {
   return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer
+}
+
+function throwIfCancelled() {
+  if (cancellationRequested) throw new Error(TASK_CANCELLED_MESSAGE)
 }
 
 async function save(name: string, data: Blob | ArrayBuffer | Uint8Array | string, type: string) { return exportOutput(store.settings.outputDirectory, name, data, type) }
@@ -260,162 +358,126 @@ async function makeWatermarkPng(text: string, color: string) {
   return blob.arrayBuffer()
 }
 
-async function extractPdfText(file: File) {
-  const document = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
-  const pages: string[] = []
-  for (let pageIndex = 1; pageIndex <= document.numPages; pageIndex += 1) {
-    const page = await document.getPage(pageIndex)
-    const content = await page.getTextContent()
-    const line = content.items.map((item: any) => typeof item.str === 'string' ? item.str : '').join(' ').replace(/\s+/g, ' ').trim()
-    pages.push(`--- 第 ${pageIndex} 页 ---\n${line}`)
-  }
-  const output = pages.join('\n\n')
-  if (!output.replace(/--- 第 \d+ 页 ---/g, '').trim()) throw new Error(`“${file.name}”没有可提取文字。它可能是扫描件，请等待 OCR 引擎接入。`)
-  return output
-}
-
-async function runPdf() {
+async function runPdf(onProgress?: (progress: number, detail: string) => void, onOutput?: (output: FileReference) => void) {
   if (operation.value === 'images-to-pdf') {
     const images = files.value.filter((file) => file.type.startsWith('image/'))
     if (!images.length) throw new Error('请选择至少一张图片。')
+    throwIfCancelled()
+    onProgress?.(5, '正在按需载入 PDF 引擎…')
+    const { PDFDocument } = await import('pdf-lib')
+    throwIfCancelled()
     const output = await PDFDocument.create()
-    for (const file of images) {
+    for (let index = 0; index < images.length; index += 1) {
+      throwIfCancelled()
+      const file = images[index]
       const image = await imageToPng(file)
+      throwIfCancelled()
       const embedded = await output.embedPng(image.data)
       const page = output.addPage([image.width, image.height])
       page.drawImage(embedded, { x: 0, y: 0, width: image.width, height: image.height })
+      onProgress?.(12 + 76 * (index + 1) / images.length, `正在写入第 ${index + 1}/${images.length} 张图片…`)
     }
-    const name = `${outputName.value || 'toolknit'}-images.pdf`
-    return [await save(name, bytes(await output.save()), 'application/pdf')]
+    const name = `${outputName.value || 'knitspace'}-images.pdf`
+    onProgress?.(94, '正在导出 PDF…')
+    throwIfCancelled()
+    const saved = await save(name, bytes(await output.save()), 'application/pdf')
+    onOutput?.(saved)
+    return [saved]
   }
 
   const pdfs = files.value.filter((file) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))
   if (!pdfs.length) throw new Error('请选择至少一份 PDF。')
-  if (operation.value === 'merge') {
-    const output = await PDFDocument.create()
-    for (const file of pdfs) {
-      const source = await PDFDocument.load(await file.arrayBuffer())
-      const pages = await output.copyPages(source, source.getPageIndices())
-      pages.forEach((page) => output.addPage(page))
-    }
-    const name = `${outputName.value || 'toolknit'}-merged.pdf`
-    return [await save(name, bytes(await output.save()), 'application/pdf')]
+  const inputs: { name: string; data: ArrayBuffer }[] = []
+  for (let index = 0; index < pdfs.length; index += 1) {
+    throwIfCancelled()
+    onProgress?.(4 + 7 * (index + 1) / pdfs.length, `正在准备 ${index + 1}/${pdfs.length} 份 PDF…`)
+    inputs.push({ name: pdfs[index].name, data: await pdfs[index].arrayBuffer() })
   }
-  if (operation.value === 'split') {
-    const outputs: FileReference[] = []
-    for (const file of pdfs) {
-      const source = await PDFDocument.load(await file.arrayBuffer())
-      for (const index of source.getPageIndices()) {
-        const output = await PDFDocument.create()
-        const [page] = await output.copyPages(source, [index])
-        output.addPage(page)
-        const name = `${cleanOutputName(file.name)}-p${index + 1}.pdf`
-        outputs.push(await save(name, bytes(await output.save()), 'application/pdf'))
-      }
+  const watermarkTextValue = watermarkText.value.trim()
+  if (operation.value === 'watermark' && !watermarkTextValue) throw new Error('请输入水印文字。')
+  const watermark = operation.value === 'watermark'
+    ? { data: await makeWatermarkPng(watermarkTextValue, watermarkColor.value), opacity: watermarkOpacity.value }
+    : undefined
+  throwIfCancelled()
+  onProgress?.(12, '正在交给后台 PDF 引擎处理…')
+  const { runPdfTask } = await import('@/lib/pdf-worker')
+  throwIfCancelled()
+  const outputs: FileReference[] = []
+  await runPdfTask({
+    operation: operation.value as PdfTaskOperation,
+    files: inputs,
+    outputName: outputName.value,
+    pageRange: pageRange.value,
+    rotation: rotation.value,
+    pageNumberStart: pageNumberStart.value,
+    pageNumberPosition: pageNumberPosition.value,
+    watermark
+  }, {
+    onProgress,
+    onOutput: async (output) => {
+      throwIfCancelled()
+      const saved = await save(output.name, output.data, output.mime)
+      outputs.push(saved)
+      onOutput?.(saved)
+      throwIfCancelled()
     }
-    return outputs
-  }
-  if (operation.value === 'rotate') {
-    const outputs: FileReference[] = []
-    for (const file of pdfs) {
-      const source = await PDFDocument.load(await file.arrayBuffer())
-      source.getPages().forEach((page) => page.setRotation(degrees((page.getRotation().angle + rotation.value) % 360)))
-      const name = `${cleanOutputName(file.name)}-rotated.pdf`
-      outputs.push(await save(name, bytes(await source.save()), 'application/pdf'))
-    }
-    return outputs
-  }
-  if (operation.value === 'page-number') {
-    const outputs: FileReference[] = []
-    for (const file of pdfs) {
-      const source = await PDFDocument.load(await file.arrayBuffer())
-      const font = await source.embedFont(StandardFonts.Helvetica)
-      source.getPages().forEach((page, index) => {
-        const { width } = page.getSize()
-        const number = String(pageNumberStart.value + index)
-        const size = 11
-        const textWidth = font.widthOfTextAtSize(number, size)
-        page.drawText(number, { x: pageNumberPosition.value === 'bottom-right' ? width - textWidth - 30 : (width - textWidth) / 2, y: 18, size, font, color: rgb(.32, .37, .35), opacity: .9 })
-      })
-      const name = `${cleanOutputName(file.name)}-numbered.pdf`
-      outputs.push(await save(name, bytes(await source.save()), 'application/pdf'))
-    }
-    return outputs
-  }
-  if (operation.value === 'watermark') {
-    const outputs: FileReference[] = []
-    const text = watermarkText.value.trim()
-    if (!text) throw new Error('请输入水印文字。')
-    const watermark = await makeWatermarkPng(text, watermarkColor.value)
-    for (const file of pdfs) {
-      const source = await PDFDocument.load(await file.arrayBuffer())
-      const image = await source.embedPng(watermark)
-      source.getPages().forEach((page) => {
-        const { width, height } = page.getSize()
-        const ratio = Math.min(width * .78 / image.width, height * .24 / image.height)
-        const drawWidth = image.width * ratio
-        const drawHeight = image.height * ratio
-        page.drawImage(image, { x: (width - drawWidth) / 2, y: (height - drawHeight) / 2, width: drawWidth, height: drawHeight, opacity: Math.max(.03, Math.min(1, watermarkOpacity.value / 100)), rotate: degrees(rotation.value) })
-      })
-      const name = `${cleanOutputName(file.name)}-watermarked.pdf`
-      outputs.push(await save(name, bytes(await source.save()), 'application/pdf'))
-    }
-    return outputs
-  }
-  if (operation.value === 'text') {
-    const outputs: FileReference[] = []
-    for (const file of pdfs) {
-      const name = `${cleanOutputName(file.name)}-text.txt`
-      outputs.push(await save(name, await extractPdfText(file), 'text/plain;charset=utf-8'))
-    }
-    return outputs
-  }
-
-  const source = await PDFDocument.load(await pdfs[0].arrayBuffer())
-  const indexes = parsePageIndexes(pageRange.value, source.getPageCount())
-  const output = await PDFDocument.create()
-  const pages = await output.copyPages(source, indexes)
-  pages.forEach((page) => output.addPage(page))
-  const suffix = operation.value === 'reorder' ? 'reordered' : 'extract'
-  const name = `${cleanOutputName(pdfs[0].name)}-${suffix}.pdf`
-  return [await save(name, bytes(await output.save()), 'application/pdf')]
+  })
+  return outputs
 }
 
-async function runImage() {
+async function runImage(onOutput?: (output: FileReference) => void) {
   const inputs = files.value.filter((file) => file.type.startsWith('image/'))
   if (!inputs.length) throw new Error('请选择至少一张图片。')
   const extension = imageFormat.value === 'image/jpeg' ? 'jpg' : imageFormat.value.split('/')[1]
   const outputs: FileReference[] = []
   for (const file of inputs) {
+    throwIfCancelled()
     const blob = await imageToBlob(file)
-    const name = `${cleanOutputName(file.name)}-toolknit.${extension}`
-    outputs.push(await save(name, blob, imageFormat.value))
+    throwIfCancelled()
+    const name = `${cleanOutputName(file.name)}-knitspace.${extension}`
+    const saved = await save(name, blob, imageFormat.value)
+    outputs.push(saved)
+    onOutput?.(saved)
   }
   return outputs
 }
 
-async function runText() {
+async function runText(onOutput?: (output: FileReference) => void) {
+  throwIfCancelled()
   const raw = textInput.value || (files.value[0] ? await files.value[0].text() : '')
+  throwIfCancelled()
   const result = transformText(raw, textMode.value)
-  const name = `${outputName.value || 'toolknit'}-clean.${result.extension}`
-  return [await save(name, result.content, `text/${result.extension};charset=utf-8`)]
+  const name = `${outputName.value || 'knitspace'}-clean.${result.extension}`
+  const saved = await save(name, result.content, `text/${result.extension};charset=utf-8`)
+  onOutput?.(saved)
+  return [saved]
 }
 
-async function runOrganize() {
+async function runOrganize(onOutput?: (output: FileReference) => void) {
   if (!files.value.length) throw new Error('请选择至少一个文件。')
   if (operation.value === 'rename-report') {
-    const lines = buildRenamePreview(files.value.map((file) => file.name), renamePrefix.value)
-    const name = `${outputName.value || 'toolknit'}-rename-preview.txt`
-    return [await save(name, lines.join('\n'), 'text/plain;charset=utf-8')]
+    throwIfCancelled()
+    const lines = buildRenamePreview(files.value.map((file) => file.name), {
+      prefix: renamePrefix.value, suffix: renameSuffix.value, start: renameStart.value,
+      digits: renameDigits.value, separator: renameSeparator.value, keepOriginalName: renameKeepOriginal.value
+    })
+    const name = `${outputName.value || 'knitspace'}-rename-preview.txt`
+    const saved = await save(name, lines.join('\n'), 'text/plain;charset=utf-8')
+    onOutput?.(saved)
+    return [saved]
   }
   const map = new Map<string, string[]>()
   for (const file of files.value) {
+    throwIfCancelled()
     const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))).map((value) => value.toString(16).padStart(2, '0')).join('')
+    throwIfCancelled()
     map.set(digest, [...(map.get(digest) ?? []), file.name])
   }
   const duplicates = [...map.values()].filter((items) => items.length > 1)
-  const name = `${outputName.value || 'toolknit'}-dedupe-report.txt`
-  return [await save(name, duplicates.length ? duplicates.map((items) => items.join('  =  ')).join('\n') : '未发现重复文件。', 'text/plain;charset=utf-8')]
+    const name = `${outputName.value || 'knitspace'}-dedupe-report.txt`
+  const saved = await save(name, duplicates.length ? duplicates.map((items) => items.join('  =  ')).join('\n') : '未发现重复文件。', 'text/plain;charset=utf-8')
+  onOutput?.(saved)
+  return [saved]
 }
 
 async function run() {
@@ -428,61 +490,170 @@ async function run() {
     if (!directory) { message.value = '已取消：需要先选择默认输出目录。'; return }
     store.updateSettings({ outputDirectory: directory })
   }
+  cancellationRequested = false
+  cancelling.value = false
   running.value = true
+  recentOutputs.value = []
   const kind = group.value as 'pdf' | 'image' | 'text' | 'archive'
   const label = `${groups.find((item) => item[0] === group.value)?.[1]} · ${operations.value.find((item) => item[0] === operation.value)?.[1]}`
   const toolId = `${group.value}:${operation.value}`
   const inputs: FileReference[] = files.value.map((file) => ({ name:file.name, size:file.size, mime:file.type, path:(file as File & { path?:string }).path }))
   const job = store.addJob(kind, label, files.value.map((file) => file.name), { toolId, route:'/tools', parameters:recipeParameters(), inputs, retryable:true })
+  activeJobId.value = job.id
   store.updateJob(job.id, { status: 'running', progress: 15, detail: '正在准备输入文件…' })
+  let currentProgress = 15
+  const completedOutputs: FileReference[] = []
   try {
-    const outputs = group.value === 'pdf' ? await runPdf() : group.value === 'image' ? await runImage() : group.value === 'text' ? await runText() : await runOrganize()
+    let lastProgress = 15
+    let lastProgressAt = 0
+    const reportProgress = (progress: number, detail: string) => {
+      if (cancellationRequested) return
+      const next = Math.max(16, Math.min(97, Math.round(16 + progress * .81)))
+      const now = performance.now()
+      message.value = detail
+      if (next >= lastProgress + 2 || now - lastProgressAt >= 650) {
+        lastProgress = Math.max(lastProgress, next)
+        currentProgress = lastProgress
+        lastProgressAt = now
+        store.updateJob(job.id, { status: 'running', progress: lastProgress, detail })
+      }
+    }
+    const rememberOutput = (output: FileReference) => {
+      completedOutputs.push(output)
+      // This panel holds only metadata. Generated PDF/image bytes stay in the
+      // chosen output directory instead of accumulating in the Vue view.
+      recentOutputs.value = [...completedOutputs]
+    }
+    const outputs = group.value === 'pdf' ? await runPdf(reportProgress, rememberOutput) : group.value === 'image' ? await runImage(rememberOutput) : group.value === 'text' ? await runText(rememberOutput) : await runOrganize(rememberOutput)
     const outputNames = outputs.map((item) => item.name)
+    recentOutputs.value = outputs
     store.updateJob(job.id, { status: 'succeeded', progress: 100, outputNames, outputs, detail: '已生成新输出，原文件未修改。' })
     if (activeRecipeId.value) store.touchRecipe(activeRecipeId.value)
     message.value = `任务完成：已生成 ${outputNames.length} 个输出文件。`
     ui.toast('任务已完成', `${label} · ${outputNames.length} 个输出`, 'success', '查看历史', () => location.hash = '#/history')
   } catch (error) {
     const detail = error instanceof Error ? error.message : '工具执行失败。'
-    store.updateJob(job.id, { status: 'failed', progress: 100, errorCode: 'TOOL_EXECUTION_FAILED', detail })
-    message.value = detail
-    ui.toast('处理失败', detail, 'error')
+    const cancelled = cancellationRequested
+    const outputNames = completedOutputs.map((output) => output.name)
+    recentOutputs.value = completedOutputs
+    store.updateJob(job.id, { status: cancelled ? 'cancelled' : 'failed', progress: cancelled ? currentProgress : 100, errorCode: cancelled ? 'TOOL_CANCELLED' : 'TOOL_EXECUTION_FAILED', detail: cancelled ? TASK_CANCELLED_MESSAGE : detail, ...(cancelled && outputNames.length ? { outputs: completedOutputs, outputNames } : {}) })
+    message.value = cancelled ? `${TASK_CANCELLED_MESSAGE}${outputNames.length ? ` 已记录 ${outputNames.length} 个已完成输出。` : ''}` : detail
+    ui.toast(cancelled ? '任务已停止' : '处理失败', cancelled ? (outputNames.length ? `${outputNames.length} 个已完成输出已保留，可在历史中查看。` : '没有生成不完整输出，原文件始终不变。') : detail, cancelled ? 'warning' : 'error')
   } finally {
     running.value = false
+    cancelling.value = false
+    cancellationRequested = false
+    activeJobId.value = ''
   }
 }
+
+async function cancelRun() {
+  if (!running.value || cancelling.value) return
+  cancelling.value = true
+  cancellationRequested = true
+  message.value = group.value === 'pdf' ? '正在停止 PDF 引擎并释放处理内存…' : '将在当前文件处理完成后停止，已完成输出会保留。'
+  if (activeJobId.value) store.updateJob(activeJobId.value, { status: 'running', detail: message.value, errorCode: 'TOOL_CANCEL_REQUESTED' })
+  if (group.value !== 'pdf') return
+  try {
+    const { cancelPdfTask } = await import('@/lib/pdf-worker')
+    cancelPdfTask()
+  } catch {
+    // The cooperative flag above still stops work at the next safe boundary.
+  }
+}
+
+function closeResultMenu(restoreFocus = false) {
+  resultMenu.value = undefined
+  if (restoreFocus) void nextTick(() => resultMenuTrigger?.focus({ preventScroll: true }))
+}
+function resultMenuHeight(output: FileReference) { return output.path ? 192 : 120 }
+function showResultMenu(output: FileReference, x: number, y: number, trigger: HTMLElement) {
+  resultMenuTrigger = trigger
+  resultMenu.value = { output, ...clampMenuPosition(x, y, { menuWidth: 224, menuHeight: resultMenuHeight(output), margin: 12 }) }
+  void nextTick(() => resultMenuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus())
+}
+function openResultMenu(event: MouseEvent, output: FileReference) {
+  showResultMenu(output, event.clientX, event.clientY, event.currentTarget as HTMLElement)
+}
+function openResultMenuFromKeyboard(event: KeyboardEvent, output: FileReference) {
+  if (!isContextMenuShortcut(event)) return
+  event.preventDefault()
+  const trigger = event.currentTarget as HTMLElement
+  const bounds = trigger.getBoundingClientRect()
+  showResultMenu(output, bounds.right - 16, bounds.top + 20, trigger)
+}
+function handleResultMenuKeydown(event: KeyboardEvent) {
+  const items = [...(resultMenuElement.value?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])]
+  if (event.key === 'Escape') { event.preventDefault(); closeResultMenu(true); return }
+  const next = nextMenuItemIndex(event.key, items.indexOf(document.activeElement as HTMLButtonElement), items.length)
+  if (next === undefined) return
+  event.preventDefault()
+  items[next]?.focus()
+}
+async function revealResult(output: FileReference) {
+  if (!output.path) return
+  try { await revealDesktopFile(output.path) }
+  catch (error) { ui.toast('无法打开输出位置', error instanceof Error ? error.message : '输出文件可能已移动。', 'error') }
+}
+async function saveResultAs(output: FileReference) {
+  if (!output.path) return
+  try {
+    const saved = await saveOutputAs(output.path, output.name)
+    if (saved) ui.toast('已另存输出', saved, 'success')
+  } catch (error) { ui.toast('另存失败', error instanceof Error ? error.message : '无法复制当前输出。', 'error') }
+}
+async function copyResultPath(output: FileReference) {
+  if (!output.path) return
+  try { await navigator.clipboard.writeText(output.path); ui.toast('输出路径已复制', output.path, 'success') }
+  catch (error) { ui.toast('复制路径失败', error instanceof Error ? error.message : '系统剪贴板暂时不可用。', 'error') }
+}
+function removeResult(output: FileReference) {
+  recentOutputs.value = recentOutputs.value.filter((item) => item !== output)
+  closeResultMenu(true)
+}
+async function runRevealResult() { const output = resultMenu.value?.output; closeResultMenu(); if (output) await revealResult(output) }
+async function runSaveResultAs() { const output = resultMenu.value?.output; closeResultMenu(); if (output) await saveResultAs(output) }
+async function runCopyResultPath() { const output = resultMenu.value?.output; closeResultMenu(); if (output) await copyResultPath(output) }
+function closeResultMenuOnOutsideClick() { closeResultMenu() }
+
+onMounted(() => window.addEventListener('click', closeResultMenuOnOutsideClick))
+onBeforeUnmount(() => {
+  window.removeEventListener('click', closeResultMenuOnOutsideClick)
+  if (!running.value || group.value !== 'pdf') return
+  cancellationRequested = true
+  void import('@/lib/pdf-worker').then(({ cancelPdfTask }) => cancelPdfTask()).catch(() => undefined)
+})
 </script>
 
 <template>
-  <div class="tool-center page-enter">
-    <section class="page-heading tool-heading">
-      <div>
-        <p class="eyebrow">FILE PROCESSING CENTER</p>
-        <h2>选择一个工具，<em>完成一件事情。</em></h2>
-        <p>输入、参数和输出集中在同一条任务流中；所有正式工具都生成新文件。</p>
-      </div>
-      <div class="tool-promise"><b>本地处理</b><span>不覆盖原文件</span></div>
-    </section>
+  <div class="tool-center page-enter mx-auto w-full max-w-320 px-8 py-6">
+    <PageHeader :title="activeOperationLabel" :subtitle="activeOperationNote">
+      <template #actions>
+        <span class="row gap-1.5 h-9 px-3 rounded-sm bg-surface-2 border border-line text-[12px] text-fg-2">
+          {{ files.length ? `已选 ${files.length} 个文件` : '尚未选择输入' }}
+        </span>
+      </template>
+    </PageHeader>
 
     <section class="tool-shell">
-      <aside class="tool-nav" aria-label="工具分类">
-        <button v-for="item in groups" :key="item[0]" :class="{ active: group === item[0] }" @click="setGroup(item[0])">
+      <aside class="tool-nav" :inert="running || undefined" :aria-disabled="running" aria-label="工具分类">
+        <button v-for="item in groups" :key="item[0]" :disabled="running" :class="{ active: group === item[0] }" @click="setGroup(item[0])">
           <b><AppIcon :name="item[1]" :size="18" /> {{ item[2] }}</b><span>{{ item[3] }}</span>
         </button>
       </aside>
 
       <main class="tool-main">
-        <header class="tool-picker">
+        <header class="tool-picker" :inert="running || undefined" :aria-disabled="running">
           <div>
             <p class="eyebrow">01 · 选择操作</p>
             <div class="operation-tabs">
-              <button v-for="item in operations" :key="item[0]" :class="{ active: operation === item[0] }" @click="setOperation(item[0])">{{ item[1] }}</button>
+              <button v-for="item in operations" :key="item[0]" :disabled="running" :class="{ active: operation === item[0] }" @click="setOperation(item[0])">{{ item[1] }}</button>
             </div>
           </div>
         </header>
 
-        <section class="tool-body" :class="{ 'single-column': !hasParameters }">
-          <div class="input-card"><p class="eyebrow">02 · 输入</p><FileDropZone v-model="files" :accept="accept" :title="group === 'text' ? '选择文件或直接粘贴' : '拖入需要处理的文件'" hint="自动识别类型、大小和预览；原件保持只读" @error="message=$event"/></div>
+        <section class="tool-body" :class="{ 'single-column': !hasParameters }" :inert="running || undefined" :aria-busy="running">
+          <div class="input-card"><p class="eyebrow">02 · 输入</p><FileDropZone v-model="files" :disabled="running" :accept="accept" :max-file-bytes="inputFileLimit" :max-total-bytes="inputTotalLimit" :title="group === 'text' ? '选择文件或直接粘贴' : '拖入需要处理的文件'" :hint="`自动识别类型与大小；本次内存上限 ${formatSize(inputTotalLimit)}`" @error="message=$event"/></div>
 
           <div v-if="hasParameters" class="parameter-card">
             <p class="eyebrow">03 · 参数</p>
@@ -516,12 +687,26 @@ async function run() {
             </template>
 
             <template v-else-if="group === 'text'">
-              <label>处理方式<select v-model="textMode"><option value="json">格式化 JSON</option><option value="trim">清理空行与尾随空格</option><option value="markdown">清理 Markdown 空行</option></select></label>
+              <label>处理方式<select v-model="textMode">
+                <option value="json">格式化 JSON</option>
+                <option value="trim">清理空行与尾随空格</option>
+                <option value="markdown">清理 Markdown 空行</option>
+                <option value="dedupe-lines">删除重复行</option>
+                <option value="sort-lines">自然排序每一行</option>
+                <option value="extract-contacts">提取链接与邮箱</option>
+                <option value="statistics">统计字数与段落</option>
+              </select></label>
               <label>文本内容<textarea v-model="textInput" name="text-input" placeholder="粘贴需要处理的内容…"></textarea></label>
+              <div v-if="textPreview" class="transform-preview" :class="{ error: textPreview.error }" aria-live="polite"><b>{{ textPreview.error ? '需要检查' : '即时结果预览' }}</b><pre>{{ textPreview.content }}</pre><small v-if="textPreview.truncated">预览仅显示前 1800 个字符，导出内容保持完整。</small></div>
             </template>
 
             <template v-else>
-              <label v-if="operation === 'rename-report'">命名开头<input v-model="renamePrefix" name="rename-prefix" /></label>
+              <template v-if="operation === 'rename-report'">
+                <div class="parameter-pair"><label>名称前缀<input v-model="renamePrefix" name="rename-prefix" /></label><label>名称后缀<input v-model="renameSuffix" name="rename-suffix" placeholder="可选" /></label></div>
+                <div class="parameter-pair"><label>起始编号<input v-model.number="renameStart" type="number" min="0" /></label><label>编号位数<input v-model.number="renameDigits" type="number" min="1" max="8" /></label></div>
+                <div class="parameter-pair"><label>分隔符<input v-model="renameSeparator" maxlength="3" placeholder="-" /></label><label class="check-label"><input v-model="renameKeepOriginal" type="checkbox" />保留原文件名</label></div>
+                <div v-if="renamePreview.length" class="rename-preview" aria-live="polite"><b>实时预览</b><code v-for="line in renamePreview" :key="line">{{ line }}</code><small v-if="files.length > renamePreview.length">另有 {{ files.length - renamePreview.length }} 个文件</small></div>
+              </template>
               <p class="parameter-note">只生成预览或报告，不移动、删除或重命名原文件。</p>
             </template>
           </div>
@@ -536,11 +721,20 @@ async function run() {
           <div class="execution-actions">
             <label>配方名称<input v-model="recipeTitle" name="recipe-title" placeholder="例如：证件照压缩" /></label>
             <label v-if="usesOutputName">输出名称<input v-model="outputName" name="output-name" /></label>
-            <button class="save-recipe" @click="saveCurrentRecipe">保存配方</button>
-            <button class="run-tool" :disabled="!canRun" @click="run">{{ running ? '正在处理…' : '生成新输出' }}</button>
+            <button class="save-recipe" :disabled="running" @click="saveCurrentRecipe">保存配方</button>
+            <button v-if="running" class="cancel-run" :disabled="cancelling" @click="cancelRun">{{ cancelling ? '正在停止…' : '停止任务' }}</button>
+            <button v-else class="run-tool" :disabled="!canRun" @click="run">生成新输出</button>
           </div>
         </footer>
       </main>
     </section>
+    <section v-if="recentOutputs.length" class="tool-output-result panel" aria-label="本次处理结果">
+      <header><div><p class="eyebrow">最近产物</p><h3>本次生成</h3><small>{{ recentOutputs.length }} 个输出 · 右键或 Shift+F10 可进行桌面操作</small></div><RouterLink class="quiet-button" to="/history">查看处理历史</RouterLink></header>
+      <div class="tool-output-result__list">
+        <button v-for="output in visibleRecentOutputs" :key="`${output.path ?? output.name}:${output.size ?? 0}`" v-memo="[output.name, output.path, output.size]" class="tool-output-result__row" :class="{ 'tool-output-result__row--browser': !output.path }" :title="output.path ? '左键打开所在位置；右键查看更多操作' : '浏览器下载已开始；右键可移除此记录'" :aria-label="`${output.name}，${formatSize(output.size)}；右键或 Shift 加 F10 打开操作`" aria-haspopup="menu" :aria-expanded="resultMenu?.output === output" @click="revealResult(output)" @contextmenu.prevent.stop="openResultMenu($event, output)" @keydown="openResultMenuFromKeyboard($event, output)"><span><AppIcon name="file-text" :size="17" /></span><b>{{ output.name }}</b><small>{{ formatSize(output.size) }}</small><i>{{ output.path ? '打开位置' : '已下载' }}</i></button>
+      </div>
+      <p v-if="recentOutputs.length > visibleRecentOutputs.length" class="tool-output-result__more">另外 {{ recentOutputs.length - visibleRecentOutputs.length }} 个输出已记录在处理历史中。</p>
+    </section>
+    <Teleport to="body"><section v-if="resultMenu" ref="resultMenuElement" class="tool-output-context-menu" role="menu" :aria-label="`${resultMenu.output.name} 操作`" :style="{ left: `${resultMenu.x}px`, top: `${resultMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleResultMenuKeydown"><p>{{ resultMenu.output.name }}</p><button v-if="resultMenu.output.path" role="menuitem" @click="runRevealResult">打开文件位置</button><button v-if="resultMenu.output.path" role="menuitem" @click="runSaveResultAs">另存为…</button><button v-if="resultMenu.output.path" role="menuitem" @click="runCopyResultPath">复制输出路径</button><button role="menuitem" class="danger" @click="removeResult(resultMenu.output)">从本次结果移除</button></section></Teleport>
   </div>
 </template>

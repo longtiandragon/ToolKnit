@@ -4,7 +4,7 @@ import type { FileReference } from '@/types'
 
 export async function chooseOutputDirectory() {
   if (!isDesktop()) return undefined
-  const selected = await open({ directory: true, multiple: false, title: '选择 ToolKnit 默认输出目录' })
+  const selected = await open({ directory: true, multiple: false, title: '选择 Knitspace 默认输出目录' })
   return typeof selected === 'string' ? selected : undefined
 }
 
