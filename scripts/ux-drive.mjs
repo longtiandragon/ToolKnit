@@ -42,11 +42,20 @@ async function samplePdf(name, pages = 3) {
 
 async function run() {
   const browser = await chromium.launch({ executablePath: CHROME, headless: true })
-  const page = await browser.newPage({ viewport: { width: 1600, height: 950 } })
+  // The theme is a stored preference read before mount, so it has to be in
+  // place before the first navigation rather than toggled afterwards.
+  const theme = process.argv[3] === 'light' ? 'light' : 'dark'
+  const context = await browser.newContext({ viewport: { width: 1600, height: 950 } })
+  await context.addInitScript(
+    (value) => window.localStorage.setItem('knitspace:theme', value),
+    theme,
+  )
+  const page = await context.newPage()
   const shots = []
+  console.log(`theme: ${theme}`)
 
   const shot = async (label) => {
-    const file = join(OUT, `${String(shots.length + 1).padStart(2, '0')}-${label}.png`)
+    const file = join(OUT, `${theme}-${String(shots.length + 1).padStart(2, '0')}-${label}.png`)
     await page.screenshot({ path: file })
     shots.push(file)
     console.log('  captured', label)
