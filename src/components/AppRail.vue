@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import { toolCategories } from '@/lib/toolbox-nav'
-import { applyTheme, readThemePreference, type ThemePreference } from '@/lib/theme'
+import { applyTheme, resolveTheme, themePreference, type ThemePreference } from '@/lib/theme'
 
 const emit = defineEmits<{ openCommand: [HTMLElement] }>()
 
 const route = useRoute()
-const preference = ref<ThemePreference>(readThemePreference())
+// Read from the shared preference so the rail and the settings picker
+// never disagree about which theme is on.
+const preference = themePreference
+
+// What the window actually looks like right now — `preference` may be
+// 'system', which is not something the label can render.
+const resolved = computed(() => resolveTheme(preference.value))
 
 const totalTools = computed(() => toolCategories.reduce((sum, category) => sum + category.tools.length, 0))
 
@@ -24,9 +30,11 @@ function isActive(path: string) {
   return route.path === path || route.path.startsWith(`${path}/`)
 }
 
+/** The rail is a quick flip between the two visible outcomes; the three-way
+ *  choice, including 跟随系统, lives in settings. Flipping while on 系统 moves
+ *  to the opposite of whatever the system currently resolves to. */
 function cycleTheme() {
-  const next: ThemePreference = preference.value === 'dark' ? 'light' : 'dark'
-  preference.value = next
+  const next: ThemePreference = resolveTheme(preference.value) === 'dark' ? 'light' : 'dark'
   applyTheme(next)
 }
 </script>
@@ -87,9 +95,9 @@ function cycleTheme() {
     </nav>
 
     <div class="shrink-0 p-2.5 border-t border-line stack gap-0.5">
-      <button type="button" class="nav-item w-full" :title="preference === 'dark' ? '切换到浅色' : '切换到深色'" @click="cycleTheme">
-        <AppIcon :name="preference === 'dark' ? 'sparkle' : 'palette'" :size="15" class="shrink-0 text-fg-3" />
-        <span>{{ preference === 'dark' ? '深色' : '浅色' }}</span>
+      <button type="button" class="nav-item w-full" :title="resolved === 'dark' ? '切换到浅色' : '切换到深色'" @click="cycleTheme">
+        <AppIcon :name="resolved === 'dark' ? 'sparkle' : 'palette'" :size="15" class="shrink-0 text-fg-3" />
+        <span>{{ preference === 'system' ? '跟随系统' : resolved === 'dark' ? '深色' : '浅色' }}</span>
       </button>
       <RouterLink to="/settings" :class="['nav-item', isActive('/settings') && 'nav-item-active']">
         <AppIcon name="settings" :size="15" class="shrink-0 text-fg-3" />

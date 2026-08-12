@@ -125,6 +125,14 @@ async function run() {
   await page.waitForTimeout(600)
   await shot('devtools-datecalc')
 
+  // ── Flow: settings, which is mostly a reading surface ──────────────────
+  console.log('flow: 设置')
+  for (const section of ['config', 'appearance', 'backup']) {
+    await page.goto(`${BASE}/settings?section=${section}`, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(900)
+    await shot(`settings-${section}`)
+  }
+
   await browser.close()
 
   // A contact sheet so the whole sequence can be read at once.

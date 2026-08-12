@@ -6,6 +6,8 @@
  * resolved value is written to `data-theme` on the document element, which is
  * what `src/styles/theme.css` keys off.
  */
+import { ref, type Ref } from 'vue'
+
 export type ThemePreference = 'system' | 'dark' | 'light'
 export type ResolvedTheme = 'dark' | 'light'
 
@@ -35,8 +37,18 @@ export function readThemePreference(): ThemePreference {
   return DEFAULT_PREFERENCE
 }
 
+/**
+ * The live preference, shared by everything that can change or display it.
+ *
+ * The rail has a toggle and settings has a three-way picker; without a single
+ * source they disagree the moment either one is used. Read it, do not write
+ * it — `applyTheme` keeps it in step with the document and with storage.
+ */
+export const themePreference: Ref<ThemePreference> = ref(readThemePreference())
+
 export function applyTheme(preference: ThemePreference) {
   const resolved = resolveTheme(preference)
+  themePreference.value = preference
   document.documentElement.dataset.theme = resolved
   try {
     localStorage.setItem(STORAGE_KEY, preference)
