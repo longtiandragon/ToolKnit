@@ -23,9 +23,13 @@ describe('desktop backup surface contract', () => {
   })
 
   it('deep-links the Today backup status to the data and backup section', () => {
-    expect(dashboard).toContain('class="system-strip__backup"')
+    // Asserted by behaviour, not by class name: the strip used to be found via
+    // its `system-strip__backup` hook, which only existed for the legacy
+    // stylesheet. What has to stay true is that Today reads the real backup
+    // record and that clicking it lands on the section that can act on it.
     expect(dashboard).toContain('to="/settings?section=backup"')
     expect(dashboard).toContain('latestBackupRecord(store.settings)')
+    expect(dashboard).toContain('尚无备份记录')
   })
 
   it('inspects a full archive before offering the destructive restore', () => {
