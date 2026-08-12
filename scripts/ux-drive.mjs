@@ -95,14 +95,35 @@ async function run() {
   await page.waitForTimeout(700)
   await shot('json-invalid')
 
-  // ── Flow: a developer tool ─────────────────────────────────────────────
-  console.log('flow: Base64')
-  await page.goto(`${BASE}/developer-tools`, { waitUntil: 'networkidle' })
+  // ── Flow: the developer tools, which are live now ──────────────────────
+  // Nothing here is clicked to run. If a state below is empty, the live
+  // recompute is broken.
+  console.log('flow: 开发者工具')
+  await page.goto(`${BASE}/developer-tools?tool=base64`, { waitUntil: 'networkidle' })
   await page.waitForTimeout(900)
-  const devInput = page.locator('textarea').first()
-  await devInput.fill('Knitspace 本地工具箱')
+  await page.locator('textarea[name=developer-input]').fill('Knitspace 本地工具箱')
   await page.waitForTimeout(600)
-  await shot('devtools-filled')
+  await shot('devtools-base64-live')
+
+  await page.goto(`${BASE}/developer-tools?tool=jwt`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(700)
+  await page.locator('textarea[name=developer-input]').fill('not-a-real-token')
+  await page.waitForTimeout(600)
+  await shot('devtools-jwt-error')
+
+  await page.goto(`${BASE}/developer-tools?tool=diff`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(700)
+  await page.locator('textarea[name=developer-input]').fill('const a = 1\nconst b = 2\nconst c = 3')
+  await page.locator('textarea[name=developer-secondary-input]').fill('const a = 1\nconst b = 20\nconst c = 3\nconst d = 4')
+  await page.waitForTimeout(600)
+  await shot('devtools-diff')
+
+  await page.goto(`${BASE}/developer-tools?tool=datecalc`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(700)
+  await page.locator('input[type=date]').first().fill('2026-01-01')
+  await page.locator('input[type=date]').nth(1).fill('2026-08-13')
+  await page.waitForTimeout(600)
+  await shot('devtools-datecalc')
 
   await browser.close()
 

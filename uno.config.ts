@@ -110,6 +110,28 @@ export default defineConfig({
     ],
     ['field-area', 'field h-auto py-2 leading-relaxed resize-y'],
 
+    // ── Work panes ────────────────────────────────────────────────────────
+    // A pane is a panel that fills its column and scrolls its own body: a
+    // fixed header strip, then content that takes the rest. Tool pages are
+    // built almost entirely out of these.
+    // The pane, not the field inside it, carries the focus indication: a
+    // textarea that fills its container has no edge of its own to ring.
+    ['pane', 'panel flex flex-col overflow-hidden min-w-0 transition-colors focus-within:border-line-strong'],
+    ['pane-head', 'row-between gap-2 shrink-0 px-3 h-10 border-b border-line'],
+    ['pane-title', 'text-[12px] font-medium text-fg-2'],
+    // The editable surface inside a pane. It owns no border of its own — the
+    // pane already drew one, and two nested boxes read as a mistake.
+    //
+    // The `!` overrides are aimed at the legacy sheets, which style bare
+    // `textarea`/`input` elements globally for the views that have not been
+    // rebuilt yet. They come out with `legacy-bridge.css`.
+    [
+      'code-area',
+      'w-full flex-1 min-h-40 px-3 py-2.5 border-0! rounded-none! bg-transparent! shadow-none! ' +
+        'font-mono text-[13px] leading-relaxed resize-none ' +
+        'focus:outline-none focus-visible:shadow-none!',
+    ],
+
     // ── Small parts ───────────────────────────────────────────────────────
     ['chip', 'inline-flex items-center gap-1 h-6 px-2 rounded-full text-[12px] bg-surface-2 text-fg-2'],
     ['chip-accent', 'chip bg-accent-soft text-accent'],
