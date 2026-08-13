@@ -278,18 +278,8 @@ textarea { line-height: 1.7; resize: vertical; }
   border-radius: var(--radius-sm);
   background: var(--surface-sunken);
 }
-.operation-tabs button,
-.filter-row button {
-  border: 0;
-  border-radius: 5px;
-  color: var(--muted);
-  background: transparent;
-  font: 600 12px/1 var(--font-ui);
-  padding: 7px 11px;
-  transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
-}
-.operation-tabs button:hover,
-.filter-row button:hover { color: var(--text); background: var(--surface-2); }
+
+
 .operation-tabs button.active,
 .filter-row button.active {
   color: var(--accent);

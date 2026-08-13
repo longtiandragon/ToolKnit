@@ -116,6 +116,21 @@ for (const file of SHEETS) {
     return whole.match(/^\s*/)[0]
   })
 
+  // Belt and braces. The block regex only ever matches innermost `{...}`
+  // pairs, so it cannot swallow an `@media` wrapper — but an earlier pruner in
+  // this repo did exactly that and left two sheets unparseable from that byte
+  // on, with no error anywhere. Never write an unbalanced sheet again.
+  let depth = 0
+  for (const character of out) {
+    if (character === '{') depth += 1
+    else if (character === '}') depth -= 1
+  }
+  if (depth !== 0) {
+    console.error(`${file}: refusing to write — braces unbalanced by ${depth}`)
+    process.exitCode = 1
+    continue
+  }
+
   removedRules += fileRules
   console.log(`${file.padEnd(30)} dead rules ${String(fileRules).padStart(5)}`)
   if (apply && out !== original) writeFileSync(file, out)
