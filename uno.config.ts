@@ -35,12 +35,20 @@ export default defineConfig({
         DEFAULT: 'var(--line)',
         strong: 'var(--line-strong)',
       },
+      // Two ramps, split by role. `accent` is ink — text, icons, borders,
+      // rings — and is light enough to read on a dark plane. `accent-solid`
+      // is the fill under an `accent-fg` label and is dark enough for that
+      // label to clear 4.5:1. Using the ink ramp as a fill puts white on a
+      // pale blue at 2:1, which is what the skip link used to do.
       accent: {
         DEFAULT: 'var(--accent)',
         hover: 'var(--accent-hover)',
         press: 'var(--accent-press)',
         fg: 'var(--accent-fg)',
         soft: 'var(--accent-soft)',
+        solid: 'var(--accent-solid)',
+        'solid-hover': 'var(--accent-solid-hover)',
+        'solid-press': 'var(--accent-solid-press)',
       },
       success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
       warn: { DEFAULT: 'var(--warn)', soft: 'var(--warn-soft)' },
@@ -90,7 +98,7 @@ export default defineConfig({
     ['btn-icon', 'w-9 px-0 shrink-0'],
     [
       'btn-primary',
-      'btn bg-accent text-accent-fg hover:not-disabled:bg-accent-hover active:not-disabled:bg-accent-press',
+      'btn bg-accent-solid text-accent-fg hover:not-disabled:bg-accent-solid-hover active:not-disabled:bg-accent-solid-press',
     ],
     [
       'btn-default',

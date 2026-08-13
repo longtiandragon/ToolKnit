@@ -40,7 +40,11 @@
   /* The legacy accent was green; the product now has exactly one action
      colour, so both names resolve to it. */
   --green: var(--accent);
-  --accent-soft: var(--accent-soft);
+  /* `--accent-soft` is NOT re-declared here. It is a real theme token, and a
+     `--accent-soft: var(--accent-soft)` alias is a self-reference: the whole
+     cycle becomes invalid at computed-value time, so the token silently
+     resolved to nothing on every page. Focus rings, selection, tag pills,
+     empty-state icon chips and accent shadows all went blank at once. */
   --green-bg: var(--accent-soft);
   --green-bg-hover: var(--accent-soft);
   --accent-ink: var(--accent-press);
@@ -148,6 +152,16 @@ body {
   width: calc(100% - 240px);
   margin-left: 240px;
   background: transparent;
+}
+
+/* `AppRail.vue` paints itself with tokens, but it still answers to `.rail`
+   for the handful of legacy descendant rules, and the legacy layers give
+   `.rail` a gradient. A gradient is `background-image`; the component's
+   `bg-surface` utility only sets `background-color`, so no amount of load
+   order removes it — the rail kept a blue wash down its top third. */
+.rail {
+  background-image: none;
+  box-shadow: none;
 }
 
 .topbar {
