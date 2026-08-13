@@ -141,8 +141,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .command-content-context-menu { z-index: calc(var(--z-global-modal) + 1); width: min(252px, calc(100vw - 24px)); }
 .command-content-context-menu header { background: linear-gradient(120deg, color-mix(in srgb, var(--green-bg) 78%, transparent), transparent 74%); }
 .command-content-context-menu header b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-@media(max-width:1120px){}
 .command-result-link--content { cursor: pointer; }
 .workspace-context-menu { width: 274px; }
 .workspace-context-menu header { padding-bottom: 10px; background: linear-gradient(125deg, var(--accent-soft), var(--surface-2) 72%); }
@@ -712,7 +710,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .markdown-outline button:focus-visible { position: relative; z-index: 1; outline: 2px solid color-mix(in srgb, var(--green) 46%, transparent); outline-offset: -2px; }
 .markdown-outline button > span { color: var(--muted); font: 700 11px/1 var(--font-ui); }
 .markdown-outline button > b { overflow: hidden; font: inherit; text-overflow: ellipsis; white-space: nowrap; }.annotation-canvas .konvajs-content { width: 100% !important; height: 100% !important; }.annotation-canvas[data-tool="box"] .konvajs-content, .annotation-canvas[data-tool="arrow"] .konvajs-content, .annotation-canvas[data-tool="text"] .konvajs-content { cursor: crosshair; }.annotation-canvas[data-tool="select"] .konvajs-content { cursor: default; }.annotation-canvas:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--green) 70%, transparent); }.annotation-canvas__hint { position: absolute; left: 13px; bottom: 11px; z-index: 4; margin: 0; padding: 4px 8px; border-radius: 999px; color: #fff; background: rgb(0 0 0 / .68); font: 500 12px/1.2 var(--font-ui); pointer-events: none; }
-.visual-layer-panel__toggle:hover,.visual-layer-panel__toggle:focus-visible{color:var(--green-strong);background:var(--green-bg)}.visual-layer-panel__toggle:focus-visible,.visual-layer-list button:focus-visible,.visual-layer-panel__rotate button:focus-visible,.visual-layer-panel__more:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 45%,transparent);outline-offset:-2px}.visual-layer-list__select span,.visual-layer-list__select b,.visual-layer-list__select small{display:block;min-width:0}.visual-layer-panel__rotate>span,.visual-layer-panel__rotate b,.visual-layer-panel__rotate small{display:block}
 .annotation-text-editor { position: fixed; z-index: 131; display: grid; width: min(314px, calc(100vw - 24px)); gap: 10px; padding: 13px; border: 1px solid var(--accent-soft); border-radius: 13px; background: linear-gradient(145deg, var(--surface), var(--surface-2)); box-shadow: var(--shadow-lg); animation: knit-menu-in .14s ease-out both; }.annotation-text-editor > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }.annotation-text-editor > header span { color: var(--text); font: 700 12px/1.25 var(--font-ui); }.annotation-text-editor > header small { color: var(--muted); font: 12px var(--font-ui); white-space: nowrap; }.annotation-text-editor > input { width: 100%; min-height: 38px; padding: 0 10px; border: 1px solid var(--accent-soft); border-radius: 8px; color: var(--text); background: var(--surface-2); font: 600 13px var(--font-ui); }.annotation-text-editor > input:focus { border-color: var(--green-strong); outline: 2px solid color-mix(in srgb, var(--green) 32%, transparent); outline-offset: 1px; }.annotation-text-editor > footer { display: flex; justify-content: flex-end; gap: 7px; }.annotation-text-editor button { min-height: 30px; padding-inline: 10px; font-size: 12px; }
 
 @media (max-width: 1180px) {
@@ -835,13 +832,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
    desktop actions remain under the pointer. This keeps the visual hierarchy
    calm for image work without hiding keyboard access. */
 .visual-process-canvas:focus-visible{box-shadow:inset 0 0 0 3px color-mix(in srgb,var(--green) 44%,transparent)}
-.visual-context-menu button:hover:not(:disabled),.visual-context-menu button:focus-visible:not(:disabled){color:var(--green-strong);background:var(--green-bg)}
-.visual-project-trigger:hover,.visual-project-trigger.open{color:var(--green-strong);background:var(--green-bg)}
-.visual-project-trigger:focus-visible,.visual-project-quick-save:focus-visible,.visual-project-panel button:focus-visible,.visual-project-panel input:focus-visible{position:relative;z-index:1;outline:2px solid color-mix(in srgb,var(--green) 55%,transparent);outline-offset:2px}.visual-project-trigger strong,.visual-project-trigger small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.visual-project-panel>header b,.visual-project-panel>header small{display:block}.visual-project-list article:hover,.visual-project-list article.active{border-color:color-mix(in srgb,var(--green) 34%,var(--line));background:var(--green-bg)}
-
-@media(max-width:1100px){}
-@media(max-width:700px){}
-@media(prefers-reduced-motion:reduce){}
 
 /* Outputs live beside the task, not behind a toast. Their card holds only
    metadata, so a long batch never attaches generated PDF/image bytes to Vue. */
@@ -965,8 +955,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .workspace-entry-dialog__error{min-height:31px;margin:0;padding:7px 16px 4px;color:var(--muted);font:12px/1.45 var(--font-ui)}.workspace-entry-dialog__error.visible{color:var(--danger)}.workspace-entry-dialog>footer{display:flex;justify-content:flex-end;gap:7px;padding:11px 16px 15px;border-top:1px solid var(--line-weak);background:var(--surface-2)}.workspace-entry-dialog>footer button{min-height:34px;font-size:12px}.workspace-entry-dialog>footer .quiet-button{min-width:72px}.workspace-entry-dialog>footer .primary-button{min-width:104px}
 
 /* Image studio — bounded, off-thread rolling screenshot assembly. */
-.visual-mode-strip{grid-template-columns:repeat(6,minmax(0,1fr))}.visual-blank-starts button:hover,.visual-blank-starts button:focus-visible{border-color:var(--accent);color:var(--green-strong);background:var(--green-bg)}
-@media(max-width:760px){}
+.visual-mode-strip{grid-template-columns:repeat(6,minmax(0,1fr))}
 
 /* Code long-image actions stay compact in the heading, while the expanded
    choices use the same warm-paper desktop menu language as the workspaces. */
@@ -976,10 +965,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
    contrast in the warm theme. Keep menu text/background contrast predictable. */
 .codesnap-context-menu{border-color:rgba(22,55,43,.18);background:rgba(255,254,250,.985);box-shadow:var(--shadow-xl)}.codesnap-context-menu>header span{color:var(--text);font-size:13px}.codesnap-context-menu>header small{color:var(--muted);font-size:12px}.codesnap-context-menu>button{min-height:36px;color:var(--text-secondary);font-size:12px}.codesnap-context-menu>button:hover:not(:disabled),.codesnap-context-menu>button:focus-visible:not(:disabled){color:var(--green-strong);background:var(--green-bg)}.codesnap-context-menu>button:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:-2px}
 
-@media(max-width:760px){.code-long-actions-menu{position:static}.code-long-actions-popover{position:fixed;z-index:var(--z-modal,110);inset:auto 14px 14px;width:auto;max-height:calc(100vh - 28px);overflow:auto}.code-long-actions-menu>summary{min-width:132px}
-.visual-source-thumbs .visual-stitch-frame__preview:hover,.visual-source-thumbs .visual-stitch-frame__preview:focus-visible{box-shadow:0 0 0 2px var(--accent-soft)}
-.visual-source-thumbs .visual-stitch-frame>span>button:hover:not(:disabled),.visual-source-thumbs .visual-stitch-frame>span>button:focus-visible{border-color:var(--accent);color:var(--green-strong);box-shadow:0 0 0 2px var(--accent-soft)}
-@media(max-width:1120px){}
+@media(max-width:760px){.code-long-actions-menu{position:static}.code-long-actions-popover{position:fixed;z-index:var(--z-modal,110);inset:auto 14px 14px;width:auto;max-height:calc(100vh - 28px);overflow:auto}.code-long-actions-menu>summary{min-width:132px}}
 
 /* Document recovery stays inside the inspector: summaries are compact and
    only the explicitly selected snapshot crosses into the renderer. */

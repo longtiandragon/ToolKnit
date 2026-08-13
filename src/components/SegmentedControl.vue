@@ -20,8 +20,14 @@ defineEmits<{ 'update:modelValue': [value: string] }>()
 </script>
 
 <template>
+  <!--
+    The track is a well, not `surface-2`. The selected chip is `bg-surface`,
+    and "one step lighter than surface-2" is `surface-3` in dark but `surface`
+    in light — no single token means it. A well is below the panel in both
+    themes, so the chip reads as raised in both without a variant.
+  -->
   <div
-    class="row gap-0.5 p-0.5 rounded-sm bg-surface-2 border border-line"
+    class="row gap-0.5 p-0.5 rounded-sm bg-well border border-line"
     :class="options.some((option) => option.detail) ? 'w-full' : ''"
     role="group"
     :aria-label="label"

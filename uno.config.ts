@@ -106,6 +106,17 @@ export default defineConfig({
     ],
     ['btn-ghost', 'btn text-fg-2 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg'],
     ['btn-danger', 'btn bg-danger-soft text-danger hover:not-disabled:bg-danger hover:not-disabled:text-white'],
+    // A toolbar button: shorter than `btn`, no border, and it never wraps.
+    // Toolbars pack a dozen of these into one row above an editor or canvas,
+    // where a 36px control would cost more height than the row is worth.
+    [
+      'btn-tool',
+      'inline-flex items-center gap-1 shrink-0 h-7 px-2 rounded-sm text-[12px] whitespace-nowrap select-none ' +
+        'text-fg-2 transition-colors duration-120 ' +
+        'hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg ' +
+        'disabled:opacity-45 disabled:cursor-not-allowed',
+    ],
+    ['btn-tool-active', 'bg-accent-soft text-accent font-medium'],
 
     // ── Form controls ─────────────────────────────────────────────────────
     [

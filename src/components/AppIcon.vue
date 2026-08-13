@@ -71,6 +71,7 @@ import {
   Sigma,
   MousePointer2,
   Square,
+  MoreHorizontal,
 } from '@lucide/vue'
 
 const props = withDefaults(defineProps<{ name: string; size?: number; label?: string }>(), {
@@ -145,6 +146,7 @@ const icons: Record<string, Component> = {
   table: Table2,
   rule: Minus,
   pointer: MousePointer2,
+  more: MoreHorizontal,
   square: Square,
   minimize: Minimize2,
   math: Sigma,
