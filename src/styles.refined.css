@@ -3,12 +3,12 @@
 @media(max-width:1250px){}
 .annotation-canvas{cursor:crosshair}.annotation-mark.box{width:17%;height:13%;border-radius:3px}.annotation-mark.arrow{border:0;background:transparent;font-size:42px;line-height:1;text-shadow:0 1px 7px var(--line-strong)}.annotation-mark.text{width:auto;height:auto;padding:5px 8px;border-radius:4px;background:var(--line-strong);font-size:14px;font-weight:700;white-space:nowrap}
 
-body{background:var(--bg);letter-spacing:.005em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}html{scrollbar-color:var(--line) transparent;scrollbar-width:thin}.rail{width:248px;padding:24px 14px;background:var(--rail);border-right:1px solid var(--line);transition:width var(--duration-slow) var(--ease-out)}.workspace{width:calc(100% - 248px);margin-left:248px;padding:0 56px 80px;transition:margin-left var(--duration-slow) var(--ease-out),width var(--duration-slow) var(--ease-out)}.topbar{height:88px;border-color:var(--line)}.topbar h1{font-size:20px;font-weight:600;letter-spacing:.01em}.command-trigger:hover,.quiet-button:hover,.secondary-action:hover{border-color:var(--accent);color:var(--text);background:var(--green-bg)}.new-task,.run-tool,.primary-button{min-height:36px;padding:0 16px;border-radius:var(--radius-lg);box-shadow:0 4px 12px var(--accent-soft);transition:transform var(--duration-fast) var(--ease-out),box-shadow var(--duration-fast) var(--ease-out),background var(--duration-fast) var(--ease-out)}.new-task:hover,.run-tool:hover,.primary-button:hover{transform:translateY(-1px);box-shadow:0 8px 20px var(--accent-soft)}.new-task:active,.run-tool:active,.primary-button:active{transform:translateY(0);box-shadow:0 2px 6px var(--accent-soft)}
+body{background:var(--bg);letter-spacing:.005em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}html{scrollbar-color:var(--line) transparent;scrollbar-width:thin}.command-trigger:hover,.quiet-button:hover,.secondary-action:hover{border-color:var(--accent);color:var(--text);background:var(--green-bg)}.new-task,.run-tool,.primary-button{min-height:36px;padding:0 16px;border-radius:var(--radius-lg);box-shadow:0 4px 12px var(--accent-soft);transition:transform var(--duration-fast) var(--ease-out),box-shadow var(--duration-fast) var(--ease-out),background var(--duration-fast) var(--ease-out)}.new-task:hover,.run-tool:hover,.primary-button:hover{transform:translateY(-1px);box-shadow:0 8px 20px var(--accent-soft)}.new-task:active,.run-tool:active,.primary-button:active{transform:translateY(0);box-shadow:0 2px 6px var(--accent-soft)}
 .control-hero p:not(.eyebrow){max-width:535px;font-size:12px;line-height:1.8;color:var(--text-secondary)}.activity-panel,.inbox-panel,.panel{border-color:var(--line);border-radius:var(--radius-lg);background:var(--surface);box-shadow:none}
 .tool-nav button.active{background: var(--surface-2);border-color:var(--accent-soft)}.operation-tabs button.active{background:var(--accent-solid);color:var(--accent-fg)}
 .ai-action-panel>button.active{background: var(--surface-2);border-color:var(--accent-soft)}
 .profile-delete:hover,.profile-delete.pending{border-color:var(--danger);color:var(--fg)}.profile-delete.pending{background:var(--danger-soft)}
-@media(max-width:1250px){.workspace{padding:0 34px 50px}.rail{width:214px}.workspace{width:calc(100% - 214px);margin-left:214px}}
+@media(max-width:1250px){}
 
 /* File center: compact, task-led, and safe in narrow desktop windows. */
 body{min-width:0;overflow-x:hidden}
@@ -59,8 +59,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 
 
 @media(max-width:1050px){
-  .rail{width:76px;padding:20px 10px}.workspace{width:calc(100% - 76px);margin-left:76px;padding:0 24px 40px}
-  .rail nav{margin-bottom:16px}
   
   
   
@@ -68,7 +66,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 }
 
 @media(max-width:760px){
-  .workspace{padding:0 16px 32px}
   
   
   
@@ -81,8 +78,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 
 /* Knitspace — a precise desktop instrument panel, not an admin dashboard. */
-.rail{overflow:hidden}
-.topbar{position:relative;z-index:8;height:80px;border-color:var(--line)}.task-indicator.active i{background:var(--amber);box-shadow:0 0 9px var(--warn);animation:signal 1.5s ease infinite}@keyframes signal{50%{opacity:.35}}.task-drawer article>i.running{color:var(--amber)}.task-drawer article>i.failed{color:var(--red)}.task-drawer article>i.succeeded{color:var(--green)}
+.task-indicator.active i{background:var(--amber);box-shadow:0 0 9px var(--warn);animation:signal 1.5s ease infinite}@keyframes signal{50%{opacity:.35}}.task-drawer article>i.running{color:var(--amber)}.task-drawer article>i.failed{color:var(--red)}.task-drawer article>i.succeeded{color:var(--green)}
 .breadcrumbs{display:flex;align-items:center;gap:6px;padding-top:19px;color:var(--text-disabled);font:12px var(--font-ui);letter-spacing:.04em}.breadcrumbs a{transition:color var(--duration-fast) var(--ease-out)}.breadcrumbs a:hover{color:var(--green)}.breadcrumbs i{font-style:normal;opacity:.45}
 .hero-copy>p:not(.eyebrow){max-width:610px;margin:12px 0 20px;color:var(--text-secondary);font-size:12px;line-height:1.75}
 
@@ -96,7 +92,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .command-favorite.active{color:var(--amber)!important}
 @media(max-width:1180px){}
 @media(max-width:1050px){}
-@media(max-width:900px){.workspace{padding-left:20px;padding-right:20px}.topbar-actions .new-task{padding:0 10px;font-size:0}.topbar-actions .new-task svg{width:16px}}
+@media(max-width:900px){.topbar-actions .new-task{padding:0 10px;font-size:0}.topbar-actions .new-task svg{width:16px}}
 .unified-drop.active{border-color:var(--green);border-style:solid;background:var(--accent-soft);box-shadow:inset 0 0 0 3px var(--accent-soft),0 0 32px var(--accent-soft)}.inbox-zone>.quiet-button{margin-top:10px}
 .canvas-skeleton{position:absolute;inset:0;z-index:7;display:grid;align-content:center;gap:10px;padding:16%;background:var(--surface)}.canvas-skeleton i{height:13px;border-radius:4px;background:linear-gradient(90deg,var(--line),var(--accent-soft),var(--line));background-size:200% 100%;animation:skeleton-scan 1.25s linear infinite}.canvas-skeleton i:nth-child(2){width:82%}.canvas-skeleton i:nth-child(3){width:63%}.canvas-skeleton b{margin-top:10px;color:var(--muted);font-size:12px;font-weight:400;text-align:center}@keyframes skeleton-scan{to{background-position:-200% 0}}
 

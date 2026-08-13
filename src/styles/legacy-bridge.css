@@ -143,42 +143,18 @@ body {
   background: var(--bg) !important;
   color: var(--fg);
   font-family: var(--font-ui);
-}
-
-/* The rail is a component again (`AppRail.vue`, 240px). The legacy layers
+}/* The rail is a component again (`AppRail.vue`, 240px). The legacy layers
    still position the workspace against the old 246px aside, so the offset is
    corrected here until the shell's own CSS is gone. */
-.workspace {
-  width: calc(100% - 240px);
-  margin-left: 240px;
-  background: transparent;
-}
-
 /* `AppRail.vue` paints itself with tokens, but it still answers to `.rail`
    for the handful of legacy descendant rules, and the legacy layers give
    `.rail` a gradient. A gradient is `background-image`; the component's
    `bg-surface` utility only sets `background-color`, so no amount of load
    order removes it — the rail kept a blue wash down its top third. */
-.rail {
-  background-image: none;
-  box-shadow: none;
-}
-
-.topbar {
-  height: 56px;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
-  backdrop-filter: none;
-}
-.topbar h1 { font: 600 16px/1.3 var(--font-display); letter-spacing: -.01em; }
-.workspace-content { height: calc(100vh - var(--titlebar-h) - 56px); }
-
 /* The desktop title bar is chrome, not a highlight. The automatic recolour
    turned its dark evergreen ground into the accent, which put a saturated
    blue band across the top of every window. */
-.has-desktop-titlebar { --titlebar-h: 34px; padding-top: var(--titlebar-h); }
-.has-desktop-titlebar .workspace { height: calc(100vh - var(--titlebar-h)); }
+
 .desktop-titlebar {
   height: var(--titlebar-h);
   color: var(--fg-2);

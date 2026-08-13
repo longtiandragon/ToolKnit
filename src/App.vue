@@ -463,11 +463,11 @@ onBeforeUnmount(()=>{store.persist();window.removeEventListener('keydown',handle
     <section class="workspace" :class="`workspace--${String(route.name || route.path.slice(1) || 'dashboard').replaceAll('/', '-')}`" @contextmenu="openWorkspaceContext">
       <!-- The rail owns identity and search now, so the top bar carries only
            what changes with the route: where you are, and what is running. -->
-      <header class="topbar row-between gap-4 shrink-0">
+      <header class="topbar row-between gap-4 shrink-0 h-[var(--topbar-h)] px-6 border-b border-line bg-bg">
         <div class="row gap-1 min-w-0">
           <button class="btn-ghost btn-icon btn-sm" :disabled="!canNavigateBack" aria-label="后退" title="后退（Alt + ←）；右键查看历史" aria-haspopup="menu" :aria-expanded="historyMenu?.direction === -1" @click.stop="navigateWorkspaceHistory(-1)" @contextmenu.prevent.stop="openHistoryMenu($event, -1)"><AppIcon name="chevron-left" :size="16" /></button>
           <button class="btn-ghost btn-icon btn-sm rotate-180" :disabled="!canNavigateForward" aria-label="前进" title="前进（Alt + →）；右键查看历史" aria-haspopup="menu" :aria-expanded="historyMenu?.direction === 1" @click.stop="navigateWorkspaceHistory(1)" @contextmenu.prevent.stop="openHistoryMenu($event, 1)"><AppIcon name="chevron-left" :size="16" /></button>
-          <h1 class="ml-2 truncate">{{ title }}</h1>
+          <h1 class="ml-2 truncate text-[15px] font-semibold tracking-tight text-fg">{{ title }}</h1>
         </div>
         <div class="row gap-2 shrink-0">
           <button class="btn-ghost btn-sm" :aria-label="runningJobs.length ? `${runningJobs.length} 个任务` : '本地就绪'" @click="taskPanelOpen = !taskPanelOpen">

@@ -1,0 +1,125 @@
+/*
+ * The application frame: rail gutter, workspace, top bar, scroll container.
+ *
+ * This is the one thing that could not become utilities. The frame is a set of
+ * relationships — the workspace's left margin *is* the rail's width, the scroll
+ * container's height *is* what the top bar left over — and those have to be
+ * stated once, in one place, or they drift.
+ *
+ * They had drifted badly. `.rail`, `.workspace` and `.topbar` were each
+ * redeclared in six stylesheets, 139 rules between them, most of them setting
+ * the same properties to different values and resolved only by import order.
+ * `.workspace` alone had five widths and six paddings. This file replaces all
+ * of them; the sheets that used to carry them no longer mention the frame.
+ *
+ * Everything painted *inside* the frame is utilities in the components. The
+ * rail paints itself (`AppRail.vue`); the class name survives only as a hook
+ * for reading-focus mode, which hides it.
+ */
+
+:root {
+  /* The rail's width, so the workspace never has to guess it. */
+  --rail-w: 240px;
+  /* The top bar's height, for the scroll container below it. */
+  --topbar-h: 56px;
+}
+
+.app-shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* Tauri owns the window, Knitspace draws the title bar, and `--titlebar-h`
+   (0px by default, in theme.css) is how every other height accounts for it. */
+.has-desktop-titlebar {
+  --titlebar-h: 34px;
+  padding-top: var(--titlebar-h);
+}
+
+.workspace {
+  width: calc(100% - var(--rail-w));
+  height: calc(100vh - var(--titlebar-h));
+  margin-left: var(--rail-w);
+  padding: 0 28px;
+  overflow: hidden;
+}
+
+.workspace-content {
+  height: calc(100% - var(--topbar-h));
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Routes were top-heavy: a heading, one short panel, then a wide band of bare
+   canvas where the panel simply stopped. Every route root carries
+   `.page-enter`, so the work surface absorbs the leftover height instead of
+   floating in the middle of the window. */
+.workspace-content > .page-enter {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  max-width: none;
+}
+
+/* The document route runs edge to edge: it is a workspace, not a tool page. */
+.workspace--documents {
+  padding: 0;
+}
+
+.workspace--documents .topbar {
+  padding-inline: 22px;
+}
+
+/* Two steps, not one. The window minimum is 900 × 680, and dropping straight
+   from a 240px labelled rail to a 76px icon rail at the first sign of a narrow
+   window loses the labels while there is still room for them.
+
+   `.app-shell .rail` rather than `.rail`: the rail's own width is a utility
+   (`w-60`) and UnoCSS is loaded after this file, so a bare class cannot
+   override it. */
+@media (max-width: 1180px) {
+  :root {
+    --rail-w: 200px;
+  }
+
+  .app-shell .rail {
+    width: var(--rail-w);
+  }
+
+  .workspace {
+    padding-inline: 20px;
+  }
+}
+
+@media (max-width: 1050px) {
+  :root {
+    --rail-w: 76px;
+  }
+
+  .app-shell .rail {
+    width: var(--rail-w);
+  }
+
+  /* Icons only. Every label, count and shortcut hint steps away together, so
+     the rail stays a column of centred glyphs rather than a column of clipped
+     words. */
+  .app-shell .rail span:not(.center),
+  .app-shell .rail strong,
+  .app-shell .rail small,
+  .app-shell .rail kbd,
+  .app-shell .rail p {
+    display: none;
+  }
+
+  .app-shell .rail a,
+  .app-shell .rail button {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .workspace {
+    padding-inline: 14px;
+  }
+}

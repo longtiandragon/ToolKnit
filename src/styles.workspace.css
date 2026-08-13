@@ -31,81 +31,8 @@ select {
 button:hover,
 a:hover {
   transform: none !important;
-}
+}/* App chrome */
 
-.app-shell {
-  height: 100vh;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--bg);
-}
-
-/* App chrome */
-.rail {
-  width: 228px;
-  padding: 18px 12px 14px;
-  border-right: 1px solid var(--surface-2);
-  background: var(--surface-2);
-  box-shadow: none;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-.rail nav {
-  gap: 2px;
-  margin-bottom: 15px;
-}
-
-
-
-
-
-
-
-.workspace {
-  width: calc(100% - 228px);
-  height: 100vh;
-  margin-left: 228px;
-  padding: 0 28px;
-  overflow: hidden;
-  background: var(--bg);
-}
-
-.topbar {
-  position: relative;
-  z-index: 20;
-  height: 64px;
-  padding: 0;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
-  backdrop-filter: none;
-}
-
-.topbar::before {
-  display: none;
-}
-
-.topbar-title .eyebrow {
-  margin-bottom: 2px;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-}
-
-.topbar h1 {
-  margin: 0;
-  font-size: 18px;
-  line-height: 1.25;
-}
 
 
 
@@ -128,16 +55,6 @@ a:hover {
 .run-tool:hover,
 .primary-button:hover {
   box-shadow: none;
-}
-
-.workspace-content {
-  height: calc(100vh - 64px);
-  min-height: 0;
-  overflow: auto;
-}
-
-.workspace-content > .page-enter {
-  max-width: none;
 }
 
 .panel,
@@ -184,20 +101,8 @@ a:hover {
 .workspace-content .eyebrow {
   font-size: 12px;
   letter-spacing: 0.09em;
-}
+}/* Selected document workspace */
 
-/* Selected document workspace */
-.workspace.workspace--documents {
-  padding: 0;
-}
-
-.workspace--documents .topbar {
-  padding: 0 22px;
-}
-
-.workspace--documents .workspace-content {
-  overflow: hidden;
-}
 
 .documents,
 .documents-layout {
@@ -1092,19 +997,6 @@ a:hover {
 }
 
 @media (max-width: 1180px) {
-  .rail {
-    width: 204px;
-  }
-
-  .workspace {
-    width: calc(100% - 204px);
-    margin-left: 204px;
-    padding: 0 20px;
-  }
-
-  .workspace.workspace--documents {
-    padding: 0;
-  }
 
   
 
@@ -1114,18 +1006,6 @@ a:hover {
 }
 
 @media (max-width: 920px) {
-  .rail {
-    width: 74px;
-    padding-right: 10px;
-    padding-left: 10px;
-  }
-
-  
-
-  .workspace {
-    width: calc(100% - 74px);
-    margin-left: 74px;
-  }
 
   
 

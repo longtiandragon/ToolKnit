@@ -17,6 +17,21 @@ export default defineConfig({
   // rewritten, which breaks the SFC. Groups are written out in full instead.
   transformers: [transformerDirectives()],
 
+  // presetWind4's reset is off — the six legacy sheets still own base element
+  // styling and a second reset on top of them changed more than it fixed. But
+  // the reset is also where Tailwind-style borders get their *style*: `border-b`
+  // emits only `border-bottom-width: 1px`, and a width with no style paints
+  // nothing. Every `border-b` / `border-t` / `border-l` / `border-r` in the
+  // rewritten views was therefore invisible, and the rules you could see were
+  // legacy declarations that have since been deleted.
+  //
+  // These three lines are the border half of that reset, and nothing else.
+  preflights: [
+    {
+      getCSS: () => `*,::before,::after{border-style:solid;border-width:0;border-color:var(--line)}`,
+    },
+  ],
+
   theme: {
     colors: {
       bg: 'var(--bg)',

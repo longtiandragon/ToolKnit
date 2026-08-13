@@ -8,6 +8,7 @@ import { applyStoredTheme } from '@/lib/theme'
 // (still owning the not-yet-migrated views) resolve their colours through
 // those tokens; UnoCSS utilities come last so migrated markup always wins.
 import './styles/theme.css'
+import './styles/shell.css'
 import './styles.css'
 import './styles.refined.css'
 import './styles.rebuild.css'
