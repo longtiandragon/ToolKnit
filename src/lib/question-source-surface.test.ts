@@ -16,7 +16,9 @@ describe('question provenance surfaces', () => {
   it('opens review Markdown links and exposes provenance in the card menu', () => {
     expect(review).toContain('@link-open="openReviewMarkdownLink"')
     expect(review).toContain("stageLocalFileHandoff('markdown', [target.path], '题目来源')")
-    expect(review).toContain('v-if="currentQuestionSource.raw" role="menuitem"')
+    // Matched without pinning attribute order: the contract is that copying
+    // the provenance is a menu item and only appears when there is a source.
+    expect(review).toMatch(/v-if="currentQuestionSource\.raw"[^>]*role="menuitem"[^>]*>复制来源 \/ 出处</)
     expect(review).toContain('questionSourceActionLabel(currentQuestionSource)')
   })
 })
