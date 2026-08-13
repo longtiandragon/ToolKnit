@@ -16,6 +16,7 @@ import CodeSnapCard from '@/components/CodeSnapCard.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import LargeTextEditor from '@/components/LargeTextEditor.vue'
+import SegmentedControl from '@/components/SegmentedControl.vue'
 
 interface LargeTextEditorHandle { flush: () => string; getValue: () => string }
 type LongProgressPhase = 'render' | 'encode' | 'clipboard' | 'write'
@@ -27,7 +28,10 @@ const codeEditor = ref<LargeTextEditorHandle>()
 const captureHost = ref<HTMLElement>()
 const capturePageIndex = ref(0)
 const longCaptureHost = ref<HTMLElement>()
-const longActionsMenu = ref<HTMLDetailsElement>()
+/* One export menu instead of four top-level buttons plus a `<details>`
+   disclosure. Closed by the same window listeners that close the preview
+   context menu, so there is one way for a popover to go away. */
+const exportMenuOpen = ref(false)
 const longCaptureIndexes = ref<number[]>([])
 const exporting = ref(false)
 const copying = ref(false)
@@ -76,6 +80,13 @@ const sourceName = ref(store.codeDraft?.name ?? 'snippet.txt')
 const languageOverride = ref<'auto' | CodeLanguage>('auto')
 const theme = ref<'midnight' | 'forest' | 'paper'>('midnight')
 const showLineNumbers = ref(true)
+/* The window theme is baked into the exported PNG, so it is an output setting
+   and has nothing to do with the app's own light/dark preference. */
+const cardThemeOptions = [
+  { id: 'midnight', label: '午夜' },
+  { id: 'forest', label: '深林' },
+  { id: 'paper', label: '纸页' },
+]
 // Dev HMR can preserve a settings object created before codeImageAuthor existed.
 // Normalize it here so opening this lazy route never crashes on undefined.trim().
 const author = ref(store.settings.codeImageAuthor ?? '')
@@ -568,6 +579,8 @@ onMounted(() => {
   window.addEventListener('click', closePreviewMenu)
   window.addEventListener('blur', closePreviewMenu)
   window.addEventListener('resize', closePreviewMenu)
+  window.addEventListener('click', closeExportMenu)
+  window.addEventListener('blur', closeExportMenu)
 })
 onBeforeUnmount(() => {
   longCaptureRequestId++
@@ -578,6 +591,8 @@ onBeforeUnmount(() => {
   stopLongElapsedTimer()
   window.removeEventListener('click', closePreviewMenu)
   window.removeEventListener('blur', closePreviewMenu)
+  window.removeEventListener('click', closeExportMenu)
+  window.removeEventListener('blur', closeExportMenu)
   window.removeEventListener('resize', closePreviewMenu)
 })
 
@@ -652,33 +667,28 @@ function cancelLongCapture() {
   longCaptureRequestId++
 }
 
-function closeLongActionsMenu() {
-  longActionsMenu.value?.removeAttribute('open')
-}
-
-function guardLongActionsMenu(event: MouseEvent) {
-  if (pages.value.length > 1 && !exporting.value && !copying.value) return
-  event.preventDefault()
+function closeExportMenu() {
+  exportMenuOpen.value = false
 }
 
 function copyAllAsLongImage() {
-  closeLongActionsMenu()
+  closeExportMenu()
   return copyPagesAsLongImage(pages.value.map((_, index) => index), '全文')
 }
 
 function copySelectedAsLongImage() {
-  closeLongActionsMenu()
+  closeExportMenu()
   const indexes = selectedPageIndexes.value.length ? selectedPageIndexes.value : [activePage.value]
   return copyPagesAsLongImage(indexes, '所选')
 }
 
 function exportAllAsLongImage() {
-  closeLongActionsMenu()
+  closeExportMenu()
   return exportPagesAsLongImage(pages.value.map((_, index) => index), '全文')
 }
 
 function exportSelectedAsLongImage() {
-  closeLongActionsMenu()
+  closeExportMenu()
   const indexes = selectedPageIndexes.value.length ? selectedPageIndexes.value : [activePage.value]
   return exportPagesAsLongImage(indexes, '所选')
 }
@@ -820,64 +830,138 @@ async function exportPdf() {
 </script>
 
 <template>
-  <div class="code-image page-enter mx-auto w-full max-w-320 px-8 py-6">
-    <PageHeader title="代码长图" subtitle="超长代码自动分页,也能合成连续长图;导出 PNG、PDF 或直接复制">
+  <!-- No `code-image` / `codesnap-workspace` / `code-control-bar` classes. The
+       `codesnap-stage`, `codesnap-capture-host` and `codesnap-export-frame`
+       names stay: the first paints the same backdrop the exported PNG has, and
+       the other two are what html-to-image captures. Those pixels leave the
+       machine, so they do not follow the UI theme. -->
+  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6">
+    <PageHeader title="代码长图" subtitle="超长代码自动分页，也能合成连续长图；导出 PNG、PDF 或直接复制">
       <template #actions>
-      <div class="code-export-actions">
-        <button class="secondary-action" :disabled="exporting || copying" @click="exportCurrentPage"><AppIcon name="image" :size="15"/>导出 PNG</button>
-        <button class="secondary-action" :disabled="exporting || copying" @click="exportPdf">导出 PDF</button>
-        <details ref="longActionsMenu" class="code-long-actions-menu" :class="{ disabled: pages.length === 1 || exporting || copying }">
-          <summary class="secondary-action" :aria-disabled="pages.length === 1 || exporting || copying" :title="pages.length === 1 ? '代码超过一张后自动启用连续长图' : `复制或导出全部 ${pages.length} 张为连续长图`" @click="guardLongActionsMenu"><AppIcon name="merge" :size="15"/><span>连续长图</span><small>{{ pages.length > 1 ? `${pages.length} 页` : '自动启用' }}</small></summary>
-          <div class="code-long-actions-popover">
-            <header><span>连续长图</span><small>超限自动安全拆分</small></header>
-            <button type="button" :disabled="exporting || copying" @click="copyAllAsLongImage"><AppIcon name="duplicate" :size="14"/><span><b>复制全文长图</b><small>{{ pages.length }} 页写入剪贴板</small></span></button>
-            <button type="button" :disabled="exporting || copying" @click="exportAllAsLongImage"><AppIcon name="file-image" :size="14"/><span><b>导出全文长图</b><small>保存为连续 PNG</small></span></button>
+        <button class="btn-default" :disabled="exporting || copying" @click="copySelectedImages">
+          <AppIcon name="duplicate" :size="15" />{{ copying ? copyBusyLabel : copyLabel }}
+        </button>
+        <!-- Export used to be four header buttons, a `<details>` popover with
+             four more, and four repeats in the preview footer. One button. -->
+        <div class="relative">
+          <button class="btn-primary" :disabled="exporting || copying" :aria-expanded="exportMenuOpen" aria-haspopup="menu" @click.stop="exportMenuOpen = !exportMenuOpen">
+            <AppIcon name="download" :size="15" />{{ exporting ? '导出中…' : '导出' }}
+            <AppIcon name="chevron" :size="13" class="rotate-90" />
+          </button>
+          <div v-if="exportMenuOpen" class="absolute right-0 top-full z-30 mt-2 w-64 stack py-1 panel shadow-lg" role="menu" aria-label="导出方式" @click.stop>
+            <p class="menu-title">单张<small class="font-normal tabular-nums">第 {{ activePage + 1 }} / {{ pages.length }} 张</small></p>
+            <button class="menu-item" role="menuitem" :disabled="exporting" @click="closeExportMenu(); exportCurrentPage()">
+              <span class="row gap-2"><AppIcon name="file-image" :size="14" />导出当前 PNG</span>
+            </button>
+            <button class="menu-item" role="menuitem" :disabled="exporting || pages.length === 1" @click="closeExportMenu(); exportAll()">
+              <span class="row gap-2"><AppIcon name="image" :size="14" />导出全部 PNG</span><kbd class="kbd">{{ pages.length }} 张</kbd>
+            </button>
+            <i class="menu-sep" aria-hidden="true" />
+            <p class="menu-title">连续长图<small class="font-normal">{{ pages.length > 1 ? '超限自动安全拆分' : '超过一张后启用' }}</small></p>
+            <button class="menu-item" role="menuitem" :disabled="exporting || pages.length === 1" @click="closeExportMenu(); exportAllAsLongImage()">
+              <span class="row gap-2"><AppIcon name="merge" :size="14" />导出全文长图</span>
+            </button>
+            <button class="menu-item" role="menuitem" :disabled="copying || pages.length === 1" @click="closeExportMenu(); copyAllAsLongImage()">
+              <span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制全文长图</span>
+            </button>
             <template v-if="selectedPageIndexes.length > 1 && selectedPageIndexes.length < pages.length">
-              <hr />
-              <button type="button" :disabled="exporting || copying" @click="copySelectedAsLongImage"><AppIcon name="duplicate" :size="14"/><span><b>复制所选长图</b><small>{{ selectedPageIndexes.length }} 页</small></span></button>
-              <button type="button" :disabled="exporting || copying" @click="exportSelectedAsLongImage"><AppIcon name="file-image" :size="14"/><span><b>导出所选长图</b><small>{{ selectedPageIndexes.length }} 页</small></span></button>
+              <button class="menu-item" role="menuitem" :disabled="exporting" @click="closeExportMenu(); exportSelectedAsLongImage()">
+                <span class="row gap-2"><AppIcon name="merge" :size="14" />导出所选长图</span><kbd class="kbd">{{ selectedPageIndexes.length }} 页</kbd>
+              </button>
+              <button class="menu-item" role="menuitem" :disabled="copying" @click="closeExportMenu(); copySelectedAsLongImage()">
+                <span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制所选长图</span><kbd class="kbd">{{ selectedPageIndexes.length }} 页</kbd>
+              </button>
             </template>
+            <i class="menu-sep" aria-hidden="true" />
+            <button class="menu-item" role="menuitem" :disabled="exporting" @click="closeExportMenu(); exportPdf()">
+              <span class="row gap-2"><AppIcon name="file-pdf" :size="14" />导出全部为 PDF</span>
+            </button>
           </div>
-        </details>
-        <button class="primary-button code-copy-primary" :disabled="exporting || copying" @click="copySelectedImages"><AppIcon name="duplicate" :size="15"/>{{ copying ? copyBusyLabel : copyLabel }}</button>
-      </div>
+        </div>
       </template>
     </PageHeader>
 
-    <section class="codesnap-workspace">
-      <div class="code-control-bar panel">
-        <details class="code-control-menu code-import-menu">
-          <summary><AppIcon name="file-code" :size="14"/><span>导入代码</span><small>拖入或选择文件</small></summary>
-          <div class="code-control-popover">
-            <FileDropZone v-model="codeFiles" accept=".txt,.md,.js,.ts,.tsx,.jsx,.py,.java,.cpp,.c,.cs,.go,.rs,.vue,.html,.css,.sql,text/*" :multiple="false" :max-file-bytes="8 * 1024 * 1024" title="拖入代码文件" hint="自动识别语言并实时预览；单文件最多 8 MB"/>
-          </div>
-        </details>
+    <section class="flex-1 min-h-0 stack panel overflow-hidden">
+      <!-- One settings row. Language, theme, line numbers and the byline were
+           split across two `<details>` disclosures and an inline group; none
+           of them is long enough to earn a popover of its own. -->
+      <div class="row flex-wrap gap-x-4 gap-y-2 shrink-0 px-3 py-2 border-b border-line">
+        <label class="row gap-2 shrink-0">
+          <span class="text-[11px] font-semibold text-fg-3">语言</span>
+          <select v-model="languageOverride" class="field h-7 px-2 text-[12px]" aria-label="代码语言">
+            <option value="auto">自动（{{ codeLanguages.find((item) => item.id === detectedLanguage)?.label }}）</option>
+            <option v-for="item in codeLanguages" :key="item.id" :value="item.id">{{ item.label }}</option>
+          </select>
+        </label>
 
-        <span class="code-auto-badge"><AppIcon name="text" :size="13"/><small>{{ fontSize }}px · 自动 {{ linesPerPage }} 行/张{{ wrapLongLines ? ' · 长行折行' : '' }}</small></span>
-
-        <div class="code-inline-theme" role="group" aria-label="窗口主题">
-          <span>主题</span>
-          <div class="segmented theme-segmented"><button :class="{ active: theme === 'midnight' }" @click="theme = 'midnight'">午夜</button><button :class="{ active: theme === 'forest' }" @click="theme = 'forest'">深林</button><button :class="{ active: theme === 'paper' }" @click="theme = 'paper'">纸页</button></div>
+        <div class="row gap-2 shrink-0">
+          <span class="text-[11px] font-semibold text-fg-3">窗口主题</span>
+          <SegmentedControl
+            :options="cardThemeOptions"
+            :model-value="theme"
+            label="窗口主题"
+            size="compact"
+            @update:model-value="theme = $event as 'midnight' | 'forest' | 'paper'"
+          />
         </div>
 
-        <details class="code-control-menu code-advanced-menu">
-          <summary><AppIcon name="settings" :size="14"/><span>偏好设置</span><small>{{ byline }}</small></summary>
-          <div class="code-control-popover code-advanced-popover">
-            <header><div><p class="eyebrow">智能设置</p><strong>自动排版偏好</strong></div><small>字号与分页由内容自动计算</small></header>
-            <label>语言识别<select v-model="languageOverride" aria-label="代码语言"><option value="auto">自动识别（{{ codeLanguages.find(item => item.id === detectedLanguage)?.label }}）</option><option v-for="item in codeLanguages" :key="item.id" :value="item.id">{{ item.label }}</option></select></label>
-            <div class="code-advanced-row"><label class="checkline"><input v-model="showLineNumbers" type="checkbox" /> 显示行号</label><label class="watermark-field"><span>作者署名</span><input v-model="author" placeholder="author" /></label></div>
-          </div>
-        </details>
+        <label class="row gap-1.5 shrink-0 text-[12px] text-fg-2 cursor-pointer">
+          <input v-model="showLineNumbers" type="checkbox" class="accent-[var(--accent-solid)]" />显示行号
+        </label>
+
+        <label class="row gap-2 shrink-0">
+          <span class="text-[11px] font-semibold text-fg-3">署名</span>
+          <input v-model="author" class="field h-7 w-32 px-2 text-[12px]" placeholder="author" aria-label="作者署名" />
+        </label>
+
+        <!-- Not a control: the layout engine picked these, and knowing what it
+             picked is what stops you hunting for a font-size slider. -->
+        <span class="row gap-1.5 ml-auto shrink-0 text-[11px] text-fg-3" title="字号与分页由内容自动计算">
+          <AppIcon name="rule" :size="13" />
+          自动排版 · {{ fontSize }}px · {{ linesPerPage }} 行/张{{ wrapLongLines ? ' · 长行折行' : '' }}
+        </span>
       </div>
 
-      <div class="codesnap-main">
-        <section class="code-editor panel">
-          <header><span class="mac-controls" aria-hidden="true"><i></i><i></i><i></i></span><strong>代码编辑</strong><small>{{ renderedLineCount }} 行 · {{ previewPending || layoutPending ? '正在整理预览' : draftPending ? '正在自动保存' : '已自动保存' }}</small></header>
-          <LargeTextEditor ref="codeEditor" v-model="code" aria-label="代码编辑器" placeholder="在这里粘贴或输入代码…" @blur="flushCodeDraft" />
+      <div class="flex-1 min-h-0 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <!-- ── Source ─────────────────────────────────────────────────────
+             The importer was a `<details>` in the toolbar, which is a strange
+             place to hide the thing the page starts with. It is a row at the
+             top of the pane it fills instead. -->
+        <section class="stack min-h-0 border-r border-line" aria-label="代码">
+          <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
+            <span class="text-[11px] font-semibold text-fg-3">代码</span>
+            <span class="row gap-2 text-[11px] text-fg-3">
+              <span class="tabular-nums">{{ renderedLineCount }} 行</span>
+              <i class="w-px h-3 bg-line" aria-hidden="true" />
+              <span>{{ previewPending || layoutPending ? '正在整理预览' : draftPending ? '正在自动保存' : '已自动保存' }}</span>
+            </span>
+          </header>
+          <FileDropZone
+            v-model="codeFiles"
+            compact
+            accept=".txt,.md,.js,.ts,.tsx,.jsx,.py,.java,.cpp,.c,.cs,.go,.rs,.vue,.html,.css,.sql,text/*"
+            :multiple="false"
+            :max-file-bytes="8 * 1024 * 1024"
+            title="拖入代码文件，自动识别语言"
+            class="shrink-0 rounded-none! border-0! border-b! border-line!"
+          />
+          <LargeTextEditor ref="codeEditor" v-model="code" class="flex-1 min-h-0" aria-label="代码编辑器" placeholder="在这里粘贴或输入代码…" @blur="flushCodeDraft" />
         </section>
 
-        <section class="live-code-preview panel">
-          <header><div><p class="eyebrow">实时预览</p><strong>实时图片预览</strong></div><span>右键复制 · 2× 高清</span></header>
+        <!-- ── Preview ────────────────────────────────────────────────────
+             The footer used to repeat four export buttons that the header
+             already had. It now only navigates and selects pages, which is
+             the one thing you cannot do anywhere else. -->
+        <section class="stack min-h-0" aria-label="实时预览">
+          <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
+            <span class="text-[11px] font-semibold text-fg-3">实时预览</span>
+            <span class="row gap-2 text-[11px] text-fg-3">
+              <span>2× 高清</span>
+              <i class="w-px h-3 bg-line" aria-hidden="true" />
+              <span>右键图片可复制</span>
+            </span>
+          </header>
+
           <div ref="previewStage" class="codesnap-stage" :class="{ 'codesnap-stage--long-lines': wrapLongLines }" title="右键或菜单键可复制当前图片">
             <CodeSnapCard
               tabindex="0"
@@ -899,49 +983,115 @@ async function exportPdf() {
               @keydown="handlePreviewTriggerKeydown($event)"
             />
           </div>
-          <div v-if="pages.length > 1" class="page-selection-strip">
-            <span class="page-selection-summary">已选 {{ selectedPageIndexes.length }} / {{ pages.length }}</span>
-            <div class="page-selection-scroll">
-              <button v-for="index in visiblePageIndexes" :key="index" :class="{ selected: selectedPages.has(index), current: activePage === index }" aria-haspopup="menu" :aria-expanded="contextMenu.open && contextMenu.page === index" @click="toggleSelectedPage(index)" @contextmenu.prevent.stop="openPreviewMenu($event, index)" @keydown="handlePreviewTriggerKeydown($event, index)"><i>{{ selectedPages.has(index) ? '✓' : '' }}</i>第 {{ index + 1 }} 张</button>
+
+          <div v-if="longProgress.active" class="stack gap-1.5 shrink-0 px-3 py-2 border-t border-line bg-accent-soft" role="status" aria-live="polite">
+            <div class="row-between gap-3">
+              <span class="stack gap-0.5 min-w-0">
+                <b class="text-[12px] font-medium text-accent">{{ longProgressLabel }}</b>
+                <small class="text-[11px] truncate text-fg-2">{{ longProgressDetail }}</small>
+              </span>
+              <span class="row gap-2 shrink-0">
+                <strong class="text-[12px] font-semibold tabular-nums text-accent">
+                  {{ longProgress.phase === 'render' ? `${longProgressPercent}%` : `${longElapsedSeconds.toFixed(1)}s` }}
+                </strong>
+                <button
+                  v-if="longProgress.phase === 'render' || longProgress.phase === 'encode'"
+                  class="btn-default btn-sm"
+                  type="button"
+                  aria-label="取消生成连续代码长图"
+                  @click="cancelLongCapture"
+                >
+                  取消
+                </button>
+              </span>
             </div>
-            <button class="select-all-pages" @click="selectAllPages">{{ selectedPages.size === pages.length ? '仅保留当前' : '全选' }}</button>
+            <progress v-if="longProgress.phase === 'render'" class="w-full h-1" :value="longProgressPercent" max="100">{{ longProgressPercent }}%</progress>
+            <progress v-else class="w-full h-1" max="100" aria-label="处理中" />
           </div>
-          <div v-if="longProgress.active" class="codesnap-long-progress" role="status" aria-live="polite">
-            <span><b>{{ longProgressLabel }}</b><small>{{ longProgressDetail }}</small></span>
-            <progress v-if="longProgress.phase === 'render'" :value="longProgressPercent" max="100">{{ longProgressPercent }}%</progress>
-            <progress v-else max="100" aria-label="处理中"></progress>
-            <strong>{{ longProgress.phase === 'render' ? `${longProgressPercent}%` : `${longElapsedSeconds.toFixed(1)}s` }}</strong>
-            <button v-if="longProgress.phase === 'render' || longProgress.phase === 'encode'" class="quiet-button codesnap-cancel-capture" type="button" aria-label="取消生成连续代码长图" @click="cancelLongCapture">取消</button>
-          </div>
-          <footer class="preview-toolbar">
-            <div class="page-switcher"><button :disabled="activePage === 0" @click="activePage--">←</button><span>第 {{ activePage + 1 }} / {{ pages.length }} 张</span><button :disabled="activePage === pages.length - 1" @click="activePage++">→</button></div>
-            <div><button class="quiet-button" :disabled="pages.length === 1 || exporting" @click="exportAll">导出全部 {{ pages.length }} 张</button><button class="quiet-button" :disabled="pages.length === 1 || copying" :title="pages.length === 1 ? '代码超过一张后自动启用连续长图' : `把全部 ${pages.length} 张合成连续长图`" @click="copyAllAsLongImage">复制长图</button><button class="quiet-button" :disabled="pages.length === 1 || exporting" @click="exportAllAsLongImage">导出长图</button><button class="primary-button" :disabled="copying" @click="copySelectedImages">{{ copying ? copyBusyLabel : copyLabel }}</button></div>
+
+          <footer class="row-between gap-3 shrink-0 px-3 h-10 border-t border-line">
+            <span class="row gap-1 shrink-0">
+              <button class="center w-7 h-7 rounded-sm text-fg-2 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg disabled:opacity-35 disabled:cursor-not-allowed" :disabled="activePage === 0" aria-label="上一张" @click="activePage--">←</button>
+              <span class="px-1 text-[12px] tabular-nums text-fg-2">{{ activePage + 1 }} / {{ pages.length }}</span>
+              <button class="center w-7 h-7 rounded-sm text-fg-2 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg disabled:opacity-35 disabled:cursor-not-allowed" :disabled="activePage === pages.length - 1" aria-label="下一张" @click="activePage++">→</button>
+            </span>
+
+            <span v-if="pages.length > 1" class="row gap-1 min-w-0 flex-1 overflow-x-auto">
+              <button
+                v-for="index in visiblePageIndexes"
+                :key="index"
+                class="row gap-1 shrink-0 h-6.5 px-2 rounded-full border text-[11px] whitespace-nowrap transition-colors duration-120"
+                :class="[
+                  selectedPages.has(index) ? 'border-accent bg-accent-soft text-accent' : 'border-line text-fg-3 hover:border-line-strong hover:text-fg',
+                  activePage === index ? 'ring-2 ring-[var(--accent-ring)]' : '',
+                ]"
+                aria-haspopup="menu"
+                :aria-pressed="selectedPages.has(index)"
+                :aria-expanded="contextMenu.open && contextMenu.page === index"
+                @click="toggleSelectedPage(index)"
+                @contextmenu.prevent.stop="openPreviewMenu($event, index)"
+                @keydown="handlePreviewTriggerKeydown($event, index)"
+              >
+                <AppIcon v-if="selectedPages.has(index)" name="check" :size="11" />第 {{ index + 1 }} 张
+              </button>
+            </span>
+
+            <span v-if="pages.length > 1" class="row gap-2 shrink-0">
+              <small class="text-[11px] tabular-nums text-fg-3">已选 {{ selectedPageIndexes.length }} / {{ pages.length }}</small>
+              <button class="btn-tool" @click="selectAllPages">{{ selectedPages.size === pages.length ? '仅保留当前' : '全选' }}</button>
+            </span>
           </footer>
         </section>
       </div>
+
+      <!-- One status line, replacing the separate "刚刚生成的文件" panel that
+           sat below the fold saying the same thing. -->
+      <footer v-if="lastOutputs.length" class="row-between gap-3 shrink-0 px-3 h-10 border-t border-line">
+        <span class="row gap-2 min-w-0 text-[11px]" :title="lastOutputs.map((output) => output.name).join(' · ')">
+          <AppIcon name="check" :size="13" class="shrink-0 text-success" />
+          <b class="shrink-0 font-medium text-success">已生成 {{ lastOutputs.length }} 个文件</b>
+          <span class="min-w-0 truncate text-fg-3">{{ lastOutputs.map((output) => output.name).join(' · ') }}</span>
+        </span>
+        <button v-if="lastOutputs[0]?.path" class="btn-tool shrink-0" @click="openLocation(lastOutputs[0].path)">
+          <AppIcon name="folder-open" :size="13" />打开输出位置
+        </button>
+      </footer>
     </section>
 
     <Teleport to="body">
-      <div v-if="contextMenu.open" ref="contextMenuElement" class="codesnap-context-menu" role="menu" :aria-label="`第 ${contextMenu.page + 1} 张代码图片操作`" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handlePreviewMenuKeydown">
-        <header><span>第 {{ contextMenu.page + 1 }} 张</span><small>代码图片</small></header>
-        <button role="menuitem" :disabled="copying" @click="copyCurrentImage(contextMenu.page); closePreviewMenu()"><AppIcon name="duplicate" :size="14"/>复制当前图片</button>
-        <button role="menuitem" @click="toggleSelectedPage(contextMenu.page); closePreviewMenu()"><AppIcon name="plus" :size="14"/>{{ selectedPages.has(contextMenu.page) && selectedPages.size > 1 ? '从多选中移除' : '加入多选' }}</button>
-        <button v-if="pages.length > 1" role="menuitem" :disabled="copying" @click="copyAllAsLongImage(); closePreviewMenu()"><AppIcon name="merge" :size="14"/>复制全文为连续长图</button>
-        <button v-if="pages.length > 1" role="menuitem" :disabled="exporting" @click="exportAllAsLongImage(); closePreviewMenu()"><AppIcon name="file-image" :size="14"/>导出全文为连续长图</button>
-        <button v-if="selectedPageIndexes.length > 1" role="menuitem" :disabled="copying" @click="copySelectedImages(); closePreviewMenu()"><AppIcon name="image" :size="14"/>复制所选 {{ selectedPageIndexes.length }} 张</button>
-        <button v-if="selectedPageIndexes.length > 1" role="menuitem" :disabled="copying" @click="copySelectedAsLongImage(); closePreviewMenu()"><AppIcon name="merge" :size="14"/>复制为连续长图</button>
-        <button v-if="selectedPageIndexes.length > 1" role="menuitem" :disabled="exporting" @click="exportSelectedAsLongImage(); closePreviewMenu()"><AppIcon name="file-image" :size="14"/>导出所选为连续长图</button>
-        <hr />
-        <button role="menuitem" :disabled="exporting" @click="exportCurrentPage(); closePreviewMenu()"><AppIcon name="file-image" :size="14"/>导出当前 PNG</button>
-        <button v-if="pages.length > 1" role="menuitem" :disabled="exporting" @click="exportAll(); closePreviewMenu()"><AppIcon name="image" :size="14"/>导出全部 {{ pages.length }} 张 PNG</button>
-        <button role="menuitem" :disabled="exporting" @click="exportPdf(); closePreviewMenu()"><AppIcon name="file-pdf" :size="14"/>导出全部为 PDF</button>
+      <div
+        v-if="contextMenu.open"
+        ref="contextMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        :aria-label="`第 ${contextMenu.page + 1} 张代码图片操作`"
+        :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handlePreviewMenuKeydown"
+      >
+        <p class="menu-title">第 {{ contextMenu.page + 1 }} 张<small class="font-normal">代码图片</small></p>
+        <button class="menu-item" role="menuitem" :disabled="copying" @click="copyCurrentImage(contextMenu.page); closePreviewMenu()"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制当前图片</span></button>
+        <button class="menu-item" role="menuitem" @click="toggleSelectedPage(contextMenu.page); closePreviewMenu()">
+          <span class="row gap-2"><AppIcon name="plus" :size="14" />{{ selectedPages.has(contextMenu.page) && selectedPages.size > 1 ? '从多选中移除' : '加入多选' }}</span>
+        </button>
+        <template v-if="pages.length > 1">
+          <i class="menu-sep" aria-hidden="true" />
+          <button class="menu-item" role="menuitem" :disabled="copying" @click="copyAllAsLongImage(); closePreviewMenu()"><span class="row gap-2"><AppIcon name="merge" :size="14" />复制全文为连续长图</span></button>
+          <button class="menu-item" role="menuitem" :disabled="exporting" @click="exportAllAsLongImage(); closePreviewMenu()"><span class="row gap-2"><AppIcon name="file-image" :size="14" />导出全文为连续长图</span></button>
+        </template>
+        <template v-if="selectedPageIndexes.length > 1">
+          <i class="menu-sep" aria-hidden="true" />
+          <button class="menu-item" role="menuitem" :disabled="copying" @click="copySelectedImages(); closePreviewMenu()"><span class="row gap-2"><AppIcon name="image" :size="14" />复制所选 {{ selectedPageIndexes.length }} 张</span></button>
+          <button class="menu-item" role="menuitem" :disabled="copying" @click="copySelectedAsLongImage(); closePreviewMenu()"><span class="row gap-2"><AppIcon name="merge" :size="14" />复制为连续长图</span></button>
+          <button class="menu-item" role="menuitem" :disabled="exporting" @click="exportSelectedAsLongImage(); closePreviewMenu()"><span class="row gap-2"><AppIcon name="file-image" :size="14" />导出所选为连续长图</span></button>
+        </template>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" :disabled="exporting" @click="exportCurrentPage(); closePreviewMenu()"><span class="row gap-2"><AppIcon name="file-image" :size="14" />导出当前 PNG</span></button>
+        <button v-if="pages.length > 1" class="menu-item" role="menuitem" :disabled="exporting" @click="exportAll(); closePreviewMenu()"><span class="row gap-2"><AppIcon name="image" :size="14" />导出全部 {{ pages.length }} 张 PNG</span></button>
+        <button class="menu-item" role="menuitem" :disabled="exporting" @click="exportPdf(); closePreviewMenu()"><span class="row gap-2"><AppIcon name="file-pdf" :size="14" />导出全部为 PDF</span></button>
       </div>
     </Teleport>
-
-    <section v-if="lastOutputs.length" class="code-output-result panel">
-      <header><div><p class="eyebrow">导出完成</p><h3>刚刚生成的文件</h3></div><button v-if="lastOutputs[0]?.path" class="primary-button" @click="openLocation(lastOutputs[0].path)">打开输出位置</button></header>
-      <div><article v-for="output in lastOutputs" :key="output.name"><AppIcon :name="output.mime === 'application/pdf' ? 'file-pdf' : 'image'" :size="16"/><span><strong>{{ output.name }}</strong><small>{{ output.path || '已通过浏览器下载' }}</small></span><button v-if="output.path" class="quiet-button" @click="openLocation(output.path)">定位文件</button></article></div>
-    </section>
 
     <div ref="captureHost" class="codesnap-capture-host" aria-hidden="true">
       <div class="codesnap-export-frame" data-export-frame><CodeSnapCard :code-html="highlightedPage(capturePageIndex)" :line-count="pageLineCount(capturePageIndex)" :start-line="capturePageIndex * linesPerPage + 1" :page-number="capturePageIndex + 1" :total-pages="pages.length" :font-size="fontSize" :show-line-numbers="showLineNumbers" :watermark="byline" :theme="theme" :wrap-long-lines="wrapLongLines"/></div>
