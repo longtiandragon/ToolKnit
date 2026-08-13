@@ -203,10 +203,13 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
 </script>
 
 <template>
-  <div class="tools-space page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeToolsMenus()">
+  <!-- No `tools-space__*` classes; the scoped block goes with them. The page
+       also drops a section heading that only announced the block beneath it
+       ("直接开始，不用先翻目录") — the eight cards say that by existing. -->
+  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeToolsMenus()">
     <PageHeader
       title="工具空间"
-      subtitle="按类别浏览全部工具,或直接搜索文件格式与操作名"
+      subtitle="按类别浏览全部工具，或直接搜索文件格式与操作名"
       :stats="[
         { label: '可用工具', value: workspaceTools.length },
         { label: '已收藏', value: favoriteIds.size },
@@ -220,57 +223,15 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
       </template>
     </PageHeader>
 
-    <section class="tools-space__quick" aria-labelledby="tools-quick-heading">
-      <header>
-        <div><p class="eyebrow">从这里开始</p><h3 id="tools-quick-heading">直接开始，不用先翻目录</h3></div>
-        <p>八项常用任务覆盖文件、图片、文字、媒体和开发处理；右键可收藏。</p>
-      </header>
-      <nav aria-label="常用工具直达">
-        <RouterLink
-          v-for="tool in quickTools"
-          :key="tool.id"
-          v-memo="[tool.id, isFavorite(tool)]"
-          :to="tool.to"
-          aria-haspopup="menu"
-          :aria-expanded="toolMenu?.tool.id === tool.id"
-          :aria-label="`${tool.title}；右键可收藏或打开菜单`"
-          @click="store.recordToolUsage(tool.id, router.resolve(tool.to).fullPath)"
-          @contextmenu="openToolMenu($event, tool)"
-          @keydown="openToolMenuFromKeyboard($event, tool)"
-        >
-          <span><AppIcon :name="tool.icon" :size="15" /></span>
-          <div><b>{{ tool.title }}</b><small>{{ tool.description }}</small></div>
-          <AppIcon v-if="isFavorite(tool)" class="tools-space__quick-favorite" name="star" :size="11" />
-          <AppIcon v-else name="arrow-right" :size="11" />
-        </RouterLink>
-      </nav>
-    </section>
-
-    <section class="tools-space__categories" aria-label="工具分类">
-      <button v-for="category in categoryStats" :key="category.id" :class="{ active: activeFilter === category.id }" @click="selectFilter(category.id)">
-        <span><AppIcon :name="category.icon" :size="17" /></span><b>{{ category.label }}</b><small>{{ category.count }} 项</small>
-      </button>
-    </section>
-
-    <section class="tools-space__body">
-      <main>
-        <header class="tools-space__toolbar">
-          <label><AppIcon name="search" :size="16" /><input v-model="query" aria-label="搜索本地工具" placeholder="搜索合并 PDF、压缩图片、JSON、时间戳…" /><button v-if="query" type="button" aria-label="清空搜索" @click="query = ''">×</button></label>
-          <nav aria-label="工具筛选">
-            <button v-for="filter in filters.slice(0, 2)" :key="filter.id" :class="{ active: activeFilter === filter.id }" @click="selectFilter(filter.id)"><AppIcon :name="filter.icon" :size="13" />{{ filter.label }}</button>
-          </nav>
-          <span>{{ filteredTools.length }} 项结果</span>
-        </header>
-
-        <section v-if="visibleTools.length" class="tools-space__grid" aria-label="工具列表">
+    <div class="grid gap-4 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(280px,320px)]">
+      <div class="stack gap-4 min-w-0">
+        <nav class="grid gap-2 grid-cols-2 md:grid-cols-3 2xl:grid-cols-4" aria-label="常用工具直达">
           <RouterLink
-            v-for="tool in visibleTools"
+            v-for="tool in quickTools"
             :key="tool.id"
-            v-memo="[tool.id, isFavorite(tool), focusedToolId === tool.id]"
+            v-memo="[tool.id, isFavorite(tool)]"
             :to="tool.to"
-            class="tools-space__tool"
-            :class="{ 'tools-space__tool--focused': focusedToolId === tool.id }"
-            :data-tool-id="tool.id"
+            class="row gap-2.5 px-3 py-2.5 rounded-md panel transition-colors duration-120 hover:border-accent hover:bg-accent-soft"
             aria-haspopup="menu"
             :aria-expanded="toolMenu?.tool.id === tool.id"
             :aria-label="`${tool.title}；右键可收藏或打开菜单`"
@@ -278,81 +239,223 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
             @contextmenu="openToolMenu($event, tool)"
             @keydown="openToolMenuFromKeyboard($event, tool)"
           >
-            <span><AppIcon :name="tool.icon" :size="17" /></span>
-            <div><b>{{ tool.title }}</b><p>{{ tool.description }}</p></div>
-            <small>{{ tool.group }}</small><AppIcon v-if="isFavorite(tool)" class="tools-space__favorite" name="star" :size="12" />
+            <span class="center w-8 h-8 shrink-0 rounded-sm bg-surface-2 text-accent"><AppIcon :name="tool.icon" :size="15" /></span>
+            <span class="stack gap-0.5 min-w-0 flex-1">
+              <b class="text-[12px] font-medium truncate text-fg">{{ tool.title }}</b>
+              <small class="text-[11px] truncate text-fg-3">{{ tool.description }}</small>
+            </span>
+            <AppIcon v-if="isFavorite(tool)" name="star" :size="12" class="shrink-0 text-warn" />
           </RouterLink>
-        </section>
-        <section v-else class="tools-space__empty"><span><AppIcon name="search" :size="22" /></span><b>{{ activeFilter === 'favorite' ? '还没有收藏工具' : '没有匹配的工具' }}</b><p>{{ activeFilter === 'favorite' ? '在任意工具卡上右键，即可把常用能力固定到这里。' : '换一个关键词，或切回全部工具继续浏览。' }}</p><button class="quiet-button" @click="query = ''; activeFilter = 'all'">查看全部工具</button></section>
-        <button v-if="visibleTools.length < filteredTools.length" class="tools-space__more quiet-button" @click="visibleLimit += 12">再显示 {{ Math.min(12, filteredTools.length - visibleTools.length) }} 项</button>
-      </main>
+        </nav>
 
-      <aside class="tools-space__side">
-        <section>
-          <header><div><p class="eyebrow">最近运行</p><h3>最近任务</h3></div><RouterLink to="/history">全部</RouterLink></header>
-          <div v-if="recentJobs.length" class="tools-space__jobs">
-            <button v-for="job in recentJobs" :key="job.id" v-memo="[job.id, job.status, job.progress, job.detail, job.outputs]" aria-haspopup="menu" :aria-expanded="jobMenu?.job.id === job.id" :aria-label="`${job.label}，${jobStatus(job)}；右键或 Shift 加 F10 查看任务操作`" @click="openJob(job)" @contextmenu="openJobMenu($event, job)" @keydown="openJobMenuFromKeyboard($event, job)"><span><AppIcon :name="jobIcon(job)" :size="15" /></span><div><b>{{ job.label }}</b><small>{{ job.detail || job.inputNames?.join('、') || '本地任务' }}</small></div><i :class="job.status">{{ jobStatus(job) }}</i></button>
+        <section class="pane" aria-label="工具列表">
+          <div class="row flex-wrap gap-x-3 gap-y-2 shrink-0 px-3 py-2 border-b border-line">
+            <label class="row gap-1.5 min-w-48 flex-1 max-w-96 h-8 px-2.5 rounded-sm bg-well border border-line focus-within:border-accent">
+              <AppIcon name="search" :size="14" class="shrink-0 text-fg-3" />
+              <input v-model="query" class="min-w-0 flex-1 bg-transparent border-0 text-[12px] text-fg focus:outline-none" aria-label="搜索本地工具" placeholder="搜索合并 PDF、压缩图片、JSON、时间戳…" />
+              <button v-if="query" type="button" class="center w-5 h-5 shrink-0 rounded-sm text-fg-3 hover:text-fg" aria-label="清空搜索" @click="query = ''"><AppIcon name="close" :size="11" /></button>
+            </label>
+            <nav class="row gap-1 shrink-0" aria-label="工具筛选">
+              <button
+                v-for="filter in filters.slice(0, 2)"
+                :key="filter.id"
+                class="btn-tool"
+                :class="activeFilter === filter.id ? 'btn-tool-active' : ''"
+                @click="selectFilter(filter.id)"
+              >
+                <AppIcon :name="filter.icon" :size="13" />{{ filter.label }}
+              </button>
+            </nav>
+            <small class="ml-auto shrink-0 text-[11px] tabular-nums text-fg-3">{{ filteredTools.length }} 项结果</small>
           </div>
-          <div v-else class="tools-space__side-empty"><AppIcon name="clock" :size="18" /><span><b>还没有处理记录</b><small>完成的输出会集中出现在这里。</small></span></div>
-        </section>
-        <section>
-          <header><div><p class="eyebrow">最近工具</p><h3>最近使用</h3></div></header>
-          <div v-if="recentTools.length" class="tools-space__recent-tools"><button v-for="tool in recentTools" :key="tool.id" aria-haspopup="menu" :aria-expanded="toolMenu?.tool.id === tool.id" :aria-label="`${tool.title}；右键或 Shift 加 F10 查看工具操作`" @click="openTool(tool)" @contextmenu="openToolMenu($event, tool)" @keydown="openToolMenuFromKeyboard($event, tool)"><AppIcon :name="tool.icon" :size="14" /><span>{{ tool.title }}</span><AppIcon name="arrow-right" :size="12" /></button></div>
-          <p v-else class="tools-space__hint">打开工具后，常用入口会在这里自动形成。</p>
-        </section>
-        <section class="tools-space__capabilities"><span><AppIcon name="flask" :size="17" /></span><div><b>本机能力与实验</b><p>检查 Vault、FFmpeg、输出目录与本机转写引擎的真实边界。</p></div><RouterLink to="/lab">检查</RouterLink></section>
-        <section v-if="personalPackEnabled" class="tools-space__private"><span><AppIcon name="terminal" :size="17" /></span><div><b>私人工具包</b><p>外部 JSON 清单、Dry Run、日志与取消由统一执行器负责。</p></div><nav aria-label="私人工具快捷入口"><RouterLink to="/private-tools?action=choose-manifest">加载</RouterLink><RouterLink to="/history?kind=script">历史</RouterLink></nav></section>
-      </aside>
-    </section>
 
-    <section v-if="toolMenu" ref="toolMenuElement" class="tools-space__menu" role="menu" :aria-label="`${toolMenu.tool.title}操作菜单`" :style="{ left: `${toolMenu.x}px`, top: `${toolMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleToolMenuKeydown">
-      <header><span>{{ toolMenu.tool.group }}</span><b>{{ toolMenu.tool.title }}</b></header>
-      <button role="menuitem" @click="openTool(toolMenu.tool)"><AppIcon name="arrow-right" :size="15" /><span>打开工具</span></button>
-      <button role="menuitem" @click="toggleFavorite(toolMenu.tool)"><AppIcon name="star" :size="15" /><span>{{ isFavorite(toolMenu.tool) ? '取消收藏' : '加入收藏' }}</span></button>
-      <button role="menuitem" @click="copyToolName(toolMenu.tool)"><AppIcon name="duplicate" :size="15" /><span>复制工具名称</span></button>
-    </section>
-    <section v-if="jobMenu" ref="jobMenuElement" class="tools-space__menu tools-space__job-menu" role="menu" :aria-label="`${jobMenu.job.label}任务操作菜单`" :style="{ left: `${jobMenu.x}px`, top: `${jobMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleJobMenuKeydown">
-      <header><span>{{ jobMenu.job.kind.toUpperCase() }} · {{ jobStatus(jobMenu.job) }}</span><b>{{ jobMenu.job.label }}</b></header>
-      <button role="menuitem" @click="openJob(jobMenu.job)"><AppIcon name="arrow-right" :size="15" /><span>打开任务页面</span></button>
-      <button role="menuitem" :disabled="!jobMenu.job.retryable && !jobMenu.job.route" @click="replayJob(jobMenu.job)"><AppIcon name="rotate" :size="15" /><span>恢复上次参数</span></button>
-      <button role="menuitem" :disabled="!historyOutputPaths(jobMenu.job).length" @click="revealJobOutput(jobMenu.job)"><AppIcon name="folder" :size="15" /><span>打开输出位置</span></button>
-      <button role="menuitem" :disabled="!historyOutputPaths(jobMenu.job).length" @click="copyJobOutputs(jobMenu.job)"><AppIcon name="duplicate" :size="15" /><span>{{ historyOutputPaths(jobMenu.job).length > 1 ? `复制全部 ${historyOutputPaths(jobMenu.job).length} 个路径` : '复制输出路径' }}</span></button>
-      <button role="menuitem" @click="openJobHistory"><AppIcon name="clock" :size="15" /><span>查看完整处理记录</span></button>
-      <button role="menuitem" class="danger" @click="removeJobRecord(jobMenu.job)"><AppIcon name="trash" :size="15" /><span>删除历史记录</span></button>
-    </section>
+          <!-- Categories are a filter, so they sit with the search that also
+               filters, not in a separate band above the panel. -->
+          <div class="row flex-wrap gap-1.5 shrink-0 px-3 py-2 border-b border-line" role="group" aria-label="工具分类">
+            <button
+              v-for="category in categoryStats"
+              :key="category.id"
+              class="row gap-1.5 h-7 px-2.5 rounded-full border text-[11px] whitespace-nowrap transition-colors duration-120"
+              :class="activeFilter === category.id ? 'border-accent bg-accent-soft text-accent font-medium' : 'border-line text-fg-2 hover:border-line-strong hover:text-fg'"
+              :aria-pressed="activeFilter === category.id"
+              @click="selectFilter(category.id)"
+            >
+              <AppIcon :name="category.icon" :size="13" />{{ category.label }}
+              <span class="tabular-nums text-fg-3">{{ category.count }}</span>
+            </button>
+          </div>
+
+          <div v-if="visibleTools.length" class="grid gap-2 p-3 grid-cols-1 md:grid-cols-2 2xl:grid-cols-3">
+            <RouterLink
+              v-for="tool in visibleTools"
+              :key="tool.id"
+              v-memo="[tool.id, isFavorite(tool), focusedToolId === tool.id]"
+              :to="tool.to"
+              class="row gap-2.5 p-2.5 rounded-md border bg-well transition-colors duration-120 hover:border-accent hover:bg-accent-soft"
+              :class="focusedToolId === tool.id ? 'border-accent' : 'border-line'"
+              :data-tool-id="tool.id"
+              aria-haspopup="menu"
+              :aria-expanded="toolMenu?.tool.id === tool.id"
+              :aria-label="`${tool.title}；右键可收藏或打开菜单`"
+              @click="store.recordToolUsage(tool.id, router.resolve(tool.to).fullPath)"
+              @contextmenu="openToolMenu($event, tool)"
+              @keydown="openToolMenuFromKeyboard($event, tool)"
+            >
+              <span class="center w-9 h-9 shrink-0 rounded-sm bg-surface border border-line text-accent"><AppIcon :name="tool.icon" :size="16" /></span>
+              <span class="stack gap-0.5 min-w-0 flex-1">
+                <b class="row gap-1.5 text-[12px] font-medium text-fg">
+                  <span class="min-w-0 truncate">{{ tool.title }}</span>
+                  <AppIcon v-if="isFavorite(tool)" name="star" :size="11" class="shrink-0 text-warn" />
+                </b>
+                <p class="text-[11px] leading-relaxed line-clamp-2 text-fg-3">{{ tool.description }}</p>
+              </span>
+              <small class="shrink-0 text-[11px] text-fg-3">{{ tool.group }}</small>
+            </RouterLink>
+          </div>
+          <div v-else class="stack items-center gap-2 px-6 py-14 text-center">
+            <span class="center w-11 h-11 rounded-lg bg-surface-2 text-fg-3"><AppIcon name="search" :size="20" /></span>
+            <b class="text-[13px] font-medium text-fg">{{ activeFilter === 'favorite' ? '还没有收藏工具' : '没有匹配的工具' }}</b>
+            <p class="max-w-80 text-[11px] leading-relaxed text-fg-3">
+              {{ activeFilter === 'favorite' ? '在任意工具卡上右键，即可把常用能力固定到这里。' : '换一个关键词，或切回全部工具继续浏览。' }}
+            </p>
+            <button class="btn-default btn-sm" @click="query = ''; activeFilter = 'all'">查看全部工具</button>
+          </div>
+
+          <footer v-if="visibleTools.length < filteredTools.length" class="row justify-center shrink-0 px-3 pb-3">
+            <button class="btn-default btn-sm" @click="visibleLimit += 12">再显示 {{ Math.min(12, filteredTools.length - visibleTools.length) }} 项</button>
+          </footer>
+        </section>
+      </div>
+
+      <aside class="stack gap-4 min-w-0">
+        <section class="pane">
+          <header class="pane-head">
+            <span class="pane-title">最近运行</span>
+            <RouterLink to="/history" class="text-[11px] text-accent hover:underline underline-offset-2">全部</RouterLink>
+          </header>
+          <div v-if="recentJobs.length" class="stack gap-0.5 p-1.5">
+            <button
+              v-for="job in recentJobs"
+              :key="job.id"
+              v-memo="[job.id, job.status, job.progress, job.detail, job.outputs]"
+              class="row gap-2 px-2 py-1.5 rounded-sm text-left transition-colors duration-120 hover:bg-surface-2"
+              aria-haspopup="menu"
+              :aria-expanded="jobMenu?.job.id === job.id"
+              :aria-label="`${job.label}，${jobStatus(job)}；右键或 Shift 加 F10 查看任务操作`"
+              @click="openJob(job)"
+              @contextmenu="openJobMenu($event, job)"
+              @keydown="openJobMenuFromKeyboard($event, job)"
+            >
+              <span class="center w-7 h-7 shrink-0 rounded-sm bg-surface-2 text-fg-2"><AppIcon :name="jobIcon(job)" :size="14" /></span>
+              <span class="stack gap-0.5 min-w-0 flex-1">
+                <b class="text-[12px] font-medium truncate text-fg">{{ job.label }}</b>
+                <small class="text-[11px] truncate text-fg-3">{{ job.detail || job.inputNames?.join('、') || '本地任务' }}</small>
+              </span>
+              <i
+                class="shrink-0 text-[11px] not-italic"
+                :class="job.status === 'failed' ? 'text-danger' : job.status === 'running' ? 'text-accent' : job.status === 'succeeded' ? 'text-success' : 'text-fg-3'"
+              >
+                {{ jobStatus(job) }}
+              </i>
+            </button>
+          </div>
+          <div v-else class="stack items-center gap-1.5 px-4 py-8 text-center">
+            <AppIcon name="clock" :size="18" class="text-fg-3" />
+            <b class="text-[12px] font-medium text-fg">还没有处理记录</b>
+            <small class="text-[11px] text-fg-3">完成的输出会集中出现在这里。</small>
+          </div>
+        </section>
+
+        <section class="pane">
+          <header class="pane-head"><span class="pane-title">最近使用</span></header>
+          <div v-if="recentTools.length" class="stack gap-0.5 p-1.5">
+            <button
+              v-for="tool in recentTools"
+              :key="tool.id"
+              class="row gap-2 px-2 h-8 rounded-sm text-left text-[12px] text-fg-2 transition-colors duration-120 hover:bg-surface-2 hover:text-fg"
+              aria-haspopup="menu"
+              :aria-expanded="toolMenu?.tool.id === tool.id"
+              :aria-label="`${tool.title}；右键或 Shift 加 F10 查看工具操作`"
+              @click="openTool(tool)"
+              @contextmenu="openToolMenu($event, tool)"
+              @keydown="openToolMenuFromKeyboard($event, tool)"
+            >
+              <AppIcon :name="tool.icon" :size="14" class="shrink-0 text-fg-3" />
+              <span class="min-w-0 flex-1 truncate">{{ tool.title }}</span>
+              <AppIcon name="arrow-right" :size="12" class="shrink-0 text-fg-3" />
+            </button>
+          </div>
+          <p v-else class="px-3 py-4 text-[11px] leading-relaxed text-fg-3">打开工具后，常用入口会在这里自动形成。</p>
+        </section>
+
+        <section class="row gap-2.5 p-3 panel">
+          <span class="center w-8 h-8 shrink-0 rounded-sm bg-accent-soft text-accent"><AppIcon name="flask" :size="16" /></span>
+          <span class="stack gap-0.5 min-w-0 flex-1">
+            <b class="text-[12px] font-medium text-fg">本机能力与实验</b>
+            <p class="text-[11px] leading-relaxed text-fg-3">检查 Vault、FFmpeg、输出目录与本机转写引擎的真实边界。</p>
+          </span>
+          <RouterLink to="/lab" class="btn-tool shrink-0">检查</RouterLink>
+        </section>
+
+        <section v-if="personalPackEnabled" class="stack gap-2 p-3 panel">
+          <div class="row gap-2.5">
+            <span class="center w-8 h-8 shrink-0 rounded-sm bg-accent-soft text-accent"><AppIcon name="terminal" :size="16" /></span>
+            <span class="stack gap-0.5 min-w-0 flex-1">
+              <b class="text-[12px] font-medium text-fg">私人工具包</b>
+              <p class="text-[11px] leading-relaxed text-fg-3">外部 JSON 清单、Dry Run、日志与取消由统一执行器负责。</p>
+            </span>
+          </div>
+          <nav class="row gap-1.5" aria-label="私人工具快捷入口">
+            <RouterLink to="/private-tools?action=choose-manifest" class="btn-default btn-sm flex-1">加载</RouterLink>
+            <RouterLink to="/history?kind=script" class="btn-default btn-sm flex-1">历史</RouterLink>
+          </nav>
+        </section>
+      </aside>
+    </div>
+
+    <Teleport to="body">
+      <section
+        v-if="toolMenu"
+        ref="toolMenuElement"
+        class="menu-panel w-60"
+        role="menu"
+        :aria-label="`${toolMenu.tool.title}操作菜单`"
+        :style="{ left: `${toolMenu.x}px`, top: `${toolMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleToolMenuKeydown"
+      >
+        <p class="menu-title">{{ toolMenu.tool.group }}<small class="min-w-0 truncate font-normal">{{ toolMenu.tool.title }}</small></p>
+        <button class="menu-item" role="menuitem" @click="openTool(toolMenu.tool)"><span class="row gap-2"><AppIcon name="arrow-right" :size="14" />打开工具</span></button>
+        <button class="menu-item" role="menuitem" @click="toggleFavorite(toolMenu.tool)"><span class="row gap-2"><AppIcon name="star" :size="14" />{{ isFavorite(toolMenu.tool) ? '取消收藏' : '加入收藏' }}</span></button>
+        <button class="menu-item" role="menuitem" @click="copyToolName(toolMenu.tool)"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制工具名称</span></button>
+      </section>
+
+      <section
+        v-if="jobMenu"
+        ref="jobMenuElement"
+        class="menu-panel w-68"
+        role="menu"
+        :aria-label="`${jobMenu.job.label}任务操作菜单`"
+        :style="{ left: `${jobMenu.x}px`, top: `${jobMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleJobMenuKeydown"
+      >
+        <p class="menu-title">
+          {{ jobMenu.job.kind.toUpperCase() }} · {{ jobStatus(jobMenu.job) }}
+          <small class="min-w-0 truncate font-normal">{{ jobMenu.job.label }}</small>
+        </p>
+        <button class="menu-item" role="menuitem" @click="openJob(jobMenu.job)"><span class="row gap-2"><AppIcon name="arrow-right" :size="14" />打开任务页面</span></button>
+        <button class="menu-item" role="menuitem" :disabled="!jobMenu.job.retryable && !jobMenu.job.route" @click="replayJob(jobMenu.job)"><span class="row gap-2"><AppIcon name="rotate" :size="14" />恢复上次参数</span></button>
+        <button class="menu-item" role="menuitem" :disabled="!historyOutputPaths(jobMenu.job).length" @click="revealJobOutput(jobMenu.job)"><span class="row gap-2"><AppIcon name="folder" :size="14" />打开输出位置</span></button>
+        <button class="menu-item" role="menuitem" :disabled="!historyOutputPaths(jobMenu.job).length" @click="copyJobOutputs(jobMenu.job)">
+          <span class="row gap-2"><AppIcon name="duplicate" :size="14" />{{ historyOutputPaths(jobMenu.job).length > 1 ? `复制全部 ${historyOutputPaths(jobMenu.job).length} 个路径` : '复制输出路径' }}</span>
+        </button>
+        <button class="menu-item" role="menuitem" @click="openJobHistory"><span class="row gap-2"><AppIcon name="clock" :size="14" />查看完整处理记录</span></button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item menu-item-danger" role="menuitem" @click="removeJobRecord(jobMenu.job)"><span class="row gap-2"><AppIcon name="trash" :size="14" />删除历史记录</span></button>
+      </section>
+    </Teleport>
   </div>
 </template>
-
-<style scoped>
-.tools-space{max-width:1460px;margin:0 auto;padding:26px 30px 54px;color:var(--text)}
-.tools-space__hero{grid-template-columns:minmax(0,1fr) 255px;overflow:hidden;box-shadow:0 20px 48px var(--accent-soft)}
-.tools-space__hero>div{position:relative;display:flex;align-items:flex-start;flex-direction:column;justify-content:center;padding:31px 39px;background-size:28px 28px}.tools-space__hero>div:after{display:none}.tools-space__hero .eyebrow{}.tools-space__hero h2{position:relative;z-index:1;max-width:760px;margin:10px 0 11px;font:720 clamp(29px,3.3vw,44px)/1.1 var(--font-display);letter-spacing:-.045em}.tools-space__hero h2 em{font-style:normal}.tools-space__hero>div>p:not(.eyebrow){position:relative;z-index:1;max-width:720px;font-size:12px;line-height:1.72}.tools-space__hero-actions{z-index:1;gap:8px;margin-top:19px}.tools-space__hero-actions a{display:inline-flex;align-items:center;gap:7px;min-height:37px;padding:0 13px}.tools-space__hero-actions .primary-button{}.tools-space__hero-actions .quiet-button{color:var(--fg);}
-.tools-space__hero>aside{display:grid;grid-template-rows:auto 1fr auto;padding:22px;border-left:1px solid var(--surface-2)}.tools-space__hero>aside>span{display:flex;align-items:center;gap:7px;font-size:11px}.tools-space__hero>aside>span i{width:7px;height:7px;box-shadow:0 0 0 4px var(--accent-soft)}.tools-space__hero>aside>span i.active{box-shadow:0 0 0 4px var(--warn-soft)}.tools-space__hero>aside>div{align-self:center;display:grid}.tools-space__hero>aside>div b{font:760 50px/1 var(--font-mono);letter-spacing:-.07em}.tools-space__hero>aside>div small{margin-top:5px;font:11px var(--font-mono);letter-spacing:.09em}.tools-space__hero>aside footer{display:grid;grid-template-columns:1fr 1fr;padding-top:13px;border-top:1px solid var(--surface-2);font-size:11px}.tools-space__hero>aside footer span+span{padding-left:13px;border-left:1px solid var(--surface-2)}.tools-space__hero>aside footer strong{display:block;margin-bottom:3px;font:700 16px var(--font-mono)}
-.tools-space__quick{display:grid;grid-template-columns:250px minmax(0,1fr);gap:12px;align-items:stretch;margin-top:14px}.tools-space__quick>header{display:flex;align-items:flex-start;flex-direction:column;justify-content:center;padding:14px 16px;border:1px solid var(--accent-soft);border-radius:14px;background:linear-gradient(135deg,var(--green-bg),var(--surface))}.tools-space__quick h3{margin-top:5px;font:710 15px/1.2 var(--font-display);letter-spacing:-.02em}.tools-space__quick>header>p:last-child{margin:7px 0 0;color:var(--muted);font-size:11px;line-height:1.55}.tools-space__quick>nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:var(--line);box-shadow:0 8px 22px var(--accent-soft)}.tools-space__quick a{display:grid;grid-template-columns:29px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:55px;padding:8px 10px;color:var(--text);background:var(--surface);outline:0}.tools-space__quick a:hover,.tools-space__quick a:focus-visible{color:var(--green-strong);background:var(--green-bg)}.tools-space__quick a:focus-visible{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--green) 48%,transparent)}.tools-space__quick a>span{display:grid;width:29px;height:29px;place-items:center;border:1px solid var(--accent-soft);border-radius:8px;color:var(--green-strong);background:var(--surface)}.tools-space__quick a>div{display:grid;min-width:0;gap:3px}.tools-space__quick b,.tools-space__quick small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tools-space__quick b{font:670 11px var(--font-ui)}.tools-space__quick small{color:var(--muted);font-size:11px}.tools-space__quick a>svg{color:var(--muted)}.tools-space__quick .tools-space__quick-favorite{color:var(--warn);fill:var(--warn-soft)}
-.tools-space__categories{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;padding:17px 0}.tools-space__categories button{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:9px;min-height:58px;padding:9px 11px;border:1px solid var(--line);border-radius:12px;color:var(--text-secondary);background:var(--surface-2);text-align:left}.tools-space__categories button:hover,.tools-space__categories button:focus-visible{border-color:var(--accent);color:var(--green-strong);background:var(--surface)}.tools-space__categories button.active{border-color:var(--accent);color:var(--green-strong);background:var(--green-bg);box-shadow:inset 3px 0 var(--green)}.tools-space__categories button>span{display:grid;width:31px;height:31px;place-items:center;border-radius:9px;color:var(--green-strong);background:var(--accent-soft)}.tools-space__categories b{overflow:hidden;font:680 11px var(--font-ui);text-overflow:ellipsis;white-space:nowrap}.tools-space__categories small{color:var(--muted);font:11px var(--font-mono)}
-.tools-space__body{display:grid;grid-template-columns:minmax(0,1fr) 294px;gap:14px;align-items:start}.tools-space__body>main{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:16px;background:var(--surface-2);box-shadow:0 12px 30px var(--accent-soft)}.tools-space__toolbar{display:grid;grid-template-columns:minmax(260px,1fr) auto auto;align-items:center;gap:10px;padding:13px;border-bottom:1px solid var(--line-weak)}.tools-space__toolbar label{display:flex;min-width:0;align-items:center;gap:8px;height:38px;padding:0 11px;border:1px solid var(--line);border-radius:10px;color:var(--muted);background:var(--canvas)}.tools-space__toolbar label:focus-within{border-color:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 12%,transparent)}.tools-space__toolbar input{min-width:0;flex:1;border:0;outline:0;color:var(--text);background:transparent;font-size:11px}.tools-space__toolbar label button{width:24px;height:24px;padding:0;border:0;color:var(--muted);background:transparent}.tools-space__toolbar nav{display:flex;gap:5px}.tools-space__toolbar nav button{display:flex;align-items:center;gap:5px;min-height:31px;padding:0 9px;border:1px solid transparent;border-radius:8px;color:var(--muted);background:transparent;font-size:11px}.tools-space__toolbar nav button:hover,.tools-space__toolbar nav button.active{border-color:var(--accent-soft);color:var(--green-strong);background:var(--green-bg)}.tools-space__toolbar>span{color:var(--muted);font:11px var(--font-mono);white-space:nowrap}
-.tools-space__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;padding:5px 13px 9px}.tools-space__tool{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;min-height:76px;padding:11px 9px;border-bottom:1px solid var(--line-weak);color:var(--text);cursor:context-menu}.tools-space__tool:nth-child(odd){padding-right:15px;border-right:1px solid var(--line-weak)}.tools-space__tool:nth-child(even){padding-left:15px}.tools-space__tool:hover,.tools-space__tool:focus-visible{color:var(--green-strong);background:linear-gradient(90deg,var(--green-bg),transparent)}.tools-space__tool:focus-visible{z-index:1;outline:2px solid color-mix(in srgb,var(--green) 46%,transparent);outline-offset:-2px}.tools-space__tool--focused{z-index:1;color:var(--green-strong);background:linear-gradient(90deg,color-mix(in srgb,var(--green-bg) 90%,var(--surface)),var(--surface-2));box-shadow:inset 3px 0 var(--green)}.tools-space__tool>span{display:grid;width:34px;height:34px;place-items:center;border:1px solid var(--accent-soft);border-radius:9px;color:var(--green-strong);background:var(--accent-soft)}.tools-space__tool>div{display:grid;min-width:0;gap:4px}.tools-space__tool b,.tools-space__tool p{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tools-space__tool b{font:670 11px var(--font-ui)}.tools-space__tool p{margin:0;color:var(--muted);font-size:11px}.tools-space__tool>small{align-self:start;margin-top:2px;padding:3px 5px;border-radius:5px;color:var(--muted);background:var(--surface-2);font:11px var(--font-mono)}.tools-space__favorite{position:absolute;right:9px;bottom:9px;color:var(--warn);fill:var(--warn-soft)}.tools-space__more{display:flex;margin:6px auto 14px;min-height:31px;color:var(--green-strong);background:var(--green-bg)}.tools-space__empty{display:grid;min-height:330px;place-content:center;justify-items:center;padding:35px;color:var(--muted);text-align:center}.tools-space__empty>span{display:grid;width:46px;height:46px;margin-bottom:12px;place-items:center;border-radius:14px;color:var(--green-strong);background:var(--green-bg)}.tools-space__empty b{color:var(--text);font:700 15px var(--font-ui)}.tools-space__empty p{max-width:330px;margin:7px 0 14px;font-size:11px;line-height:1.6}
-.tools-space__side{display:grid;gap:11px}.tools-space__side>section{overflow:hidden;border:1px solid var(--line);border-radius:14px;background:var(--surface-2);box-shadow:0 8px 22px var(--accent-soft)}.tools-space__side>section>header{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;padding:13px;border-bottom:1px solid var(--line-weak)}.tools-space__side h3{margin-top:4px;font:700 14px var(--font-display)}.tools-space__side>section>header>a{color:var(--green-strong);font-size:11px}.tools-space__jobs{display:grid}.tools-space__jobs button{display:grid;width:100%;grid-template-columns:29px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:57px;padding:8px 11px;border:0;border-bottom:1px solid var(--line-weak);color:var(--text);background:transparent;text-align:left}.tools-space__jobs button:last-child{border-bottom:0}.tools-space__jobs button:hover,.tools-space__jobs button:focus-visible{color:var(--green-strong);background:var(--green-bg)}.tools-space__jobs button>span{display:grid;width:28px;height:28px;place-items:center;border-radius:8px;color:var(--green-strong);background:var(--accent-soft)}.tools-space__jobs button>div{display:grid;min-width:0;gap:3px}.tools-space__jobs b,.tools-space__jobs small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tools-space__jobs b{font:650 11px var(--font-ui)}.tools-space__jobs small{color:var(--muted);font-size:11px}.tools-space__jobs i{color:var(--muted);font:11px var(--font-mono);font-style:normal}.tools-space__jobs i.running{color:var(--warn)}.tools-space__jobs i.succeeded{color:var(--green-strong)}.tools-space__jobs i.failed{color:var(--danger)}.tools-space__side-empty{display:flex;align-items:center;justify-content:center;gap:9px;min-height:94px;padding:16px;color:var(--green-strong)}.tools-space__side-empty span{display:grid;gap:3px}.tools-space__side-empty b{color:var(--text);font-size:11px}.tools-space__side-empty small{color:var(--muted);font-size:11px}.tools-space__recent-tools{display:grid;padding:5px 10px 9px}.tools-space__recent-tools button{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:7px;min-height:34px;padding:0 5px;border:0;border-bottom:1px solid var(--line-weak);color:var(--text-secondary);background:transparent;text-align:left;font-size:11px}.tools-space__recent-tools button:hover,.tools-space__recent-tools button:focus-visible{color:var(--green-strong);background:var(--green-bg)}.tools-space__hint{margin:0;padding:18px;color:var(--muted);font-size:11px;line-height:1.55}.tools-space__capabilities,.tools-space__private{display:grid!important;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:9px;padding:13px!important}.tools-space__capabilities{border-color:var(--warn-soft)!important;background:linear-gradient(135deg,var(--surface-2),var(--surface))!important}.tools-space__private{border-color:var(--accent-soft)!important;background:linear-gradient(135deg,var(--green-bg),var(--surface))!important}.tools-space__capabilities>span,.tools-space__private>span{display:grid;width:31px;height:31px;place-items:center;border-radius:9px;color:var(--accent-fg);background:var(--accent-solid-hover)}.tools-space__capabilities>span{color:var(--warn);background:var(--warn)}.tools-space__capabilities>div,.tools-space__private>div{display:grid;gap:3px;min-width:0}.tools-space__capabilities b,.tools-space__private b{font-size:11px}.tools-space__capabilities p,.tools-space__private p{margin:0;color:var(--muted);font-size:11px;line-height:1.5}.tools-space__capabilities>a,.tools-space__private>a{color:var(--green-strong);font:700 11px var(--font-ui)}.tools-space__capabilities>a:focus-visible,.tools-space__private>a:focus-visible{border-radius:4px;outline:2px solid color-mix(in srgb,var(--green) 45%,transparent);outline-offset:3px}
-.tools-space__menu{position:fixed;z-index:145;width:238px;overflow:hidden;border:1px solid var(--accent-soft);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-lg);animation:tool-menu-in .14s ease-out both}.tools-space__menu>header{display:grid;gap:3px;padding:11px 13px 9px;border-bottom:1px solid var(--line-weak);background:linear-gradient(125deg,var(--green-bg),var(--surface-2))}.tools-space__menu>header span{color:var(--green-strong);font:700 11px var(--font-mono);letter-spacing:.1em}.tools-space__menu>header b{overflow:hidden;font:700 12px var(--font-ui);text-overflow:ellipsis;white-space:nowrap}.tools-space__menu button{display:flex;width:100%;min-height:39px;align-items:center;gap:9px;padding:0 13px;border:0;border-bottom:1px solid var(--line-weak);color:var(--text-secondary);background:transparent;font:650 11px var(--font-ui);text-align:left}.tools-space__menu button:last-child{border-bottom:0}.tools-space__menu button:hover,.tools-space__menu button:focus-visible{color:var(--green-strong);background:var(--green-bg)}.tools-space__menu button:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:-2px}.tools-space__menu button:disabled{cursor:not-allowed;color:var(--faint);background:transparent}.tools-space__menu button.danger{color:var(--danger)}.tools-space__menu button.danger:hover,.tools-space__menu button.danger:focus-visible{color:var(--danger);background:var(--danger-soft)}.tools-space__job-menu{width:252px}.tools-space__job-menu>header span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@keyframes tool-menu-in{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:none}}
-@media(max-width:1120px){.tools-space__quick{grid-template-columns:1fr}.tools-space__quick>header{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:14px}.tools-space__quick>header>p:last-child{grid-column:2;margin:0}.tools-space__body{grid-template-columns:minmax(0,1fr) 270px}.tools-space__toolbar{grid-template-columns:1fr auto}.tools-space__toolbar>span{display:none}.tools-space__categories{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.tools-space__private>nav{display:grid;gap:5px;text-align:right}.tools-space__private>nav a{color:var(--green-strong);font:700 11px var(--font-ui)}.tools-space__private>nav a:focus-visible{border-radius:4px;outline:2px solid color-mix(in srgb,var(--green) 45%,transparent);outline-offset:3px}
-
-/* Desktop readability pass: keep metadata compact without turning the tool
-   directory into a wall of 9px labels. These overrides intentionally stay
-   after the structural rules so the warm-paper layout remains unchanged. */
-.tools-space__hero>div>p:not(.eyebrow){font-size:13px}
-.tools-space__hero>aside>span{font-size:11px}.tools-space__hero>aside>div small{font-size:11px}.tools-space__hero>aside footer{font-size:11px}
-.tools-space__quick>header>p:last-child{font-size:11px}.tools-space__quick a{min-height:68px}.tools-space__quick b{font-size:11px}.tools-space__quick small{display:-webkit-box;overflow:hidden;font-size:11px;line-height:1.35;white-space:normal;-webkit-box-orient:vertical;-webkit-line-clamp:2}
-.tools-space__categories b{font-size:12px}.tools-space__categories small{font-size:11px}
-.tools-space__toolbar input{font-size:12px}.tools-space__toolbar nav button{font-size:11px}.tools-space__toolbar>span{font-size:11px}
-.tools-space__tool{min-height:82px;cursor:pointer}.tools-space__tool b{font-size:12px}.tools-space__tool p{display:-webkit-box;overflow:hidden;font-size:11px;line-height:1.45;white-space:normal;-webkit-box-orient:vertical;-webkit-line-clamp:2}.tools-space__tool>small{font-size:11px}
-.tools-space__empty p{font-size:11px}.tools-space__side>section>header>a{font-size:11px}
-.tools-space__jobs b{font-size:11px}.tools-space__jobs small,.tools-space__jobs i{font-size:11px}.tools-space__side-empty b{font-size:11px}.tools-space__side-empty small{font-size:11px}
-.tools-space__recent-tools button{font-size:11px}.tools-space__hint{font-size:11px}
-.tools-space__capabilities b,.tools-space__private b{font-size:11px}.tools-space__capabilities p,.tools-space__private p{font-size:11px}.tools-space__capabilities>a,.tools-space__private>a,.tools-space__private>nav a{font-size:11px}
-.tools-space__menu>header span{font-size:11px}.tools-space__menu button{font-size:11px}
-
-@media(max-width:1320px){.tools-space__quick{grid-template-columns:1fr}.tools-space__quick>header{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:14px}.tools-space__quick>header>p:last-child{grid-column:2;margin:0}.tools-space__quick>nav{grid-template-columns:repeat(4,minmax(0,1fr))}}
-@media(max-width:960px){.tools-space{padding:22px 18px 46px}.tools-space__hero{}.tools-space__hero>aside{display:none}.tools-space__quick>nav{grid-template-columns:repeat(2,minmax(0,1fr))}.tools-space__body{grid-template-columns:1fr}.tools-space__side{grid-template-columns:repeat(2,minmax(0,1fr))}.tools-space__capabilities,.tools-space__private{grid-column:1/-1}.tools-space__grid{grid-template-columns:1fr}.tools-space__tool:nth-child(odd),.tools-space__tool:nth-child(even){padding-inline:9px;border-right:0}.tools-space__toolbar{grid-template-columns:1fr}.tools-space__toolbar nav{justify-content:flex-start}}
-@media(max-width:640px){.tools-space__quick>header{display:block}.tools-space__quick>header>p:last-child{margin-top:7px}.tools-space__quick>nav{grid-template-columns:repeat(2,minmax(0,1fr))}}
-</style>
