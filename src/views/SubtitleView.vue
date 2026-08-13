@@ -23,6 +23,7 @@ import {
   type SubtitleFormat,
 } from '@/lib/subtitle'
 import { subtitleWorkflowActions, subtitleWorkflowId, type SubtitleWorkflowId } from '@/lib/subtitle-workflows'
+import SegmentedControl from '@/components/SegmentedControl.vue'
 import { cancelDesktopTranscription, inspectDesktopInputFile, isDesktop, listenDesktopEvent, readDesktopInputFile, revealDesktopFile, transcribeDesktopMedia, type DesktopInputFileMetadata, type TranscriptionProgress } from '@/lib/native'
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useUiStore } from '@/stores/ui'
@@ -78,10 +79,32 @@ let menuTrigger: HTMLElement | undefined
 let resizeObserver: ResizeObserver | undefined
 
 const ROW_HEIGHT = 76
+
+/* The four workflows you can start from nothing. The other two — convert and
+   shift — are the toolbar controls they used to duplicate, which is why they
+   still carry `data-subtitle-workflow`: deep links focus them by that. */
+const entryWorkflows = subtitleWorkflowActions.filter((action) => !action.requiresCues)
+const importFormatOptions = [
+  { id: 'srt', label: 'SRT' },
+  { id: 'vtt', label: 'WebVTT' },
+]
 const filteredCueIndexes = computed(() => subtitleCueIndexes(cues.value, query.value))
 const listWindow = computed(() => fixedRowVirtualWindow(filteredCueIndexes.value.length, scrollTop.value, listHeight.value, ROW_HEIGHT, 7))
 const renderedCueRows = computed(() => filteredCueIndexes.value.slice(listWindow.value.start, listWindow.value.end).map(index => ({ cue: cues.value[index], ordinal: index + 1 })))
 const activeCue = computed(() => cues.value.find(cue => cue.id === activeId.value))
+
+/* One right-hand slot with two possible occupants. Transcription used to be a
+   collapsible card wedged above the timeline, so opening it pushed the
+   subtitles you were checking off the screen. Written as whole class strings
+   because UnoCSS extracts them statically. */
+const workspaceColumns = computed(() => transcriptionOpen.value || activeCue.value
+  ? 'grid-cols-[minmax(0,1fr)_minmax(300px,340px)]'
+  : 'grid-cols-1')
+const transcriptionBoundary = computed(() => [
+  { label: '模型', value: shortPath(store.settings.transcriptionModelPath), title: store.settings.transcriptionModelPath },
+  { label: '语言', value: store.settings.transcriptionLanguage === 'auto' ? '自动检测' : store.settings.transcriptionLanguage.toUpperCase(), title: '' },
+  { label: '输出', value: store.settings.outputDirectory ? shortPath(store.settings.outputDirectory) : '开始时选择', title: store.settings.outputDirectory ?? '' },
+])
 const totalDuration = computed(() => cues.value.at(-1)?.endMs ?? 0)
 const sourceBaseName = computed(() => sourceName.value.replace(/\.(srt|vtt)$/i, '') || '未命名字幕')
 const byteLabel = computed(() => `${new Blob([serializeSubtitle(cues.value, sourceFormat.value)]).size.toLocaleString()} B`)
@@ -526,108 +549,357 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
 </script>
 
 <template>
-  <div class="subtitle-studio page-enter mx-auto w-full max-w-320 px-8 py-6" @pointerdown="closeMenu(); closeMediaMenu()">
+  <!-- No `subtitle-studio` / `subtitle-workflows` / `subtitle-workspace`
+       classes: the scoped block that styled them capped the timeline at a
+       hard 570px and put three stacked cards above it. -->
+  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6" @pointerdown="closeMenu(); closeMediaMenu()">
     <PageHeader
       title="字幕校对台"
-      :subtitle="cues.length ? '本地草稿已载入,可逐条校对时间轴' : '导入 SRT / WebVTT 逐条校对,或用本机 Whisper 先转写'"
-      :stats="[{ label: '字幕条', value: cues.length.toLocaleString() }]"
-    />
-
-    <section class="subtitle-workflows" aria-labelledby="subtitle-workflow-heading">
-      <header><div><p class="eyebrow">快捷任务</p><h3 id="subtitle-workflow-heading">从任务开始，不必先理解整张时间轴</h3></div><p>六项常用工作流保持在同一页；字幕条目仍可右键拆分、合并与插入。</p></header>
-      <nav aria-label="字幕常用任务">
-        <button
-          v-for="action in subtitleWorkflowActions"
-          :key="action.id"
-          type="button"
-          :data-subtitle-workflow="action.id"
-          :class="{ muted: action.requiresCues && !cues.length }"
-          @click="runSubtitleWorkflow(action.id)"
-        >
-          <span><AppIcon :name="action.icon" :size="16" /></span>
-          <div><b>{{ action.label }}</b><small>{{ action.detail }}</small></div>
-          <i>{{ action.requiresCues && !cues.length ? '载入后可用' : '开始' }}</i>
+      :subtitle="cues.length ? '逐条校对时间轴；导出前不写入 Vault' : '导入 SRT / WebVTT 逐条校对，或用本机 Whisper 先转写'"
+    >
+      <template #actions>
+        <button class="btn-default" data-subtitle-workflow="import" @click="fileInput?.click()">
+          <AppIcon name="folder-open" :size="15" />{{ cues.length ? '重新导入' : '打开字幕' }}
         </button>
-      </nav>
-    </section>
+        <button v-if="cues.length" class="btn-primary" :disabled="exporting" @click="exportAs(sourceFormat)">
+          <AppIcon name="download" :size="15" />{{ exporting ? '正在导出…' : `导出 ${sourceFormat.toUpperCase()}` }}
+        </button>
+      </template>
+    </PageHeader>
 
-    <section v-if="sourceDraftOpen" class="subtitle-source-panel panel" aria-labelledby="subtitle-source-heading">
-      <header><div><p class="eyebrow">粘贴源文本</p><h3 id="subtitle-source-heading">粘贴字幕源码</h3><p>解析成功前不会替换当前时间轴；存在未导出修改时仍会再次确认。</p></div><button type="button" class="quiet-button" @click="sourceDraftOpen = false">收起</button></header>
-      <textarea ref="sourceDraftElement" v-model="sourceDraft" spellcheck="false" aria-label="字幕源码" placeholder="1&#10;00:00:01,000 --> 00:00:03,500&#10;在这里粘贴字幕…" />
-      <footer><div role="group" aria-label="粘贴字幕格式"><button type="button" :class="{ active: importFormat === 'srt' }" @click="importFormat = 'srt'">SRT</button><button type="button" :class="{ active: importFormat === 'vtt' }" @click="importFormat = 'vtt'">WebVTT</button></div><span>{{ sourceDraftBytes.toLocaleString() }} / {{ MAX_SUBTITLE_BYTES.toLocaleString() }} B</span><button type="button" class="primary-button" :disabled="!sourceDraft.trim()" @click="parseDraft">解析并载入</button></footer>
-    </section>
+    <section class="flex-1 min-h-0 stack panel overflow-hidden">
+      <!-- The toolbar only exists once there is a timeline to act on. Six
+           "quick task" cards used to sit above the page whether or not any of
+           them could do anything; four of them are now the empty state and
+           two are these controls. -->
+      <div v-if="cues.length" class="row flex-wrap gap-x-4 gap-y-2 shrink-0 px-3 py-2 border-b border-line">
+        <span class="row gap-2 min-w-0 shrink-0 max-w-64">
+          <AppIcon name="file-text" :size="15" class="shrink-0 text-fg-3" />
+          <span class="stack gap-0.5 min-w-0">
+            <b class="text-[12px] font-medium truncate text-fg">{{ sourceName }}</b>
+            <small class="text-[11px]" :class="dirty ? 'text-warn' : 'text-fg-3'">{{ dirty ? '有未导出修改' : `${sourceFormat.toUpperCase()} · 本地就绪` }}</small>
+          </span>
+        </span>
 
-    <section ref="transcriptionCardElement" class="transcription-card panel" :class="{ expanded: transcriptionOpen, running: transcribing }">
-      <button type="button" class="transcription-card__toggle" :aria-expanded="transcriptionOpen" @click="setTranscriptionOpen(!transcriptionOpen)"><span><AppIcon name="play" :size="18" /></span><div><p class="eyebrow">本地语音转文字</p><b>从音频或视频生成字幕草稿</b><small>{{ transcriptionConfigured ? '本机引擎已配置 · 开始前仍会确认媒体、模型与输出位置' : '需要先选择 whisper.cpp CLI、模型，并安装 FFmpeg' }}</small></div><i>{{ transcriptionOpen ? '收起' : '展开' }}</i></button>
-      <div v-if="transcriptionOpen" class="transcription-card__body">
-        <div v-if="!transcriptionConfigured" class="transcription-unconfigured" role="status"><AppIcon name="warning" :size="18" /><div><b>尚未配置本机转写引擎</b><p>Knitspace 不内置大模型。请先选择你自己的 CLI 与模型；选择路径本身不会执行程序。</p></div><RouterLink class="primary-button" to="/settings?section=engines">前往设置</RouterLink></div>
-        <template v-else>
-          <button v-if="!transcriptionMedia" class="transcription-pick" :disabled="transcribing" @click="pickTranscriptionMedia"><AppIcon name="folder-open" :size="20" /><span><b>选择本地媒体</b><small>MP4、MOV、MKV、MP3、M4A、WAV、FLAC 等</small></span><i>选择文件 →</i></button>
-          <article v-else class="transcription-media" tabindex="0" aria-haspopup="menu" :aria-expanded="Boolean(mediaMenu)" title="右键或 Shift + F10 查看媒体操作" @contextmenu="openMediaMenu" @keydown="openMediaMenuFromKeyboard"><span><AppIcon name="play" :size="19" /></span><div><b>{{ transcriptionMedia.name }}</b><small :title="transcriptionMedia.path">{{ shortPath(transcriptionMedia.path) }} · {{ (transcriptionMedia.size / 1024 / 1024).toFixed(1) }} MB</small></div><button class="quiet-button" :disabled="transcribing" @click.stop="pickTranscriptionMedia">更换</button></article>
-          <div class="transcription-boundary"><span><b>模型</b><small :title="store.settings.transcriptionModelPath">{{ shortPath(store.settings.transcriptionModelPath) }}</small></span><span><b>语言</b><small>{{ store.settings.transcriptionLanguage === 'auto' ? '自动检测' : store.settings.transcriptionLanguage.toUpperCase() }}</small></span><span><b>输出</b><small :title="store.settings.outputDirectory">{{ store.settings.outputDirectory ? shortPath(store.settings.outputDirectory) : '开始时选择' }}</small></span></div>
-          <div v-if="transcribing" class="transcription-running" role="status" aria-live="polite"><div><b>{{ transcriptionDetail }}</b><span>{{ transcriptionProgress }}%</span></div><progress max="100" :value="transcriptionProgress" /><footer><small>准备音轨 → 本机识别 → 载入校对台</small><button class="quiet-button" @click="stopTranscription">停止并清理</button></footer></div>
-          <p v-if="transcriptionError" class="transcription-error" role="alert"><AppIcon name="warning" :size="15" /><span>{{ transcriptionError }}</span><RouterLink v-if="!transcriptionConfigured || transcriptionError.includes('CLI') || transcriptionError.includes('模型')" to="/settings?section=engines">检查设置</RouterLink></p>
-          <div v-if="transcriptionOutput && !transcribing" class="transcription-output"><span><AppIcon name="check" :size="15" />字幕输出已安全写入新文件</span><button @click="revealDesktopFile(transcriptionOutput)">打开位置</button></div>
-          <footer v-if="!transcribing" class="transcription-actions"><span><AppIcon name="shield" :size="14" />不会覆盖原媒体，也不会把媒体送入 WebView</span><button class="primary-button" :disabled="!transcriptionMedia" @click="startTranscription">开始本机转写</button></footer>
-        </template>
+        <label class="row gap-1.5 min-w-40 flex-1 max-w-72 h-8 px-2.5 rounded-sm bg-well border border-line focus-within:border-accent">
+          <AppIcon name="search" :size="14" class="shrink-0 text-fg-3" />
+          <input v-model="query" type="search" class="min-w-0 flex-1 bg-transparent border-0 text-[12px] text-fg focus:outline-none" placeholder="搜索字幕正文" aria-label="搜索字幕正文" />
+          <button v-if="query" class="center w-5 h-5 shrink-0 rounded-sm text-fg-3 hover:text-fg" aria-label="清除搜索" @click="query = ''"><AppIcon name="close" :size="12" /></button>
+        </label>
+
+        <span class="row gap-1 shrink-0">
+          <span class="text-[11px] font-semibold text-fg-3">整体平移</span>
+          <button class="center w-7 h-7 rounded-sm border border-line text-fg-2 hover:border-line-strong hover:text-fg" title="向前平移" aria-label="向前平移" @click="shiftAll(-1)">−</button>
+          <input
+            ref="shiftInputElement"
+            v-model.number="shiftMs"
+            data-subtitle-workflow="shift"
+            type="number"
+            min="1"
+            max="3600000"
+            class="field h-7 w-20 px-2 text-[12px] tabular-nums"
+            aria-label="平移毫秒数"
+          />
+          <span class="text-[11px] text-fg-3">ms</span>
+          <button class="center w-7 h-7 rounded-sm border border-line text-fg-2 hover:border-line-strong hover:text-fg" title="向后平移" aria-label="向后平移" @click="shiftAll(1)">+</button>
+        </span>
+
+        <span class="row gap-1 ml-auto shrink-0">
+          <button class="btn-tool" :class="transcriptionOpen ? 'btn-tool-active' : ''" data-subtitle-workflow="transcribe" :aria-expanded="transcriptionOpen" @click="setTranscriptionOpen(!transcriptionOpen)">
+            <AppIcon name="play" :size="14" />本机转写
+          </button>
+          <button class="btn-tool" data-subtitle-workflow="paste" @click="runSubtitleWorkflow('paste')"><AppIcon name="clipboard" :size="14" />粘贴源码</button>
+          <button ref="convertButtonElement" class="btn-tool" data-subtitle-workflow="convert" :disabled="exporting" @click="exportAs(sourceFormat === 'srt' ? 'vtt' : 'srt')">
+            转为 {{ sourceFormat === 'srt' ? 'VTT' : 'SRT' }}
+          </button>
+        </span>
+      </div>
+
+      <p v-if="warnings.length" class="row gap-2 shrink-0 px-3 py-2 border-b border-line bg-warn-soft text-[11px] leading-relaxed text-warn" role="status">
+        <AppIcon name="warning" :size="14" class="shrink-0 mt-0.5" />
+        <span class="min-w-0 flex-1">{{ warnings.join(' ') }}</span>
+        <button class="shrink-0 font-medium underline underline-offset-2" @click="warnings = []">知道了</button>
+      </p>
+
+      <div class="flex-1 min-h-0 grid" :class="workspaceColumns">
+        <!-- Pasting is a mode, not a card stacked above the timeline: while
+             you are pasting, the source *is* the work surface. -->
+        <section v-if="sourceDraftOpen" class="stack min-h-0" aria-label="粘贴字幕源码">
+          <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
+            <span class="text-[11px] font-semibold text-fg-3">粘贴字幕源码</span>
+            <button class="btn-tool" @click="sourceDraftOpen = false">收起</button>
+          </header>
+          <textarea
+            ref="sourceDraftElement"
+            v-model="sourceDraft"
+            class="flex-1 min-h-0 px-3 py-2.5 bg-well border-0 font-mono text-[12px] leading-relaxed text-fg resize-none focus:outline-none"
+            spellcheck="false"
+            aria-label="字幕源码"
+            placeholder="1&#10;00:00:01,000 --> 00:00:03,500&#10;在这里粘贴字幕…"
+          />
+          <footer class="row-between gap-3 shrink-0 px-3 h-11 border-t border-line">
+            <span class="row gap-2 min-w-0">
+              <SegmentedControl
+                :options="importFormatOptions"
+                :model-value="importFormat"
+                label="粘贴字幕格式"
+                size="compact"
+                @update:model-value="importFormat = $event as 'srt' | 'vtt'"
+              />
+              <small class="text-[11px] tabular-nums" :class="sourceDraftBytes > MAX_SUBTITLE_BYTES ? 'text-danger' : 'text-fg-3'">
+                {{ sourceDraftBytes.toLocaleString() }} / {{ MAX_SUBTITLE_BYTES.toLocaleString() }} B
+              </small>
+            </span>
+            <button class="btn-primary btn-sm shrink-0" :disabled="!sourceDraft.trim()" @click="parseDraft">解析并载入</button>
+          </footer>
+        </section>
+
+        <!-- Nothing loaded: the four entry workflows, in the place where the
+             timeline will appear, instead of a grid of cards above it. -->
+        <section v-else-if="!cues.length" class="center min-h-0 p-6" aria-label="开始校对字幕">
+          <div class="stack items-center gap-4 w-full max-w-140 text-center">
+            <span class="center w-12 h-12 rounded-lg bg-accent-soft text-accent"><AppIcon name="file-text" :size="24" /></span>
+            <div class="stack gap-1.5">
+              <strong class="text-[15px] font-semibold text-fg">导入字幕，或直接粘贴时间轴</strong>
+              <p class="text-[12px] leading-relaxed text-fg-3">单个文件最多 5 MB、20,000 条字幕。只在浏览器内存中解析，导出前不会写入 Vault。</p>
+            </div>
+            <div class="grid grid-cols-2 gap-2 w-full">
+              <button
+                v-for="action in entryWorkflows"
+                :key="action.id"
+                type="button"
+                :data-subtitle-workflow="action.id"
+                class="row gap-2.5 px-3 py-2.5 rounded-sm border border-line bg-well text-left transition-colors duration-120 hover:border-accent hover:bg-accent-soft"
+                @click="runSubtitleWorkflow(action.id)"
+              >
+                <span class="center w-8 h-8 shrink-0 rounded-sm bg-surface border border-line text-accent"><AppIcon :name="action.icon" :size="16" /></span>
+                <span class="stack gap-0.5 min-w-0">
+                  <b class="text-[12px] font-medium truncate text-fg">{{ action.label }}</b>
+                  <small class="text-[11px] truncate text-fg-3">{{ action.detail }}</small>
+                </span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- The timeline. It takes what is left of the window rather than a
+             hard 570px, so a long subtitle file shows twice as many lines on
+             a normal screen. -->
+        <main v-else class="stack min-h-0" aria-label="时间轴">
+          <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
+            <span class="row gap-2 text-[11px]">
+              <b class="font-semibold text-fg-3">{{ query ? '搜索结果' : '全部字幕' }}</b>
+              <span class="tabular-nums text-fg-2">{{ query ? filteredCueIndexes.length : cues.length }}</span>
+            </span>
+            <small class="text-[11px] text-fg-3">↑ ↓ / PgUp PgDn 定位 · 右键编辑结构</small>
+          </header>
+          <!-- Windowed: row height is `ROW_HEIGHT`, so `h-19` and that
+               constant have to stay in step. -->
+          <div
+            ref="listElement"
+            class="flex-1 min-h-0 overflow-y-auto bg-well"
+            role="listbox"
+            aria-label="字幕时间轴"
+            @scroll.passive="scrollTop = ($event.currentTarget as HTMLElement).scrollTop"
+          >
+            <div :style="{ height: `${listWindow.before}px` }" aria-hidden="true" />
+            <button
+              v-for="(row, renderedIndex) in renderedCueRows"
+              :key="row.cue.id"
+              v-memo="[row.cue.id, row.cue.startMs, row.cue.endMs, row.cue.text, activeId === row.cue.id]"
+              :data-cue-id="row.cue.id"
+              class="row gap-3 w-full h-19 px-3 text-left border-b border-line border-l-2 transition-colors duration-120"
+              :class="activeId === row.cue.id ? 'border-l-accent bg-accent-soft' : 'border-l-transparent hover:bg-surface-2'"
+              role="option"
+              :aria-selected="activeId === row.cue.id"
+              aria-haspopup="menu"
+              :aria-expanded="menu?.cue.id === row.cue.id"
+              @click="selectCue(row.cue)"
+              @contextmenu="openMenu($event, row.cue)"
+              @keydown="handleCueKeydown($event, row.cue, listWindow.start + renderedIndex)"
+            >
+              <i class="center w-6 h-6 shrink-0 rounded-sm bg-surface-2 font-mono text-[11px] not-italic tabular-nums text-fg-3">{{ row.ordinal }}</i>
+              <span class="stack gap-0.5 shrink-0 w-24 font-mono text-[11px] tabular-nums">
+                <b :class="activeId === row.cue.id ? 'text-accent' : 'text-fg-2'">{{ formatSubtitleTimestamp(row.cue.startMs, sourceFormat) }}</b>
+                <small class="text-fg-3">{{ formatSubtitleTimestamp(row.cue.endMs, sourceFormat) }}</small>
+              </span>
+              <p class="min-w-0 flex-1 text-[12px] leading-relaxed line-clamp-2" :class="activeId === row.cue.id ? 'text-fg' : 'text-fg-2'">{{ row.cue.text }}</p>
+            </button>
+            <div :style="{ height: `${listWindow.after}px` }" aria-hidden="true" />
+            <div v-if="!filteredCueIndexes.length" class="stack items-center gap-2 py-16 text-center">
+              <AppIcon name="search" :size="20" class="text-fg-3" />
+              <b class="text-[12px] font-medium text-fg">没有匹配字幕</b>
+              <button class="btn-tool" @click="query = ''">清除搜索</button>
+            </div>
+          </div>
+        </main>
+
+        <!-- ── Right column ───────────────────────────────────────────────
+             One slot, two occupants. Transcription used to be a collapsible
+             card wedged between the task grid and the timeline, so opening it
+             pushed the subtitles you were checking off the screen. -->
+        <aside v-if="transcriptionOpen" ref="transcriptionCardElement" class="stack min-h-0 border-l border-line" aria-label="本机语音转文字">
+          <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
+            <span class="text-[11px] font-semibold text-fg-3">本机语音转文字</span>
+            <button class="center w-7 h-7 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" aria-label="收起本机语音转文字" @click="setTranscriptionOpen(false)">
+              <AppIcon name="close" :size="14" />
+            </button>
+          </header>
+          <div class="flex-1 min-h-0 overflow-y-auto stack gap-2.5 p-3">
+            <div v-if="!transcriptionConfigured" class="stack gap-2 p-2.5 rounded-sm bg-warn-soft" role="status">
+              <b class="row gap-1.5 text-[12px] font-medium text-warn"><AppIcon name="warning" :size="14" />尚未配置本机转写引擎</b>
+              <p class="text-[11px] leading-relaxed text-fg-2">Knitspace 不内置大模型。请先选择你自己的 CLI 与模型；选择路径本身不会执行程序。</p>
+              <RouterLink class="btn-primary btn-sm self-start" to="/settings?section=engines">前往设置</RouterLink>
+            </div>
+            <template v-else>
+              <button
+                v-if="!transcriptionMedia"
+                class="stack gap-1 p-3 rounded-sm border border-dashed border-line-strong bg-well text-left transition-colors duration-120 hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft disabled:opacity-45"
+                :disabled="transcribing"
+                @click="pickTranscriptionMedia"
+              >
+                <b class="row gap-2 text-[12px] font-medium text-fg"><AppIcon name="folder-open" :size="15" class="text-accent" />选择本地媒体</b>
+                <small class="text-[11px] leading-relaxed text-fg-3">MP4、MOV、MKV、MP3、M4A、WAV、FLAC 等</small>
+              </button>
+              <article
+                v-else
+                class="row gap-2 p-2.5 rounded-sm bg-surface-2"
+                tabindex="0"
+                aria-haspopup="menu"
+                :aria-expanded="Boolean(mediaMenu)"
+                title="右键或 Shift + F10 查看媒体操作"
+                @contextmenu="openMediaMenu"
+                @keydown="openMediaMenuFromKeyboard"
+              >
+                <AppIcon name="play" :size="15" class="shrink-0 mt-0.5 text-accent" />
+                <span class="stack gap-0.5 min-w-0 flex-1">
+                  <b class="text-[12px] font-medium truncate text-fg">{{ transcriptionMedia.name }}</b>
+                  <small class="text-[11px] truncate font-mono text-fg-3" :title="transcriptionMedia.path">
+                    {{ shortPath(transcriptionMedia.path) }} · {{ (transcriptionMedia.size / 1024 / 1024).toFixed(1) }} MB
+                  </small>
+                </span>
+                <button class="btn-tool shrink-0" :disabled="transcribing" @click.stop="pickTranscriptionMedia">更换</button>
+              </article>
+
+              <dl class="grid gap-px rounded-sm bg-line border border-line overflow-hidden">
+                <div v-for="item in transcriptionBoundary" :key="item.label" class="row-between gap-3 px-2.5 py-1.5 bg-surface">
+                  <dt class="shrink-0 text-[11px] text-fg-3">{{ item.label }}</dt>
+                  <dd class="min-w-0 truncate font-mono text-[11px] text-fg-2" :title="item.title">{{ item.value }}</dd>
+                </div>
+              </dl>
+
+              <div v-if="transcribing" class="stack gap-2 p-2.5 rounded-sm bg-accent-soft" role="status" aria-live="polite">
+                <div class="row-between gap-2">
+                  <b class="min-w-0 truncate text-[12px] font-medium text-accent">{{ transcriptionDetail }}</b>
+                  <span class="shrink-0 text-[12px] font-semibold tabular-nums text-accent">{{ transcriptionProgress }}%</span>
+                </div>
+                <progress class="w-full h-1" max="100" :value="transcriptionProgress" />
+                <div class="row-between gap-2">
+                  <small class="text-[11px] text-fg-2">准备音轨 → 本机识别 → 载入校对台</small>
+                  <button class="btn-default btn-sm shrink-0" @click="stopTranscription">停止并清理</button>
+                </div>
+              </div>
+
+              <p v-if="transcriptionError" class="row gap-2 p-2.5 rounded-sm bg-danger-soft text-[11px] leading-relaxed text-danger" role="alert">
+                <AppIcon name="warning" :size="14" class="shrink-0 mt-0.5" />
+                <span class="min-w-0 flex-1">{{ transcriptionError }}</span>
+                <RouterLink
+                  v-if="!transcriptionConfigured || transcriptionError.includes('CLI') || transcriptionError.includes('模型')"
+                  to="/settings?section=engines"
+                  class="shrink-0 font-medium underline underline-offset-2"
+                >
+                  检查设置
+                </RouterLink>
+              </p>
+
+              <p v-if="transcriptionOutput && !transcribing" class="row-between gap-2 p-2.5 rounded-sm bg-success-soft text-[11px] text-success">
+                <span class="row gap-1.5 min-w-0"><AppIcon name="check" :size="14" class="shrink-0" />字幕已安全写入新文件</span>
+                <button class="shrink-0 font-medium underline underline-offset-2" @click="revealDesktopFile(transcriptionOutput)">打开位置</button>
+              </p>
+            </template>
+          </div>
+          <footer v-if="transcriptionConfigured && !transcribing" class="stack gap-2 shrink-0 p-3 border-t border-line">
+            <button class="btn-primary btn-sm" :disabled="!transcriptionMedia" @click="startTranscription">开始本机转写</button>
+            <small class="row gap-1.5 text-[11px] text-fg-3"><AppIcon name="shield" :size="13" class="shrink-0 text-success" />不会覆盖原媒体，也不会把媒体送进 WebView</small>
+          </footer>
+        </aside>
+
+        <aside v-else-if="activeCue" class="stack min-h-0 border-l border-line" aria-label="字幕条编辑">
+          <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
+            <span class="text-[11px] font-semibold text-fg-3">第 {{ cues.findIndex((cue) => cue.id === activeId) + 1 }} 条</span>
+            <span class="chip h-5 px-1.5 text-[11px]" :class="dirty ? 'bg-warn-soft text-warn' : 'bg-success-soft text-success'">{{ dirty ? '未导出' : '已同步' }}</span>
+          </header>
+          <div class="flex-1 min-h-0 overflow-y-auto stack gap-2.5 p-3">
+            <div class="row items-end gap-2">
+              <label class="stack gap-1.5 min-w-0 flex-1">
+                <span class="text-[12px] text-fg-3">开始时间</span>
+                <input v-model="editStart" class="field h-8 font-mono text-[12px]" spellcheck="false" />
+              </label>
+              <span class="pb-2 text-fg-3" aria-hidden="true">→</span>
+              <label class="stack gap-1.5 min-w-0 flex-1">
+                <span class="text-[12px] text-fg-3">结束时间</span>
+                <input v-model="editEnd" class="field h-8 font-mono text-[12px]" spellcheck="false" />
+              </label>
+            </div>
+            <label class="stack gap-1.5">
+              <span class="text-[12px] text-fg-3">字幕正文</span>
+              <textarea v-model="editText" class="field-area min-h-36 text-[12px]" />
+            </label>
+            <p class="text-[11px] leading-relaxed" :class="editError ? 'text-danger' : 'text-fg-3'">
+              {{ editError || '支持换行；导出时会保持为同一条字幕。' }}
+            </p>
+            <p class="text-[11px] leading-relaxed text-fg-3">拆分与合并请在左侧字幕上打开右键菜单。列表只挂载当前视口附近的行，所以长字幕也不会卡。</p>
+          </div>
+          <footer class="row justify-end gap-2 shrink-0 p-3 border-t border-line">
+            <button class="btn-default btn-sm" @click="insertAfter(activeCue)"><AppIcon name="plus" :size="13" />在后面插入</button>
+            <button class="btn-primary btn-sm" @click="applyActiveEdit(true)">应用修改</button>
+          </footer>
+        </aside>
       </div>
     </section>
 
-    <section v-if="!cues.length" class="subtitle-intake panel">
-      <div class="subtitle-intake__intro"><span><AppIcon name="file-text" :size="24" /></span><div><p class="eyebrow">在本机开始</p><h3>导入字幕，或直接粘贴时间轴</h3><p>单个文件最多 5 MB、20,000 条字幕。只在浏览器内存中解析；导出前不会写入 Vault。</p></div></div>
-      <div class="subtitle-intake__actions"><button type="button" class="primary-button" @click="fileInput?.click()"><AppIcon name="folder-open" :size="15" />选择 SRT / VTT</button><button type="button" class="quiet-button" @click="runSubtitleWorkflow('paste')"><AppIcon name="clipboard" :size="15" />粘贴源码</button><button type="button" class="quiet-button" @click="createBlank"><AppIcon name="plus" :size="15" />新建空白</button></div>
-    </section>
-
-    <template v-else>
-      <section class="subtitle-toolbar panel">
-        <div class="subtitle-toolbar__file"><span><AppIcon name="file-text" :size="16" /></span><div><b>{{ sourceName }}</b><small>{{ dirty ? '有未导出修改' : `${sourceFormat.toUpperCase()} · 本地就绪` }}</small></div></div>
-        <label class="subtitle-toolbar__search"><AppIcon name="search" :size="14" /><input v-model="query" type="search" placeholder="搜索字幕正文" /><button v-if="query" aria-label="清除搜索" @click="query = ''"><AppIcon name="close" :size="12" /></button></label>
-        <div class="subtitle-toolbar__shift"><span>整体平移</span><button title="向前平移" @click="shiftAll(-1)">−</button><input ref="shiftInputElement" v-model.number="shiftMs" type="number" min="1" max="3600000" aria-label="平移毫秒数" /><small>ms</small><button title="向后平移" @click="shiftAll(1)">+</button></div>
-        <div class="subtitle-toolbar__actions"><button class="quiet-button" @click="setTranscriptionOpen(true)"><AppIcon name="play" :size="14" />从媒体转写</button><button class="quiet-button" @click="fileInput?.click()"><AppIcon name="folder-open" :size="14" />重新导入</button><button class="primary-button" :disabled="exporting" @click="exportAs(sourceFormat)"><AppIcon name="extract" :size="14" />{{ exporting ? '正在导出…' : `导出 ${sourceFormat.toUpperCase()}` }}</button><button ref="convertButtonElement" class="quiet-button" :disabled="exporting" @click="exportAs(sourceFormat === 'srt' ? 'vtt' : 'srt')">转为 {{ sourceFormat === 'srt' ? 'VTT' : 'SRT' }}</button></div>
-      </section>
-
-      <section v-if="warnings.length" class="subtitle-warnings" role="status"><AppIcon name="warning" :size="15" /><span>{{ warnings.join(' ') }}</span><button @click="warnings = []">知道了</button></section>
-
-      <section class="subtitle-workspace panel">
-        <main>
-          <header><div><p class="eyebrow">时间轴</p><h3>{{ query ? `搜索结果 ${filteredCueIndexes.length}` : `全部字幕 ${cues.length}` }}</h3></div><small>↑ ↓ / PgUp PgDn 定位 · 右键或 Shift + F10 编辑结构</small></header>
-          <div ref="listElement" class="subtitle-list" role="listbox" aria-label="字幕时间轴" @scroll.passive="scrollTop = ($event.currentTarget as HTMLElement).scrollTop">
-            <div :style="{ height: `${listWindow.before}px` }" aria-hidden="true" />
-            <button v-for="(row, renderedIndex) in renderedCueRows" :key="row.cue.id" v-memo="[row.cue.id, row.cue.startMs, row.cue.endMs, row.cue.text, activeId === row.cue.id]" :data-cue-id="row.cue.id" role="option" :aria-selected="activeId === row.cue.id" :class="{ active: activeId === row.cue.id }" aria-haspopup="menu" :aria-expanded="menu?.cue.id === row.cue.id" @click="selectCue(row.cue)" @contextmenu="openMenu($event, row.cue)" @keydown="handleCueKeydown($event, row.cue, listWindow.start + renderedIndex)"><i>{{ row.ordinal }}</i><span><b>{{ formatSubtitleTimestamp(row.cue.startMs, sourceFormat) }}</b><small>{{ formatSubtitleTimestamp(row.cue.endMs, sourceFormat) }}</small></span><p>{{ row.cue.text }}</p></button>
-            <div :style="{ height: `${listWindow.after}px` }" aria-hidden="true" />
-            <div v-if="!filteredCueIndexes.length" class="subtitle-list__empty"><AppIcon name="search" :size="20" /><b>没有匹配字幕</b><button @click="query = ''">清除搜索</button></div>
-          </div>
-        </main>
-        <aside v-if="activeCue" class="subtitle-inspector">
-          <header><div><p class="eyebrow">字幕条编辑</p><h3>第 {{ cues.findIndex(cue => cue.id === activeId) + 1 }} 条</h3></div><span :class="{ dirty }">{{ dirty ? '未导出' : '已同步' }}</span></header>
-          <div class="subtitle-inspector__time"><label><span>开始时间</span><input v-model="editStart" spellcheck="false" /></label><i>→</i><label><span>结束时间</span><input v-model="editEnd" spellcheck="false" /></label></div>
-          <label class="subtitle-inspector__text"><span>字幕正文</span><textarea v-model="editText" /></label>
-          <p class="subtitle-inspector__error" :class="{ visible: editError }">{{ editError || '支持换行；导出时会保持为同一条字幕。' }}</p>
-          <div class="subtitle-inspector__buttons"><button class="quiet-button" @click="insertAfter(activeCue)"><AppIcon name="plus" :size="14" />在后面插入</button><button class="primary-button" @click="applyActiveEdit(true)">应用修改</button></div>
-          <section><b>局部工作流</b><p>先校正文案，再调整时间；拆分与合并请在左侧字幕上打开右键菜单。</p><small>解析和列表渲染均有上限，长字幕只挂载当前视口附近的行。</small></section>
-        </aside>
-      </section>
-    </template>
-
     <input ref="fileInput" class="visually-hidden" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" @change="importFile" />
-    <section v-if="menu" ref="menuElement" class="subtitle-menu" role="menu" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }" @pointerdown.stop @click.stop @contextmenu.prevent @keydown.stop="handleMenuKeydown"><p>第 {{ cues.findIndex(cue => cue.id === menu?.cue.id) + 1 }} 条字幕</p><button role="menuitem" @click="splitCue(menu.cue)"><AppIcon name="split" :size="14" />从正文中间拆分</button><button role="menuitem" :disabled="cues.at(-1)?.id === menu.cue.id" @click="mergeNext(menu.cue)"><AppIcon name="merge" :size="14" />与下一条合并</button><button role="menuitem" @click="insertAfter(menu.cue)"><AppIcon name="plus" :size="14" />在后面插入</button><button role="menuitem" @click="copyCue(menu.cue)"><AppIcon name="duplicate" :size="14" />复制字幕正文</button><button class="danger" role="menuitem" @click="deleteCue(menu.cue)"><AppIcon name="trash" :size="14" />删除这条字幕</button></section>
-    <section v-if="mediaMenu && transcriptionMedia" ref="mediaMenuElement" class="subtitle-menu transcription-media-menu" role="menu" aria-label="转写媒体操作" :style="{ left: `${mediaMenu.x}px`, top: `${mediaMenu.y}px` }" @pointerdown.stop @click.stop @contextmenu.prevent @keydown.stop="handleMediaMenuKeydown"><p>{{ transcriptionMedia.name }}</p><button role="menuitem" :disabled="transcribing" @click="closeMediaMenu(); pickTranscriptionMedia()"><AppIcon name="folder-open" :size="14" />重新选择媒体</button><button role="menuitem" @click="closeMediaMenu(); revealDesktopFile(transcriptionMedia.path)"><AppIcon name="inbox" :size="14" />在资源管理器中查看</button><button role="menuitem" :disabled="transcribing" @click="clearTranscriptionMedia"><AppIcon name="trash" :size="14" />清除所选媒体</button></section>
+
+    <Teleport to="body">
+      <section
+        v-if="menu"
+        ref="menuElement"
+        class="menu-panel w-60"
+        role="menu"
+        :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
+        @pointerdown.stop
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleMenuKeydown"
+      >
+        <p class="menu-title">第 {{ cues.findIndex((cue) => cue.id === menu?.cue.id) + 1 }} 条字幕</p>
+        <button class="menu-item" role="menuitem" @click="splitCue(menu.cue)"><span class="row gap-2"><AppIcon name="split" :size="14" />从正文中间拆分</span></button>
+        <button class="menu-item" role="menuitem" :disabled="cues.at(-1)?.id === menu.cue.id" @click="mergeNext(menu.cue)"><span class="row gap-2"><AppIcon name="merge" :size="14" />与下一条合并</span></button>
+        <button class="menu-item" role="menuitem" @click="insertAfter(menu.cue)"><span class="row gap-2"><AppIcon name="plus" :size="14" />在后面插入</span></button>
+        <button class="menu-item" role="menuitem" @click="copyCue(menu.cue)"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制字幕正文</span></button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item menu-item-danger" role="menuitem" @click="deleteCue(menu.cue)"><span class="row gap-2"><AppIcon name="trash" :size="14" />删除这条字幕</span></button>
+      </section>
+
+      <section
+        v-if="mediaMenu && transcriptionMedia"
+        ref="mediaMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="转写媒体操作"
+        :style="{ left: `${mediaMenu.x}px`, top: `${mediaMenu.y}px` }"
+        @pointerdown.stop
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleMediaMenuKeydown"
+      >
+        <p class="menu-title"><span class="min-w-0 truncate">{{ transcriptionMedia.name }}</span></p>
+        <button class="menu-item" role="menuitem" :disabled="transcribing" @click="closeMediaMenu(); pickTranscriptionMedia()"><span class="row gap-2"><AppIcon name="folder-open" :size="14" />重新选择媒体</span></button>
+        <button class="menu-item" role="menuitem" @click="closeMediaMenu(); revealDesktopFile(transcriptionMedia.path)"><span class="row gap-2"><AppIcon name="inbox" :size="14" />在资源管理器中查看</span></button>
+        <button class="menu-item menu-item-danger" role="menuitem" :disabled="transcribing" @click="clearTranscriptionMedia"><span class="row gap-2"><AppIcon name="trash" :size="14" />清除所选媒体</span></button>
+      </section>
+    </Teleport>
+
     <UnsavedChangesDialog v-if="leavePrompt" :item-label="sourceName" :target-label="leavePrompt.targetLabel" item-kind="字幕" @decision="resolveLeave" />
   </div>
 </template>
-
-<style scoped>
-.subtitle-studio{max-width:1390px;margin:0 auto;padding:28px 30px 58px;color:var(--text)}
-.subtitle-studio__hero{grid-template-columns:minmax(0,1fr) 250px;overflow:hidden;box-shadow:0 20px 50px var(--accent-soft)}
-.subtitle-studio__hero>div{position:relative;display:flex;align-items:flex-start;flex-direction:column;justify-content:center;padding:32px 40px;background-size:27px 27px}.subtitle-studio__hero>div:after{display:none}.subtitle-studio__hero .eyebrow{}.subtitle-studio__hero h2{position:relative;z-index:1;max-width:760px;margin:10px 0 11px;font:720 clamp(29px,3.3vw,44px)/1.08 var(--font-display);letter-spacing:-.045em}.subtitle-studio__hero h2 em{font-style:normal}.subtitle-studio__hero>div>p:last-child{position:relative;z-index:1;max-width:750px;font-size:12px;line-height:1.72}.subtitle-studio__hero>aside{display:grid;grid-template-rows:auto 1fr auto auto;padding:22px;border-left:1px solid var(--surface-2)}.subtitle-studio__hero>aside>span{display:flex;align-items:center;gap:7px;font-size:11px}.subtitle-studio__hero>aside i{width:7px;height:7px;}.subtitle-studio__hero>aside i.ready{box-shadow:0 0 0 4px var(--accent-soft)}.subtitle-studio__hero>aside strong{align-self:end;font:760 48px/1 var(--font-mono);letter-spacing:-.07em}.subtitle-studio__hero>aside small{font:11px var(--font-mono);letter-spacing:.09em}.subtitle-studio__hero>aside footer{margin-top:14px;padding-top:12px;border-top:1px solid var(--surface-2);font:11px var(--font-mono)}
-.subtitle-workflows{display:grid;grid-template-columns:242px minmax(0,1fr);gap:10px;margin-top:14px}.subtitle-workflows>header{display:flex;align-items:flex-start;flex-direction:column;justify-content:center;padding:13px 15px;border:1px solid var(--accent-soft);border-radius:14px;background:linear-gradient(135deg,var(--green-bg),var(--surface))}.subtitle-workflows h3{margin-top:5px;color:var(--text);font:710 14px/1.25 var(--font-display);letter-spacing:-.015em}.subtitle-workflows>header>p:last-child{margin:7px 0 0;color:var(--muted);font:11px/1.55 var(--font-ui)}.subtitle-workflows nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:var(--line);box-shadow:0 8px 22px var(--accent-soft)}.subtitle-workflows nav button{display:grid;min-width:0;grid-template-columns:30px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:58px;padding:8px 10px;border:0;color:var(--text);background:var(--surface);text-align:left;cursor:pointer}.subtitle-workflows nav button:hover,.subtitle-workflows nav button:focus-visible{z-index:1;color:var(--green-strong);background:var(--green-bg)}.subtitle-workflows nav button:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:-2px}.subtitle-workflows nav button>span{display:grid;width:29px;height:29px;place-items:center;border:1px solid var(--accent-soft);border-radius:8px;color:var(--green-strong);background:var(--surface)}.subtitle-workflows nav button>div{display:grid;min-width:0;gap:3px}.subtitle-workflows nav b,.subtitle-workflows nav small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.subtitle-workflows nav b{font:670 11px var(--font-ui)}.subtitle-workflows nav small{color:var(--muted);font:11px var(--font-ui)}.subtitle-workflows nav i{color:var(--green-strong);font:700 11px var(--font-ui);font-style:normal;white-space:nowrap}.subtitle-workflows nav button.muted i{color:var(--warn)}.subtitle-workflows nav button.muted>span{color:var(--fg-2);background:var(--surface-2)}
-.subtitle-source-panel{display:grid;gap:11px;margin-top:12px;padding:15px;border-radius:15px;background:var(--surface)}.subtitle-source-panel>header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.subtitle-source-panel h3{margin-top:4px;color:var(--text);font:700 15px var(--font-display)}.subtitle-source-panel header p:last-child{margin:4px 0 0;color:var(--muted);font:11px/1.5 var(--font-ui)}.subtitle-source-panel textarea{min-height:154px;resize:vertical;padding:13px;border:1px solid var(--line);border-radius:11px;color:var(--text);background:var(--canvas);font:11px/1.65 var(--font-mono);outline:0}.subtitle-source-panel textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 12%,transparent)}.subtitle-source-panel>footer{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:11px}.subtitle-source-panel>footer>div{display:flex;gap:4px;padding:3px;border-radius:8px;background:var(--surface-2)}.subtitle-source-panel>footer>div button{min-height:28px;padding:0 9px;border:0;border-radius:6px;color:var(--muted);background:transparent;font:700 11px var(--font-ui)}.subtitle-source-panel>footer>div button.active{color:var(--green-strong);background:var(--surface);box-shadow:0 1px 4px var(--accent-soft)}.subtitle-source-panel>footer>span{color:var(--muted);font:11px var(--font-mono);text-align:right}.subtitle-intake{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:17px;margin-top:15px;padding:22px;border-radius:16px;background:var(--surface)}.subtitle-intake__intro{display:flex;align-items:center;gap:13px}.subtitle-intake__intro>span{display:grid;width:48px;height:48px;place-items:center;border-radius:13px;color:var(--green-strong);background:var(--green-bg)}.subtitle-intake__intro h3{margin:4px 0;color:var(--text);font:700 18px var(--font-display)}.subtitle-intake__intro div>p:last-child{color:var(--muted);font-size:11px}.subtitle-intake__actions{display:flex;align-items:center;gap:8px}.subtitle-intake__actions button{display:flex;align-items:center;gap:6px;min-height:36px}
-.subtitle-toolbar{display:grid;grid-template-columns:minmax(190px,.75fr) minmax(190px,.9fr) auto auto;align-items:center;gap:10px;margin-top:14px;padding:11px;border-radius:14px;background:var(--surface)}.subtitle-toolbar__file{display:flex;min-width:0;align-items:center;gap:8px}.subtitle-toolbar__file>span{display:grid;width:32px;height:32px;flex:0 0 auto;place-items:center;border-radius:9px;color:var(--green-strong);background:var(--green-bg)}.subtitle-toolbar__file>div{display:grid;min-width:0;gap:2px}.subtitle-toolbar__file b,.subtitle-toolbar__file small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.subtitle-toolbar__file b{font:680 11px var(--font-ui)}.subtitle-toolbar__file small{color:var(--muted);font:11px var(--font-mono)}.subtitle-toolbar__search{display:flex;min-width:0;align-items:center;gap:6px;height:34px;padding:0 8px;border:1px solid var(--line);border-radius:9px;color:var(--muted);background:var(--canvas)}.subtitle-toolbar__search:focus-within{border-color:var(--green);box-shadow:0 0 0 2px color-mix(in srgb,var(--green) 12%,transparent)}.subtitle-toolbar__search input{min-width:0;flex:1;border:0;outline:0;color:var(--text);background:transparent;font-size:11px}.subtitle-toolbar__search button{display:grid;width:22px;height:22px;padding:0;place-items:center;border:0;color:var(--muted);background:transparent}.subtitle-toolbar__shift{display:flex;align-items:center;gap:4px;color:var(--muted);font:11px var(--font-mono);white-space:nowrap}.subtitle-toolbar__shift>button{width:27px;height:29px;padding:0;border:1px solid var(--line);border-radius:6px;color:var(--green-strong);background:var(--surface-raised);font-size:15px}.subtitle-toolbar__shift input{width:68px;height:29px;padding:0 5px;border:1px solid var(--line);border-radius:6px;color:var(--text);background:var(--canvas);font:11px var(--font-mono)}.subtitle-toolbar__actions{display:flex;gap:5px}.subtitle-toolbar__actions button{display:flex;align-items:center;gap:5px;min-height:32px;padding-inline:8px;font-size:11px}.subtitle-warnings{display:flex;align-items:flex-start;gap:8px;margin:9px 2px 0;padding:9px 11px;border:1px solid var(--warn-soft);border-radius:9px;color:var(--warn);background:var(--warn-soft);font-size:11px;line-height:1.5}.subtitle-warnings span{flex:1}.subtitle-warnings button{padding:0;border:0;color:var(--warn);background:transparent;font-weight:700}
-.subtitle-workspace{display:grid;grid-template-columns:minmax(0,1fr) 330px;height:570px;min-height:0;margin-top:10px;overflow:hidden;border-radius:16px;background:var(--surface)}.subtitle-workspace>main{display:grid;min-width:0;min-height:0;grid-template-rows:auto 1fr;border-right:1px solid var(--line-weak)}.subtitle-workspace>main>header,.subtitle-inspector>header{display:flex;align-items:end;justify-content:space-between;gap:12px;padding:14px 16px 11px;border-bottom:1px solid var(--line-weak)}.subtitle-workspace h3{margin-top:4px;font:700 15px var(--font-display)}.subtitle-workspace>main>header small{color:var(--muted);font:11px var(--font-mono)}.subtitle-list{min-height:0;overflow:auto;overflow-anchor:none;background:var(--surface-2);scrollbar-gutter:stable}.subtitle-list>[role=option]{display:grid;width:100%;height:76px;grid-template-columns:28px 108px minmax(0,1fr);align-items:center;gap:10px;padding:9px 14px;border:0;border-bottom:1px solid var(--line-weak);color:var(--text-secondary);background:transparent;text-align:left}.subtitle-list>[role=option]:hover,.subtitle-list>[role=option]:focus-visible{color:var(--green-strong);background:var(--accent-soft)}.subtitle-list>[role=option]:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 45%,transparent);outline-offset:-2px}.subtitle-list>[role=option].active{color:var(--green-strong);background:var(--green-bg);box-shadow:inset 3px 0 var(--green)}.subtitle-list>[role=option]>i{display:grid;width:25px;height:25px;place-items:center;border-radius:7px;color:var(--muted);background:var(--surface-2);font:700 11px var(--font-mono);font-style:normal}.subtitle-list>[role=option]>span{display:grid;gap:4px}.subtitle-list>[role=option] b,.subtitle-list>[role=option] small{font:11px var(--font-mono)}.subtitle-list>[role=option] b{color:var(--green-strong)}.subtitle-list>[role=option] small{color:var(--muted)}.subtitle-list>[role=option]>p{display:-webkit-box;overflow:hidden;margin:0;font:11px/1.55 var(--font-ui);-webkit-box-orient:vertical;-webkit-line-clamp:2}.subtitle-list__empty{display:grid;min-height:300px;place-content:center;justify-items:center;gap:7px;color:var(--muted)}.subtitle-list__empty b{color:var(--text);font-size:12px}.subtitle-list__empty button{padding:0;border:0;color:var(--green-strong);background:transparent;font-size:11px}
-.subtitle-inspector{display:flex;min-width:0;min-height:0;flex-direction:column;background:linear-gradient(165deg,var(--surface-2),var(--surface))}.subtitle-inspector>header span{padding:4px 7px;border-radius:999px;color:var(--green-strong);background:var(--green-bg);font:700 11px var(--font-ui)}.subtitle-inspector>header span.dirty{color:var(--warn);background:var(--warn-soft)}.subtitle-inspector__time{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:6px;padding:15px 15px 0}.subtitle-inspector label{display:grid;gap:5px}.subtitle-inspector label>span{color:var(--muted);font:700 11px var(--font-ui)}.subtitle-inspector input,.subtitle-inspector textarea{width:100%;border:1px solid var(--line);border-radius:8px;color:var(--text);background:var(--surface-raised);outline:0}.subtitle-inspector input:focus,.subtitle-inspector textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 11%,transparent)}.subtitle-inspector input{height:34px;padding:0 7px;font:11px var(--font-mono)}.subtitle-inspector__time i{padding-bottom:9px;color:var(--muted);font-style:normal}.subtitle-inspector__text{padding:13px 15px 0}.subtitle-inspector textarea{min-height:145px;resize:vertical;padding:10px;font:11px/1.65 var(--font-ui)}.subtitle-inspector__error{min-height:34px;margin:0;padding:7px 15px;color:var(--muted);font-size:11px;line-height:1.5}.subtitle-inspector__error.visible{color:var(--danger)}.subtitle-inspector__buttons{display:flex;justify-content:flex-end;gap:7px;padding:0 15px 14px}.subtitle-inspector__buttons button{display:flex;align-items:center;gap:5px;min-height:33px;font-size:11px}.subtitle-inspector>section{margin:auto 15px 15px;padding:12px;border:1px solid var(--accent-soft);border-radius:10px;background:var(--green-bg)}.subtitle-inspector>section b{color:var(--green-strong);font-size:11px}.subtitle-inspector>section p,.subtitle-inspector>section small{display:block;margin:5px 0 0;color:var(--muted);font-size:11px;line-height:1.55}
-.subtitle-menu{position:fixed;z-index:155;width:230px;overflow:hidden;border:1px solid var(--accent-soft);border-radius:11px;background:var(--surface);box-shadow:var(--shadow-lg);animation:knit-menu-in .14s ease-out both}.subtitle-menu>p{margin:0;padding:10px 12px 8px;border-bottom:1px solid var(--line-weak);color:var(--muted);font:700 11px var(--font-mono)}.subtitle-menu button{display:flex;width:100%;min-height:38px;align-items:center;gap:8px;padding:0 12px;border:0;border-bottom:1px solid var(--line-weak);color:var(--text-secondary);background:transparent;font:650 11px var(--font-ui);text-align:left}.subtitle-menu button:last-child{border-bottom:0}.subtitle-menu button:hover:not(:disabled),.subtitle-menu button:focus-visible:not(:disabled){color:var(--green-strong);background:var(--green-bg)}.subtitle-menu button:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:-2px}.subtitle-menu button:disabled{color:var(--muted);opacity:.45;cursor:not-allowed}.subtitle-menu button.danger{color:var(--danger)}.visually-hidden{position:fixed!important;width:1px!important;height:1px!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important}
-.subtitle-studio__hero{min-height:186px}.subtitle-studio__hero>div{padding:25px 36px}.subtitle-studio__hero h2{margin:8px 0 9px;font-size:clamp(28px,3vw,39px)}.subtitle-studio__hero>div>p:last-child{font-size:11px;line-height:1.65}.subtitle-studio__hero>aside{padding:19px}.subtitle-studio__hero>aside strong{font-size:43px}.subtitle-studio__hero>aside footer{margin-top:11px;padding-top:10px}
-@media(max-width:1120px){.subtitle-workflows{grid-template-columns:1fr}.subtitle-workflows>header{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:14px}.subtitle-workflows>header>p:last-child{grid-column:2;margin:0}.subtitle-toolbar{grid-template-columns:1fr 1fr}.subtitle-toolbar__actions{justify-content:flex-end}.subtitle-workspace{grid-template-columns:minmax(0,1fr) 300px}}@media(max-width:820px){.subtitle-studio{padding:22px 16px 48px}.subtitle-studio__hero{}.subtitle-studio__hero>aside{display:none}.subtitle-workflows>header{display:block}.subtitle-workflows>header>p:last-child{margin-top:7px}.subtitle-workflows nav{grid-template-columns:repeat(2,minmax(0,1fr))}.subtitle-source-panel>footer{grid-template-columns:auto 1fr}.subtitle-source-panel>footer>.primary-button{grid-column:1/-1;justify-self:end}.subtitle-intake{grid-template-columns:1fr}.subtitle-intake__actions{flex-wrap:wrap}.subtitle-toolbar{grid-template-columns:1fr}.subtitle-toolbar__actions{justify-content:flex-start;flex-wrap:wrap}.subtitle-workspace{height:auto;grid-template-columns:1fr}.subtitle-workspace>main{height:520px;border-right:0}.subtitle-inspector{min-height:480px;border-top:1px solid var(--line-weak)}}@media(prefers-reduced-motion:reduce){.subtitle-menu{animation:none}}
-.transcription-card{margin-top:14px;overflow:hidden;border-radius:15px;background:var(--surface)}.transcription-card__toggle{display:grid;width:100%;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:12px;padding:13px 16px;border:0;color:var(--text);background:transparent;text-align:left}.transcription-card__toggle>span{display:grid;width:40px;height:40px;place-items:center;border-radius:11px;color:var(--green-strong);background:var(--green-bg)}.transcription-card__toggle>div{display:grid;gap:2px}.transcription-card__toggle b{font:700 12px var(--font-display)}.transcription-card__toggle small{color:var(--muted);font-size:11px}.transcription-card__toggle>i{color:var(--green-strong);font:700 11px var(--font-ui);font-style:normal}.transcription-card__body{display:grid;gap:11px;padding:0 16px 16px;border-top:1px solid var(--line-weak)}.transcription-unconfigured{display:flex;align-items:center;gap:12px;margin-top:14px;padding:14px;border:1px solid var(--warn-soft);border-radius:11px;color:var(--warn);background:var(--warn-soft)}.transcription-unconfigured>div{min-width:0;flex:1}.transcription-unconfigured b{font-size:11px}.transcription-unconfigured p{margin:3px 0 0;color:var(--warn);font-size:11px;line-height:1.55}.transcription-unconfigured a{white-space:nowrap}.transcription-pick{display:flex;align-items:center;gap:11px;margin-top:14px;padding:13px;border:1px dashed var(--accent-soft);border-radius:11px;color:var(--green-strong);background:var(--accent-soft);text-align:left}.transcription-pick>span{display:grid;flex:1;gap:3px}.transcription-pick b{font-size:11px}.transcription-pick small{color:var(--muted);font-size:11px}.transcription-pick>i{font:700 11px var(--font-ui);font-style:normal}.transcription-media{display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:10px;margin-top:14px;padding:10px;border:1px solid var(--line);border-radius:11px;background:var(--canvas)}.transcription-media:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 45%,transparent);outline-offset:2px}.transcription-media>span{display:grid;width:36px;height:36px;place-items:center;border-radius:9px;color:var(--green-strong);background:var(--green-bg)}.transcription-media>div{display:grid;min-width:0;gap:3px}.transcription-media b,.transcription-media small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.transcription-media b{font-size:11px}.transcription-media small{color:var(--muted);font:11px var(--font-mono)}.transcription-boundary{display:grid;grid-template-columns:1.3fr .5fr 1fr;gap:7px}.transcription-boundary>span{display:grid;min-width:0;gap:3px;padding:9px 10px;border-radius:9px;background:var(--surface-2)}.transcription-boundary b{color:var(--muted);font-size:11px}.transcription-boundary small{overflow:hidden;color:var(--text-secondary);font:11px var(--font-mono);text-overflow:ellipsis;white-space:nowrap}.transcription-running{display:grid;gap:8px;padding:12px;border:1px solid var(--accent-soft);border-radius:10px;background:var(--green-bg)}.transcription-running>div,.transcription-running footer{display:flex;align-items:center;justify-content:space-between;gap:10px}.transcription-running b{font-size:11px}.transcription-running>div span{color:var(--green-strong);font:700 11px var(--font-mono)}.transcription-running progress{width:100%;height:7px;accent-color:var(--green)}.transcription-running small{color:var(--muted);font-size:11px}.transcription-error{display:flex;align-items:flex-start;gap:7px;margin:0;padding:9px 10px;border-radius:8px;color:var(--danger);background:var(--danger-soft);font-size:11px;line-height:1.5}.transcription-error span{flex:1}.transcription-error a{color:inherit;font-weight:700}.transcription-output,.transcription-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}.transcription-output{padding:8px 10px;border-radius:8px;color:var(--green-strong);background:var(--green-bg);font-size:11px}.transcription-output span{display:flex;align-items:center;gap:6px}.transcription-output button{padding:0;border:0;color:inherit;background:transparent;font-weight:700}.transcription-actions{padding-top:2px}.transcription-actions>span{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px}.transcription-media-menu{height:auto}@media(max-width:820px){.transcription-boundary{grid-template-columns:1fr}.transcription-actions,.transcription-output{align-items:stretch;flex-direction:column}}
-.subtitle-workflows nav small{font-size:11px}.subtitle-workflows nav i{font-size:11px}
-</style>
