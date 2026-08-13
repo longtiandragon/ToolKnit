@@ -153,6 +153,34 @@ const quickTools = [
   { id: 'crop', title: '裁剪图片', description: '精确裁切区域', icon: 'crop' },
   { id: 'rotate', title: '旋转图片', description: '批量调整方向', icon: 'rotate' }
 ] as const
+/**
+ * Six modes are two jobs, not one list: you are either making a picture (a
+ * canvas you annotate, a scroll you stitch) or converting one you already
+ * have. The old strip showed all six as equal cards with descriptions and
+ * spent 90px of canvas height doing it, while saying nothing about the split.
+ */
+const modeGroups = [
+  { label: '创作', ids: ['compose', 'stitch'] },
+  { label: '处理', ids: ['convert', 'resize', 'crop', 'rotate'] },
+] as const
+const modeSections = computed(() => modeGroups.map((group) => ({
+  label: group.label,
+  tools: group.ids.map((id) => quickTools.find((tool) => tool.id === id)!),
+})))
+/* The annotation tools float over the canvas instead of taking a rail that
+   only exists in one of the six modes — the rail made the canvas jump
+   sideways every time you switched. */
+const annotationTools: { id: CanvasTool; label: string; icon: string; hint: string }[] = [
+  { id: 'select', label: '选择', icon: 'pointer', hint: '选择、移动、缩放和旋转已有标注' },
+  { id: 'box', label: '方框', icon: 'square', hint: '拖出一个方框' },
+  { id: 'arrow', label: '箭头', icon: 'arrow-right', hint: '从起点拖到终点画箭头' },
+  { id: 'text', label: '文字', icon: 'file-text', hint: '点一下放置文字，右键可再编辑' },
+]
+const layoutOptions: { id: LayoutKind; label: string }[] = [
+  { id: 'single', label: '单图' },
+  { id: 'pair', label: '双图' },
+  { id: 'grid', label: '四宫格' },
+]
 const cropHandles: CropHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
 const slots = computed(() => layout.value === 'single' ? 1 : layout.value === 'pair' ? 2 : 4)
@@ -251,6 +279,39 @@ const processSummary = computed(() => activeMode.value === 'stitch'
     : activeMode.value === 'crop'
       ? `裁剪 ${Math.round(cropWidth.value)}% × ${Math.round(cropHeight.value)}% · 起点 ${Math.round(cropLeft.value)}%, ${Math.round(cropTop.value)}%`
       : activeMode.value === 'rotate' ? rotation.value ? `已旋转 ${rotation.value}°` : '原始方向' : '拼图、标题与标注')
+
+/* ── Copy that has to say what this particular mode is doing ──────────────
+   Six modes share one canvas, so every label around it has to change with the
+   mode. Written here rather than as nested ternaries in the markup: the
+   sentences are the product, and they are easier to get right when they sit
+   next to each other. */
+const exportLabel = computed(() => activeMode.value === 'stitch'
+  ? '导出长图'
+  : activeMode.value !== 'compose' && images.value.length > 1 ? `导出 ${images.value.length} 张` : '导出')
+const canvasHeading = computed(() => activeMode.value === 'compose'
+  ? activeBlankCanvas.value ? `${activeBlankCanvas.value.label}空白画布` : '拼图与标注'
+  : activeMode.value === 'stitch' ? '滚动长图预览'
+  : sourcePassThrough.value ? '源文件预览'
+  : activeMode.value === 'crop' ? '在原图上框选' : '处理后预览')
+const outputTitle = computed(() => activeMode.value === 'stitch'
+  ? `${images.value.length} 张连续截图`
+  : activeMode.value === 'compose'
+    ? `${compositionDimensions.value.width} × ${compositionDimensions.value.height} px`
+    : activeImage.value?.name ?? '')
+const outputDetail = computed(() => activeMode.value === 'stitch'
+  ? '输出 PNG · 每张源截图保持不变'
+  : activeMode.value === 'compose' ? '输出 PNG · 源图与标注都不写回原件'
+  : sourcePassThrough.value ? '动画与源文件字节保持不变'
+  : activeMode.value === 'crop' ? `${cropPixelSummary.value} · 输出 ${formatLabel.value}`
+  : `输出 ${formatLabel.value} · 原文件保持不变`)
+const sourceEmptyHint = computed(() => activeMode.value === 'stitch'
+  ? `按截图顺序拖入 2–${STITCH_MAX_FILES} 张同宽截图，或用桌面采集逐屏抓取。`
+  : activeMode.value === 'compose' ? '先选一块空白画布，或把要拼合、标注的图片拖进来。'
+  : `支持 JPG、PNG、WebP、GIF，一次最多 ${STITCH_MAX_FILES} 张一起处理。`)
+
+function formatProjectTime(value: string | number) {
+  return new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
 
 watch(imageFiles, (selected) => {
   images.value.forEach((item) => URL.revokeObjectURL(item.url))
@@ -1818,210 +1879,899 @@ async function openLocation(path?: string) {
 </script>
 
 <template>
-  <div class="visual-studio page-enter mx-auto w-full max-w-320 px-8 py-6">
-    <PageHeader title="图像画布" subtitle="拼图、标注、长图与格式处理共用一块画布,可存成项目继续编辑" />
-
-    <section class="visual-studio-shell panel">
-      <nav class="visual-mode-strip" aria-label="图片处理模式">
-        <button v-for="tool in quickTools" :key="tool.id" :class="{ active: activeMode === tool.id }" :aria-pressed="activeMode === tool.id" @click="selectMode(tool.id)">
-          <b><AppIcon :name="tool.icon" :size="17"/></b>
-          <span><strong>{{ tool.title }}</strong><small>{{ tool.description }}</small></span>
+  <!-- No `visual-studio` / `visual-studio-shell` / `visual-mode-strip` class
+       names. The legacy sheets pin this page to a six-card mode strip, a 62px
+       icon rail, a 610px minimum grid and a 230px properties column — that is
+       the layout being replaced, not a skin on top of it. -->
+  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
+    <PageHeader title="图像画布" subtitle="一块画布，六种处理；原件只读，导出前的每一步都在本机完成">
+      <template #actions>
+        <button class="btn-default" :disabled="copying || exporting || !outputReady" @click="copyCard">
+          <AppIcon name="clipboard" :size="15" />{{ copying ? '复制中…' : '复制预览' }}
         </button>
-      </nav>
-      <header class="visual-studio-toolbar">
-        <div v-if="activeMode === 'compose'" ref="projectPanelElement" class="visual-project-control">
-          <button class="visual-project-trigger" :class="{ dirty: projectDirty, open: projectPanelOpen }" :aria-expanded="projectPanelOpen" aria-haspopup="dialog" @click="toggleProjectPanel">
-            <AppIcon name="folder-open" :size="15"/>
-            <span><strong>{{ projectTitle }}</strong><small>{{ projectId ? projectDirty ? '有未保存改动' : '已保存到 Vault' : '尚未保存为项目' }}</small></span>
-            <i aria-hidden="true"></i>
-          </button>
-          <button class="visual-project-quick-save" :disabled="projectSaving || !images.length || !projectDirty" title="保存画布项目（Ctrl+S）" @click="saveVisualProject">{{ projectSaving ? '保存中…' : '保存' }}</button>
-          <section v-if="projectPanelOpen" class="visual-project-panel" role="dialog" aria-label="画布项目">
-            <header><span><b>画布项目</b><small>底图、尺寸与标注保存在本地 Vault</small></span><button aria-label="关闭画布项目" @click="projectPanelOpen = false">×</button></header>
-            <label><span>项目名称</span><input v-model="projectTitle" maxlength="120" placeholder="例如：算法长图标注" @keydown.enter.prevent="saveVisualProject"/></label>
-            <div class="visual-project-actions"><button class="quiet-button" @click="createVisualProject"><AppIcon name="plus" :size="14"/>新建</button><button class="primary-button" :disabled="projectSaving || !images.length || !projectDirty" @click="saveVisualProject">{{ projectSaving ? '正在保存…' : projectId ? '保存更改' : '保存到 Vault' }}</button></div>
-            <div class="visual-project-list-head"><span>最近项目</span><small>{{ visualProjects.length }} 个</small></div>
-            <div class="visual-project-list">
-              <p v-if="projectLoading" role="status">正在打开画布项目…</p>
-              <p v-else-if="!visualProjects.length">还没有保存过的画布。完成一次标注后保存，它会出现在这里。</p>
-              <article v-for="project in visualProjects" v-else :key="project.id" :class="{ active: project.id === projectId }">
-                <button class="visual-project-open" @click="openVisualProject(project.id)"><b>{{ project.title }}</b><span>{{ project.imageCount }} 张源图 · {{ project.annotationCount }} 个标注</span><small>{{ new Date(project.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }}</small></button>
-                <button class="visual-project-delete" :aria-label="`删除 ${project.title}`" title="删除画布项目" @click.stop="removeVisualProject(project)"><AppIcon name="trash" :size="14"/></button>
-              </article>
-            </div>
-          </section>
-        </div>
-        <details class="visual-import-menu">
-          <summary><AppIcon name="file-image" :size="15"/><span>添加图片</span><small>{{ images.length ? `${images.length} 张已载入` : '拖入或选择' }}</small></summary>
-          <div><FileDropZone v-model="imageFiles" accept="image/*" :max-file-bytes="VISUAL_FILE_LIMIT" :max-total-bytes="VISUAL_TOTAL_LIMIT" :max-files="STITCH_MAX_FILES" title="拖入图片" :hint="activeMode === 'stitch' ? `按顺序选择 2–${STITCH_MAX_FILES} 张；单次最多 96 MB` : `拼图显示前 4 张；单次最多 96 MB`" @error="message=$event"/></div>
-        </details>
-        <div v-if="activeMode === 'compose'" class="visual-layout-control"><span>布局</span><button :class="{ active: layout === 'single' }" @click="layout = 'single'">单图</button><button :class="{ active: layout === 'pair' }" @click="layout = 'pair'">双图</button><button :class="{ active: layout === 'grid' }" @click="layout = 'grid'">四宫格</button></div>
-        <strong v-else class="visual-active-operation"><AppIcon :name="activeTool.icon" :size="14"/>{{ activeTool.title }}<small>{{ processSummary }}</small></strong>
-        <span class="visual-local-badge"><AppIcon name="shield" :size="13"/>本地实时预览 · {{ images.length }} 张</span>
-      </header>
+        <button class="btn-primary" :disabled="exporting || copying || !outputReady" @click="exportCard">
+          <AppIcon name="download" :size="15" />{{ exporting ? '导出中…' : exportLabel }}
+        </button>
+      </template>
+    </PageHeader>
 
-      <div class="visual-creative-workspace" :class="{ 'process-mode': activeMode !== 'compose' }">
-        <nav v-if="activeMode === 'compose'" class="visual-tool-rail" aria-label="图片标注工具">
-          <button :class="{ active: canvasTool === 'select' }" :aria-pressed="canvasTool === 'select'" title="选择与移动" @click="canvasTool = 'select'"><AppIcon name="image" :size="17"/><span>选择</span></button>
-          <button :class="{ active: canvasTool === 'box' }" :aria-pressed="canvasTool === 'box'" title="方框标注" @click="canvasTool = 'box'"><AppIcon name="crop" :size="17"/><span>方框</span></button>
-          <button :class="{ active: canvasTool === 'arrow' }" :aria-pressed="canvasTool === 'arrow'" title="箭头标注" @click="canvasTool = 'arrow'"><AppIcon name="sort" :size="17"/><span>箭头</span></button>
-          <button :class="{ active: canvasTool === 'text' }" :aria-pressed="canvasTool === 'text'" title="文字标注" @click="canvasTool = 'text'"><AppIcon name="file-text" :size="17"/><span>文字</span></button>
-          <i></i>
-          <button :disabled="!canUndoAnnotations" title="撤销标注 (Ctrl+Z)" @click="undoAnnotations"><AppIcon name="rotate" :size="17"/><span>撤销</span></button>
-          <button :disabled="!canRedoAnnotations" title="重做标注 (Ctrl+Shift+Z)" @click="redoAnnotations"><AppIcon class="flip-x" name="rotate" :size="17"/><span>重做</span></button>
-          <button :disabled="!annotations.length" title="清空标注" @click="clearAnnotations"><AppIcon name="extract" :size="17"/><span>清空</span></button>
+    <section class="flex-1 min-h-0 stack panel overflow-hidden">
+      <!-- Mode row: two named families instead of six equal cards. -->
+      <div class="row gap-5 shrink-0 h-12 px-3 border-b border-line">
+        <nav v-for="section in modeSections" :key="section.label" class="row gap-1 shrink-0" :aria-label="`${section.label}模式`">
+          <span class="mr-1 text-[11px] font-semibold text-fg-3">{{ section.label }}</span>
+          <button
+            v-for="tool in section.tools"
+            :key="tool.id"
+            class="row gap-1.5 h-8 px-2.5 rounded-sm text-[12px] transition-colors duration-120"
+            :class="activeMode === tool.id ? 'bg-accent-soft text-accent font-medium' : 'text-fg-2 hover:bg-surface-2 hover:text-fg'"
+            :title="tool.description"
+            :aria-pressed="activeMode === tool.id"
+            @click="selectMode(tool.id)"
+          >
+            <AppIcon :name="tool.icon" :size="15" />{{ tool.title }}
+          </button>
         </nav>
 
-        <main class="visual-canvas-stage">
-          <div class="visual-canvas-frame" :class="{ annotating: canvasTool !== 'select', 'portrait-canvas': activeMode === 'compose' && activeBlankCanvas?.id === 'portrait' }">
-            <div v-if="images.length && activeMode === 'compose'" class="visual-composition" :class="activeBlankCanvas ? ['blank-canvas', `blank-canvas--${activeBlankCanvas.id}`] : undefined" :style="compositionStyle" @click="closeAnnotationMenu()">
-              <h3 v-if="title">{{ title }}</h3>
-              <div class="preview-images" :class="layout"><img v-for="item in visibleImages" :key="item.url" :class="{ 'blank-canvas-source': item.blank }" :src="item.url" :alt="item.blank ? '空白画布底图' : item.name" /></div>
-              <AnnotationCanvas ref="annotationCanvas" :annotations="annotations" :tool="canvasTool" :color="annotationColor" :text="annotationText" @create="createCanvasAnnotation" @update="updateCanvasAnnotation" @remove="removeAnnotation" @select="selectedAnnotationId = $event" @context="openAnnotationMenu" @canvas-context="openProjectMenu" />
-              <small v-if="watermark">{{ watermark }}</small>
-            </div>
-            <div v-else-if="images.length" class="visual-process-preview" :class="{ 'crop-editor-active': activeMode === 'crop' }">
-              <header>
-                <span>{{ activeMode === 'stitch' ? '滚动长图预览' : activeMode === 'crop' && !sourcePassThrough ? '在原图上框选' : sourcePassThrough ? '源文件预览' : '处理后预览' }}</span>
-                <div v-if="activeMode === 'rotate'" class="visual-inline-actions" aria-label="旋转图片">
-                  <button :disabled="sourcePassThrough" aria-label="向左旋转 90 度" title="向左旋转 90°" @click="rotateBy(-90)"><AppIcon class="flip-x" name="rotate" :size="15"/>左转</button>
-                  <button :disabled="sourcePassThrough" aria-label="向右旋转 90 度" title="向右旋转 90°" @click="rotateBy(90)"><AppIcon name="rotate" :size="15"/>右转</button>
-                  <button :disabled="sourcePassThrough || rotation === 0" @click="resetRotation">恢复原图</button>
-                </div>
-                <div v-else-if="activeMode === 'crop' && !sourcePassThrough" class="visual-inline-actions crop-actions">
-                  <span><AppIcon name="crop" :size="14"/>拖动画框或控制点</span>
-                  <button @click="resetCrop">选择全图</button>
-                </div>
-                <small>{{ processSummary }}</small>
+        <div class="row gap-2 ml-auto shrink-0">
+          <span class="row gap-1.5 text-[11px] text-fg-3" title="图片不会离开这台设备">
+            <AppIcon name="shield" :size="13" class="text-success" />全程本机
+          </span>
+          <!-- A canvas you can annotate is a document, so it gets a document's
+               controls: a name, a dirty marker, and one save. -->
+          <div v-if="activeMode === 'compose'" ref="projectPanelElement" class="relative row gap-1">
+            <button
+              class="row gap-1.5 h-8 px-2.5 rounded-sm border text-[12px] transition-colors duration-120"
+              :class="projectPanelOpen ? 'border-accent bg-accent-soft text-accent' : 'border-line text-fg-2 hover:border-line-strong hover:text-fg'"
+              :aria-expanded="projectPanelOpen"
+              aria-haspopup="dialog"
+              @click="toggleProjectPanel"
+            >
+              <AppIcon name="folder-open" :size="14" />
+              <span class="max-w-28 truncate">{{ projectTitle || '未命名画布' }}</span>
+              <i v-if="projectDirty" class="w-1.5 h-1.5 rounded-full bg-warn" title="有未保存改动" aria-label="有未保存改动" />
+            </button>
+            <button class="btn-default btn-sm" :disabled="projectSaving || !images.length || !projectDirty" title="保存画布项目（Ctrl+S）" @click="saveVisualProject">
+              {{ projectSaving ? '保存中…' : '保存' }}
+            </button>
+
+            <section v-if="projectPanelOpen" class="absolute right-0 top-full z-30 mt-2 w-84 stack panel shadow-lg" role="dialog" aria-label="画布项目">
+              <header class="row-between gap-2 shrink-0 px-3 h-10 border-b border-line">
+                <b class="text-[12px] font-semibold text-fg">画布项目</b>
+                <button class="center w-7 h-7 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" aria-label="关闭画布项目" @click="projectPanelOpen = false">
+                  <AppIcon name="close" :size="14" />
+                </button>
               </header>
-              <div ref="previewViewport" class="visual-process-canvas" :class="{ cropping: activeMode === 'crop' && !sourcePassThrough, panning: viewportPanning, 'space-pan': spacePressed }" tabindex="0" role="region" aria-label="图片处理预览；右键或菜单键打开预览操作" aria-haspopup="menu" :aria-expanded="processMenu.open" @wheel="handleViewportWheel" @pointerdown="beginViewportPan" @dblclick="resetViewport" @contextmenu="openProcessMenu" @keydown="openProcessMenuFromKeyboard">
-                <img ref="previewImage" :src="previewSource" :style="previewImageStyle" :alt="`${activeTool.title}实时预览`" draggable="false" @load="handlePreviewLoad" @dragstart.prevent />
-                <div v-if="activeMode === 'crop' && !sourcePassThrough && imageBounds.width" class="visual-crop-layer" :style="cropLayerStyle" @pointerdown="beginCropCreate">
-                  <div class="visual-crop-selection" :style="cropSelectionStyle" tabindex="0" aria-label="裁剪选区；拖动可移动，方向键可微调" @pointerdown.stop="beginCropDrag($event, 'move')" @keydown="nudgeCrop">
-                    <i v-for="handle in cropHandles" :key="handle" :class="`handle-${handle}`" aria-hidden="true" @pointerdown.stop="beginCropDrag($event, handle)"></i>
-                    <span>{{ cropPixelSummary }}</span>
-                  </div>
+              <div class="stack gap-2.5 p-3 border-b border-line">
+                <label class="stack gap-1.5">
+                  <span class="text-[12px] text-fg-3">项目名称</span>
+                  <input v-model="projectTitle" class="field" maxlength="120" placeholder="例如：算法长图标注" @keydown.enter.prevent="saveVisualProject" />
+                </label>
+                <p class="text-[11px] leading-relaxed text-fg-3">底图、画布尺寸与全部标注保存在本地 Vault，随时可以重新打开继续编辑。</p>
+                <div class="row gap-2">
+                  <button class="btn-default btn-sm flex-1" @click="createVisualProject"><AppIcon name="plus" :size="13" />新建</button>
+                  <button class="btn-primary btn-sm flex-1" :disabled="projectSaving || !images.length || !projectDirty" @click="saveVisualProject">
+                    {{ projectSaving ? '正在保存…' : projectId ? '保存更改' : '保存到 Vault' }}
+                  </button>
                 </div>
-                <div class="visual-viewport-controls" aria-label="画布缩放控制" @pointerdown.stop @dblclick.stop>
-                  <button title="缩小" aria-label="缩小画布" @click="zoomViewport(-1)">−</button>
-                  <button class="zoom-value" title="适应窗口 (Ctrl+0)" @click="resetViewport">{{ viewportZoomLabel }}</button>
-                  <button title="放大" aria-label="放大画布" @click="zoomViewport(1)">＋</button>
-                  <i></i>
-                  <button title="适应窗口 (Ctrl+0)" @click="resetViewport">适应</button>
-                  <button title="实际像素 (Ctrl+1)" @click="actualSizeViewport">1:1</button>
-                </div>
-                <small class="visual-viewport-hint">Ctrl＋滚轮缩放 · 拖动平移 · 空格拖动 · 右键操作</small>
               </div>
-              <footer><b>{{ activeMode === 'stitch' ? `${images.length} 张连续截图` : activeImage?.name }}</b><span>{{ activeMode === 'stitch' ? '输出 PNG · 每张源截图保持不变' : sourcePassThrough ? '动画与源文件字节保持不变' : activeMode === 'crop' ? `${cropPixelSummary} · 输出 ${formatLabel}` : `输出 ${formatLabel} · 原文件保持不变` }}</span></footer>
-            </div>
-            <div v-else class="visual-canvas-empty" tabindex="0" role="region" :aria-label="activeMode === 'stitch' ? '滚动截图空画布；右键或菜单键可开始桌面采集' : activeMode === 'compose' ? '自由画布起点；选择尺寸、导入图片，或右键打开画布菜单' : '图片处理空画布；选择或拖入图片'" :aria-haspopup="activeMode === 'stitch' || activeMode === 'compose' ? 'menu' : undefined" :aria-expanded="activeMode === 'stitch' || activeMode === 'compose' ? processMenu.open : undefined" @contextmenu="(activeMode === 'stitch' || activeMode === 'compose') && openProcessMenu($event)" @keydown="(activeMode === 'stitch' || activeMode === 'compose') && openProcessMenuFromKeyboard($event)"><b><AppIcon :name="activeMode === 'compose' ? 'palette' : 'file-image'" :size="25"/></b><strong>{{ activeMode === 'stitch' ? '采集窗口或加入连续截图' : activeMode === 'compose' ? '从空白画布或图片开始' : '把图片拖进画布' }}</strong><span>{{ activeMode === 'stitch' ? `桌面版可按 ${CAPTURE_SHORTCUT} 逐张采集；也支持导入 2–${STITCH_MAX_FILES} 张同宽截图。` : activeMode === 'compose' ? '空白画布可以直接添加方框、箭头和文字，也能保存为可继续编辑的本地项目。' : `支持 JPG、PNG、WebP、GIF，批处理最多 ${STITCH_MAX_FILES} 张图片。` }}</span><button v-if="activeMode === 'stitch'" class="primary-button" :disabled="captureSessionBusy" @click="captureSessionActive ? stopCaptureSession() : startCaptureSession()">{{ captureSessionActive ? '结束采集并拼接' : '开始桌面采集' }}</button><div v-else-if="activeMode === 'compose'" class="visual-blank-starts" aria-label="空白画布尺寸"><button v-for="preset in blankCanvasPresets" :key="preset.id" type="button" :disabled="blankCanvasBusy" @click="createBlankCanvas(preset, false)"><b>{{ preset.label }}</b><small>{{ preset.detail }}</small></button></div><label v-else class="primary-button">选择图片<input class="visually-hidden" type="file" accept="image/*" multiple @change="selectImages" /></label><label v-if="activeMode === 'compose'" class="quiet-button visual-blank-import">或选择图片<input class="visually-hidden" type="file" accept="image/*" multiple @change="selectImages" /></label><small>{{ activeMode === 'stitch' ? '也可在上方“添加图片”中导入现有截图' : '所有创建和处理都留在这台设备' }}</small></div>
+              <div class="row-between gap-2 shrink-0 px-3 h-8 border-b border-line">
+                <span class="text-[11px] font-semibold text-fg-3">最近项目</span>
+                <span class="text-[11px] tabular-nums text-fg-3">{{ visualProjects.length }}</span>
+              </div>
+              <div class="stack gap-0.5 max-h-64 overflow-y-auto p-1.5">
+                <p v-if="projectLoading" class="px-2 py-3 text-[12px] text-fg-3" role="status">正在打开画布项目…</p>
+                <p v-else-if="!visualProjects.length" class="px-2 py-3 text-[12px] leading-relaxed text-fg-3">还没有保存过的画布。完成一次标注后保存，它会出现在这里。</p>
+                <div
+                  v-for="project in visualProjects"
+                  v-else
+                  :key="project.id"
+                  class="group row gap-1 rounded-sm"
+                  :class="project.id === projectId ? 'bg-accent-soft' : 'hover:bg-surface-2'"
+                >
+                  <button class="stack gap-0.5 min-w-0 flex-1 px-2 py-1.5 text-left" @click="openVisualProject(project.id)">
+                    <b class="text-[12px] truncate" :class="project.id === projectId ? 'text-accent' : 'text-fg'">{{ project.title }}</b>
+                    <small class="text-[11px] truncate text-fg-3">{{ project.imageCount }} 张源图 · {{ project.annotationCount }} 个标注 · {{ formatProjectTime(project.updatedAt) }}</small>
+                  </button>
+                  <button
+                    class="center w-7 h-7 mr-1 shrink-0 rounded-sm text-fg-3 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-surface-3 hover:text-danger"
+                    :aria-label="`删除 ${project.title}`"
+                    title="删除画布项目"
+                    @click.stop="removeVisualProject(project)"
+                  >
+                    <AppIcon name="trash" :size="13" />
+                  </button>
+                </div>
+              </div>
+            </section>
           </div>
+        </div>
+      </div>
+
+      <div class="flex-1 min-h-0 grid grid-cols-[240px_minmax(0,1fr)_284px]">
+        <!-- ── Sources ────────────────────────────────────────────────────
+             The images were spread across three places: a disclosure menu in
+             the toolbar, a second button in the empty state, and a thumbnail
+             grid at the bottom of the settings column. On a page about images
+             they are the subject, so they get a column of their own that is
+             also where you reorder a stitch. -->
+        <aside class="stack min-h-0 border-r border-line" :aria-label="activeMode === 'stitch' ? '截图顺序' : '源图'">
+          <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
+            <span class="text-[11px] font-semibold text-fg-3">{{ activeMode === 'stitch' ? '截图顺序' : '源图' }}</span>
+            <span class="text-[11px] tabular-nums text-fg-3">{{ activeMode === 'stitch' ? `${images.length} / ${STITCH_MAX_FILES}` : images.length }}</span>
+          </header>
+          <!-- Stays mounted at every state: this component owns the desktop
+               window drop listener. -->
+          <FileDropZone
+            v-model="imageFiles"
+            compact
+            accept="image/*"
+            :max-file-bytes="VISUAL_FILE_LIMIT"
+            :max-total-bytes="VISUAL_TOTAL_LIMIT"
+            :max-files="STITCH_MAX_FILES"
+            title="拖入图片"
+            class="shrink-0 rounded-none! border-0! border-b! border-line!"
+            @error="message = $event"
+          />
+          <div class="flex-1 min-h-0 overflow-y-auto p-1.5">
+            <p v-if="!images.length" class="px-2 py-3 text-[11px] leading-relaxed text-fg-3">{{ sourceEmptyHint }}</p>
+            <ol v-else class="stack gap-0.5">
+              <li
+                v-for="(item, index) in images"
+                :key="item.url"
+                class="group row gap-1 rounded-sm"
+                :class="activeImageIndex === index ? 'bg-accent-soft' : 'hover:bg-surface-2'"
+              >
+                <button class="row gap-2 min-w-0 flex-1 p-1.5 text-left" :aria-pressed="activeImageIndex === index" :title="item.name" @click="selectActiveImage(index)">
+                  <span class="relative shrink-0">
+                    <img :src="item.url" :alt="item.name" loading="lazy" decoding="async" class="w-9 h-9 rounded-sm object-cover bg-surface-2" />
+                    <b class="absolute -left-1 -top-1 center min-w-4 h-4 px-1 rounded-full bg-surface border border-line text-[11px] tabular-nums text-fg-2">{{ index + 1 }}</b>
+                  </span>
+                  <span class="stack gap-0.5 min-w-0">
+                    <b class="text-[12px] font-normal truncate" :class="activeImageIndex === index ? 'text-accent' : 'text-fg'">{{ item.name }}</b>
+                    <small class="text-[11px] text-fg-3">{{ activeImageIndex === index ? '正在编辑' : '点击编辑' }}</small>
+                  </span>
+                </button>
+                <template v-if="activeMode === 'stitch'">
+                  <span class="stack shrink-0">
+                    <button class="center w-5 h-4 rounded-[3px] text-[11px] text-fg-3 hover:bg-surface-3 hover:text-fg disabled:opacity-30" :disabled="index === 0" :aria-label="`将第 ${index + 1} 张上移`" @click="moveStitchFrame(index, -1)">↑</button>
+                    <button class="center w-5 h-4 rounded-[3px] text-[11px] text-fg-3 hover:bg-surface-3 hover:text-fg disabled:opacity-30" :disabled="index === images.length - 1" :aria-label="`将第 ${index + 1} 张下移`" @click="moveStitchFrame(index, 1)">↓</button>
+                  </span>
+                  <button
+                    class="center w-6 h-6 mr-1 shrink-0 rounded-sm text-fg-3 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-surface-3 hover:text-danger"
+                    :aria-label="`移除第 ${index + 1} 张`"
+                    @click="removeStitchFrame(index)"
+                  >
+                    <AppIcon name="close" :size="12" />
+                  </button>
+                </template>
+              </li>
+            </ol>
+          </div>
+        </aside>
+
+        <!-- ── Canvas ─────────────────────────────────────────────────────
+             One frame that never moves horizontally between modes. Everything
+             that acts on what is in the frame — the annotation tools, rotate,
+             crop reset, zoom — sits in this one header, so the canvas itself
+             is never covered by its own controls. -->
+        <main class="stack min-h-0 relative">
+          <header class="row-between gap-3 shrink-0 px-3 h-9 border-b border-line">
+            <span class="row gap-2 min-w-0 text-[12px]">
+              <AppIcon :name="activeTool.icon" :size="14" class="shrink-0 text-fg-3" />
+              <b class="shrink-0 font-medium text-fg">{{ canvasHeading }}</b>
+              <small v-if="activeMode !== 'compose'" class="truncate text-fg-3">{{ processSummary }}</small>
+            </span>
+            <span class="row gap-1 shrink-0">
+              <!-- The annotation tools used to be a 62px rail that only
+                   existed in compose, so the canvas shifted sideways every
+                   time you changed mode. -->
+              <template v-if="activeMode === 'compose' && images.length">
+                <button
+                  v-for="tool in annotationTools"
+                  :key="tool.id"
+                  class="row gap-1.5 h-7 px-2 rounded-sm text-[12px] whitespace-nowrap transition-colors duration-120"
+                  :class="canvasTool === tool.id ? 'bg-accent-soft text-accent font-medium' : 'text-fg-2 hover:bg-surface-2 hover:text-fg'"
+                  :aria-pressed="canvasTool === tool.id"
+                  :title="tool.hint"
+                  @click="canvasTool = tool.id"
+                >
+                  <AppIcon :name="tool.icon" :size="14" />{{ tool.label }}
+                </button>
+                <i class="w-px h-4.5 mx-1 bg-line" aria-hidden="true" />
+                <button class="center w-7 h-7 rounded-sm text-fg-2 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg disabled:opacity-35 disabled:cursor-not-allowed" :disabled="!canUndoAnnotations" title="撤销标注 (Ctrl+Z)" aria-label="撤销标注" @click="undoAnnotations">
+                  <AppIcon name="review" :size="14" />
+                </button>
+                <button class="center w-7 h-7 rounded-sm text-fg-2 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg disabled:opacity-35 disabled:cursor-not-allowed" :disabled="!canRedoAnnotations" title="重做标注 (Ctrl+Shift+Z)" aria-label="重做标注" @click="redoAnnotations">
+                  <AppIcon name="rotate" :size="14" />
+                </button>
+                <button class="center w-7 h-7 rounded-sm text-fg-2 hover:not-disabled:bg-surface-2 hover:not-disabled:text-danger disabled:opacity-35 disabled:cursor-not-allowed" :disabled="!annotations.length" title="清空全部标注" aria-label="清空全部标注" @click="clearAnnotations">
+                  <AppIcon name="trash" :size="14" />
+                </button>
+              </template>
+              <template v-if="images.length && activeMode === 'rotate'">
+                <button class="btn-ghost btn-sm" :disabled="sourcePassThrough" aria-label="向左旋转 90 度" title="向左旋转 90°" @click="rotateBy(-90)">
+                  <AppIcon name="rotate" :size="14" class="scale-x-[-1]" />左转
+                </button>
+                <button class="btn-ghost btn-sm" :disabled="sourcePassThrough" aria-label="向右旋转 90 度" title="向右旋转 90°" @click="rotateBy(90)">
+                  <AppIcon name="rotate" :size="14" />右转
+                </button>
+                <button class="btn-ghost btn-sm" :disabled="sourcePassThrough || rotation === 0" @click="resetRotation">恢复原图</button>
+              </template>
+              <button v-else-if="images.length && activeMode === 'crop' && !sourcePassThrough" class="btn-ghost btn-sm" @click="resetCrop">选择全图</button>
+              <!-- Zoom lives in the header rather than floating over the
+                   bottom-right of the image, where it covered the pixels you
+                   zoomed in to look at. -->
+              <span v-if="images.length && activeMode !== 'compose'" class="row gap-0.5 ml-1 pl-2 border-l border-line" aria-label="画布缩放控制">
+                <button class="center w-6.5 h-6.5 rounded-sm text-fg-2 hover:bg-surface-2 hover:text-fg" title="缩小" aria-label="缩小画布" @click="zoomViewport(-1)">−</button>
+                <button class="center h-6.5 min-w-11 px-1 rounded-sm text-[11px] tabular-nums text-fg-2 hover:bg-surface-2 hover:text-fg" title="适应窗口 (Ctrl+0)" @click="resetViewport">{{ viewportZoomLabel }}</button>
+                <button class="center w-6.5 h-6.5 rounded-sm text-fg-2 hover:bg-surface-2 hover:text-fg" title="放大" aria-label="放大画布" @click="zoomViewport(1)">＋</button>
+                <button class="center h-6.5 px-1.5 rounded-sm text-[11px] text-fg-2 hover:bg-surface-2 hover:text-fg" title="实际像素 (Ctrl+1)" @click="actualSizeViewport">1:1</button>
+              </span>
+            </span>
+          </header>
+
+          <div
+            class="flex-1 min-h-0 relative bg-well"
+            :style="{ backgroundImage: 'radial-gradient(var(--line) 1px, transparent 1px)', backgroundSize: '16px 16px' }"
+          >
+            <!-- Compose: the preview is the export. Padding, title band and
+                 signature are percentages of the canvas, and images are
+                 `contain`, because that is what `renderCardBlob` draws — the
+                 old preview used `cover` and quietly cropped what you saw. -->
+            <div
+              v-if="images.length && activeMode === 'compose'"
+              class="absolute inset-0 grid justify-items-center overflow-auto p-6"
+              :class="[activeBlankCanvas?.id === 'portrait' ? 'items-start' : 'items-center', canvasTool === 'select' ? '' : 'cursor-crosshair']"
+            >
+              <div
+                class="relative stack overflow-hidden rounded-sm border border-line shadow-lg [container-type:inline-size]"
+                :class="[
+                  activeBlankCanvas?.id === 'portrait' ? 'w-[min(430px,100%)]' : activeBlankCanvas ? 'w-[min(650px,100%)]' : 'w-[min(760px,100%)]',
+                  activeBlankCanvas && layout === 'single' ? '' : 'p-[3%]',
+                ]"
+                :style="compositionStyle"
+                @click="closeAnnotationMenu()"
+              >
+                <h3 v-if="title" class="relative z-4 shrink-0 mb-[2.5%] font-display font-semibold leading-tight text-[clamp(15px,2.9cqw,34px)]" :style="{ color: 'var(--canvas-text)' }">{{ title }}</h3>
+                <div class="flex-1 min-h-0 grid gap-[1.5%]" :class="layout === 'single' ? 'grid-cols-1' : layout === 'pair' ? 'grid-cols-2' : 'grid-cols-2 grid-rows-2'">
+                  <img
+                    v-for="item in visibleImages"
+                    :key="item.url"
+                    :src="item.url"
+                    :alt="item.blank ? '空白画布底图' : item.name"
+                    class="w-full h-full min-w-0 min-h-0 object-contain rounded-[2px]"
+                    :class="item.blank ? 'opacity-0 pointer-events-none' : ''"
+                  />
+                </div>
+                <small v-if="watermark" class="relative z-4 shrink-0 mt-[1.5%] text-right text-[clamp(10px,1.25cqw,16px)]" :style="{ color: 'var(--canvas-muted)' }">{{ watermark }}</small>
+                <AnnotationCanvas
+                  ref="annotationCanvas"
+                  class="absolute inset-0 z-3"
+                  :annotations="annotations"
+                  :tool="canvasTool"
+                  :color="annotationColor"
+                  :text="annotationText"
+                  @create="createCanvasAnnotation"
+                  @update="updateCanvasAnnotation"
+                  @remove="removeAnnotation"
+                  @select="selectedAnnotationId = $event"
+                  @context="openAnnotationMenu"
+                  @canvas-context="openProjectMenu"
+                />
+              </div>
+            </div>
+
+            <!-- Process: one pan/zoom viewport shared by all four modes. -->
+            <div
+              v-else-if="images.length"
+              ref="previewViewport"
+              class="absolute inset-0 grid place-items-center overflow-hidden p-6 focus:outline-none focus-visible:ring-3 focus-visible:ring-[var(--accent-ring)] focus-visible:ring-inset"
+              :class="[
+                activeMode === 'crop' && !sourcePassThrough ? 'cursor-crosshair' : '',
+                viewportPanning ? 'cursor-grabbing' : spacePressed ? 'cursor-grab' : '',
+              ]"
+              tabindex="0"
+              role="region"
+              aria-label="图片处理预览；右键或菜单键打开预览操作"
+              aria-haspopup="menu"
+              :aria-expanded="processMenu.open"
+              @wheel="handleViewportWheel"
+              @pointerdown="beginViewportPan"
+              @dblclick="resetViewport"
+              @contextmenu="openProcessMenu"
+              @keydown="openProcessMenuFromKeyboard"
+            >
+              <img
+                ref="previewImage"
+                :src="previewSource"
+                :style="previewImageStyle"
+                :alt="`${activeTool.title}实时预览`"
+                draggable="false"
+                class="absolute block max-w-none max-h-none select-none shadow-lg"
+                @load="handlePreviewLoad"
+                @dragstart.prevent
+              />
+              <div v-if="activeMode === 'crop' && !sourcePassThrough && imageBounds.width" class="crop-layer" :style="cropLayerStyle" @pointerdown="beginCropCreate">
+                <div
+                  class="crop-selection"
+                  :style="cropSelectionStyle"
+                  tabindex="0"
+                  aria-label="裁剪选区；拖动可移动，方向键可微调"
+                  @pointerdown.stop="beginCropDrag($event, 'move')"
+                  @keydown="nudgeCrop"
+                >
+                  <i v-for="handle in cropHandles" :key="handle" :class="`handle-${handle}`" aria-hidden="true" @pointerdown.stop="beginCropDrag($event, handle)"></i>
+                  <span>{{ cropPixelSummary }}</span>
+                </div>
+              </div>
+              <p class="absolute right-3 bottom-2 text-[11px] text-fg-3 pointer-events-none">Ctrl＋滚轮缩放 · 拖动平移 · 空格拖动 · 右键操作</p>
+            </div>
+
+            <!-- Empty: one offer, matched to the mode, instead of three. -->
+            <div
+              v-else
+              class="absolute inset-0 center p-6 focus:outline-none"
+              tabindex="0"
+              role="region"
+              :aria-label="activeMode === 'stitch' ? '滚动截图空画布；右键或菜单键可开始桌面采集' : activeMode === 'compose' ? '自由画布起点；选择尺寸、导入图片，或右键打开画布菜单' : '图片处理空画布；选择或拖入图片'"
+              :aria-haspopup="activeMode === 'stitch' || activeMode === 'compose' ? 'menu' : undefined"
+              :aria-expanded="activeMode === 'stitch' || activeMode === 'compose' ? processMenu.open : undefined"
+              @contextmenu="(activeMode === 'stitch' || activeMode === 'compose') && openProcessMenu($event)"
+              @keydown="(activeMode === 'stitch' || activeMode === 'compose') && openProcessMenuFromKeyboard($event)"
+            >
+              <div class="stack items-center gap-3 max-w-100 text-center">
+                <span class="center w-12 h-12 rounded-lg bg-accent-soft text-accent">
+                  <AppIcon :name="activeMode === 'compose' ? 'palette' : activeMode === 'stitch' ? 'camera' : 'file-image'" :size="24" />
+                </span>
+                <div class="stack gap-1.5">
+                  <strong class="text-[15px] font-semibold text-fg">
+                    {{ activeMode === 'stitch' ? '采集窗口，或加入连续截图' : activeMode === 'compose' ? '从一块空白画布开始' : '把图片拖进画布' }}
+                  </strong>
+                  <p class="text-[12px] leading-relaxed text-fg-3">
+                    {{ activeMode === 'stitch'
+                      ? `桌面版按 ${CAPTURE_SHORTCUT} 逐屏采集，结束后自动识别重叠；也可以直接导入 2–${STITCH_MAX_FILES} 张同宽截图。`
+                      : activeMode === 'compose'
+                        ? '空白画布可以直接画方框、箭头和文字，随时保存成可继续编辑的本地项目。'
+                        : `支持 JPG、PNG、WebP、GIF，一次最多 ${STITCH_MAX_FILES} 张一起处理。` }}
+                  </p>
+                </div>
+
+                <button v-if="activeMode === 'stitch'" class="btn-primary" :disabled="captureSessionBusy" @click="captureSessionActive ? stopCaptureSession() : startCaptureSession()">
+                  <AppIcon name="camera" :size="15" />{{ captureSessionActive ? '结束采集并拼接' : '开始桌面采集' }}
+                </button>
+                <div v-else-if="activeMode === 'compose'" class="grid grid-cols-3 gap-2 w-full" aria-label="空白画布尺寸">
+                  <button
+                    v-for="preset in blankCanvasPresets"
+                    :key="preset.id"
+                    type="button"
+                    class="stack gap-0.5 px-3 py-2.5 rounded-sm border border-line bg-surface text-left transition-colors duration-120 hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft disabled:opacity-45 disabled:cursor-not-allowed"
+                    :disabled="blankCanvasBusy"
+                    @click="createBlankCanvas(preset, false)"
+                  >
+                    <b class="text-[12px] font-medium text-fg">{{ preset.label }}</b>
+                    <small class="text-[11px] text-fg-3">{{ preset.detail }}</small>
+                  </button>
+                </div>
+                <label v-else class="btn-primary cursor-pointer">
+                  选择图片<input class="visually-hidden" type="file" accept="image/*" multiple @change="selectImages" />
+                </label>
+
+                <label v-if="activeMode === 'compose'" class="btn-ghost btn-sm cursor-pointer">
+                  或直接选择图片<input class="visually-hidden" type="file" accept="image/*" multiple @change="selectImages" />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <footer class="row-between gap-3 shrink-0 px-3 h-9 border-t border-line">
+            <b class="min-w-0 truncate text-[12px] font-medium text-fg">{{ outputTitle }}</b>
+            <span class="shrink-0 text-[11px] text-fg-3">{{ outputDetail }}</span>
+          </footer>
         </main>
 
-        <aside class="visual-properties">
-          <header><p class="eyebrow">画布设置</p><strong>{{ activeMode === 'compose' ? '画面设置' : activeTool.title }}</strong></header>
+        <!-- ── Settings ───────────────────────────────────────────────────
+             Grouped and titled, so a mode's parameters are one block rather
+             than a run of unlabelled fields. -->
+        <aside class="stack min-h-0 border-l border-line" aria-label="设置">
+          <!-- The three columns share one header line, so the rule under it
+               runs the full width of the workspace instead of stopping. -->
+          <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
+            <span class="text-[11px] font-semibold text-fg-3">设置</span>
+            <span class="text-[11px] truncate text-fg-3">{{ activeTool.title }}</span>
+          </header>
+          <div class="flex-1 min-h-0 overflow-y-auto">
           <template v-if="activeMode === 'compose'">
-            <div v-if="activeBlankCanvas" class="visual-blank-canvas-summary"><span><AppIcon name="palette" :size="14"/><b>{{ activeBlankCanvas.label }}</b></span><code>{{ activeBlankCanvas.width }} × {{ activeBlankCanvas.height }}</code><small>透明底图只负责画布尺寸；实际背景使用下方颜色。</small></div>
-            <label><span>标题</span><input v-model="title" maxlength="160" placeholder="可选，例如：本周记录" /></label>
-            <label><span>图片署名</span><input v-model="watermark" maxlength="160" placeholder="可选，不默认添加品牌" /></label>
-            <label class="visual-color-field"><span>画布背景</span><input v-model="background" type="color" /><code>{{ background }}</code></label>
-            <div class="visual-property-separator"></div>
-            <label :class="{ disabled: canvasTool !== 'text' }"><span>标注文字</span><input v-model="annotationText" :disabled="canvasTool !== 'text'" /></label>
-            <label class="visual-color-field" :class="{ disabled: canvasTool === 'select' }"><span>标注颜色</span><input v-model="annotationColor" type="color" :disabled="canvasTool === 'select'"/><code>{{ annotationColor }}</code></label>
-            <section class="visual-layer-panel" :class="{ open: layerPanelOpen }">
-              <button class="visual-layer-panel__toggle" type="button" :aria-expanded="layerPanelOpen" @click="layerPanelOpen = !layerPanelOpen">
-                <span><AppIcon name="sort" :size="14"/><b>标注图层</b><small>{{ annotations.length }}</small></span>
-                <AppIcon name="chevron" :size="14"/>
+            <section class="stack gap-2.5 p-3 border-b border-line">
+              <h3 class="text-[11px] font-semibold text-fg-3">版面</h3>
+              <div class="stack gap-1.5">
+                <span class="text-[12px] text-fg-3">图片排布</span>
+                <div class="grid grid-cols-3 gap-1 p-0.5 rounded-sm bg-surface-2" role="group" aria-label="图片排布">
+                  <button
+                    v-for="option in layoutOptions"
+                    :key="option.id"
+                    class="center h-7 rounded-[5px] text-[12px] transition-colors duration-120"
+                    :class="layout === option.id ? 'bg-surface text-fg font-medium shadow-sm' : 'text-fg-2 hover:text-fg'"
+                    :aria-pressed="layout === option.id"
+                    @click="layout = option.id"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+              <p v-if="activeBlankCanvas" class="row-between gap-2 px-2.5 py-2 rounded-sm bg-accent-soft text-[11px] text-accent">
+                <span class="row gap-1.5"><AppIcon name="palette" :size="13" />{{ activeBlankCanvas.label }}</span>
+                <code class="font-mono tabular-nums">{{ activeBlankCanvas.width }} × {{ activeBlankCanvas.height }}</code>
+              </p>
+              <label class="stack gap-1.5">
+                <span class="text-[12px] text-fg-3">标题</span>
+                <input v-model="title" class="field" maxlength="160" placeholder="可选，例如：本周记录" />
+              </label>
+              <label class="stack gap-1.5">
+                <span class="text-[12px] text-fg-3">图片署名</span>
+                <input v-model="watermark" class="field" maxlength="160" placeholder="可选，不默认添加品牌" />
+              </label>
+              <label class="stack gap-1.5">
+                <span class="text-[12px] text-fg-3">画布背景</span>
+                <span class="row gap-2">
+                  <input v-model="background" type="color" class="w-9 h-9 shrink-0 p-0.5 rounded-sm bg-well border border-line cursor-pointer" aria-label="画布背景颜色" />
+                  <code class="row flex-1 h-9 px-2.5 rounded-sm bg-well border border-line font-mono text-[12px] text-fg-2">{{ background }}</code>
+                </span>
+              </label>
+            </section>
+
+            <section class="stack gap-2.5 p-3 border-b border-line">
+              <h3 class="text-[11px] font-semibold text-fg-3">标注</h3>
+              <label class="stack gap-1.5" :class="canvasTool === 'text' ? '' : 'opacity-60'">
+                <span class="text-[12px] text-fg-3">文字内容</span>
+                <input v-model="annotationText" class="field" :disabled="canvasTool !== 'text'" placeholder="选择文字工具后可编辑" />
+              </label>
+              <label class="stack gap-1.5" :class="canvasTool === 'select' ? 'opacity-60' : ''">
+                <span class="text-[12px] text-fg-3">标注颜色</span>
+                <span class="row gap-2">
+                  <input v-model="annotationColor" type="color" class="w-9 h-9 shrink-0 p-0.5 rounded-sm bg-well border border-line cursor-pointer" :disabled="canvasTool === 'select'" aria-label="标注颜色" />
+                  <code class="row flex-1 h-9 px-2.5 rounded-sm bg-well border border-line font-mono text-[12px] text-fg-2">{{ annotationColor }}</code>
+                </span>
+              </label>
+              <p class="text-[11px] leading-relaxed text-fg-3">选中标注后可以拖动、缩放和旋转；每一步都进入撤销历史。</p>
+            </section>
+
+            <section class="stack min-h-0">
+              <button
+                class="row-between gap-2 shrink-0 px-3 h-9 text-left transition-colors duration-120 hover:bg-surface-2"
+                type="button"
+                :aria-expanded="layerPanelOpen"
+                @click="layerPanelOpen = !layerPanelOpen"
+              >
+                <span class="row gap-2 text-[11px] font-semibold text-fg-3">
+                  图层
+                  <span class="chip h-4.5 px-1.5 text-[11px] tabular-nums">{{ annotations.length }}</span>
+                </span>
+                <AppIcon name="chevron" :size="14" class="text-fg-3 transition-transform duration-150" :class="layerPanelOpen ? 'rotate-90' : ''" />
               </button>
-              <div v-if="layerPanelOpen" class="visual-layer-panel__body">
-                <p v-if="!annotations.length" class="visual-layer-panel__empty">绘制方框、箭头或文字后，图层会出现在这里。</p>
-                <ol v-else class="visual-layer-list" aria-label="标注图层，顶部项目最靠前">
-                  <li v-for="layerItem in visibleAnnotationLayers" :key="layerItem.annotation.id" :class="{ selected: selectedAnnotationId === layerItem.annotation.id }" @contextmenu.prevent="openLayerAnnotationMenu($event, layerItem.annotation.id)">
-                    <button class="visual-layer-list__select" type="button" :aria-pressed="selectedAnnotationId === layerItem.annotation.id" @click="selectCanvasAnnotation(layerItem.annotation.id)">
-                      <i :style="{ '--layer-color': layerItem.annotation.color }"></i>
-                      <span><b>{{ annotationKindLabel(layerItem.annotation) }}</b><small>{{ annotationLayerSummary(layerItem.annotation) }}</small></span>
+              <div v-if="layerPanelOpen" class="stack gap-0.5 px-1.5 pb-3">
+                <p v-if="!annotations.length" class="px-2 py-2 text-[11px] leading-relaxed text-fg-3">画上方框、箭头或文字后，图层会出现在这里。</p>
+                <ol v-else class="stack gap-0.5" aria-label="标注图层，顶部项目最靠前">
+                  <li
+                    v-for="layerItem in visibleAnnotationLayers"
+                    :key="layerItem.annotation.id"
+                    class="row gap-1 rounded-sm"
+                    :class="selectedAnnotationId === layerItem.annotation.id ? 'bg-accent-soft' : 'hover:bg-surface-2'"
+                    @contextmenu.prevent="openLayerAnnotationMenu($event, layerItem.annotation.id)"
+                  >
+                    <button
+                      class="row gap-2 min-w-0 flex-1 px-2 py-1.5 text-left"
+                      type="button"
+                      :aria-pressed="selectedAnnotationId === layerItem.annotation.id"
+                      @click="selectCanvasAnnotation(layerItem.annotation.id)"
+                    >
+                      <i class="w-3 h-3 shrink-0 rounded-[3px] border border-line" :style="{ background: layerItem.annotation.color }" aria-hidden="true" />
+                      <span class="stack gap-0.5 min-w-0">
+                        <b class="text-[12px] font-normal" :class="selectedAnnotationId === layerItem.annotation.id ? 'text-accent' : 'text-fg'">{{ annotationKindLabel(layerItem.annotation) }}</b>
+                        <small class="text-[11px] truncate text-fg-3">{{ annotationLayerSummary(layerItem.annotation) }}</small>
+                      </span>
                     </button>
-                    <span class="visual-layer-list__order">
-                      <button type="button" title="上移一层" aria-label="上移一层" :disabled="layerItem.index === annotations.length - 1" @click="moveCanvasAnnotationLayer(layerItem.annotation.id, 'forward', true)">↑</button>
-                      <button type="button" title="下移一层" aria-label="下移一层" :disabled="layerItem.index === 0" @click="moveCanvasAnnotationLayer(layerItem.annotation.id, 'backward', true)">↓</button>
+                    <span class="stack shrink-0 mr-1">
+                      <button class="center w-5 h-4 rounded-[3px] text-[11px] text-fg-3 hover:bg-surface-3 hover:text-fg disabled:opacity-30" type="button" title="上移一层" aria-label="上移一层" :disabled="layerItem.index === annotations.length - 1" @click="moveCanvasAnnotationLayer(layerItem.annotation.id, 'forward', true)">↑</button>
+                      <button class="center w-5 h-4 rounded-[3px] text-[11px] text-fg-3 hover:bg-surface-3 hover:text-fg disabled:opacity-30" type="button" title="下移一层" aria-label="下移一层" :disabled="layerItem.index === 0" @click="moveCanvasAnnotationLayer(layerItem.annotation.id, 'backward', true)">↓</button>
                     </span>
                   </li>
                 </ol>
-                <button v-if="annotations.length > visibleAnnotationLayers.length" class="visual-layer-panel__more" type="button" @click="layerVisibleLimit += 40">再显示 {{ Math.min(40, annotations.length - visibleAnnotationLayers.length) }} 个较后图层</button>
-                <footer v-if="selectedAnnotation" class="visual-layer-panel__rotate">
-                  <span><b>{{ annotationKindLabel(selectedAnnotation) }}</b><small>{{ selectedAnnotation.kind === 'arrow' ? '以箭头起点旋转' : `${Math.round(selectedAnnotation.rotation ?? 0)}°` }}</small></span>
-                  <div><button type="button" title="向左旋转 15°" @click="rotateCanvasAnnotation(selectedAnnotation.id, -15)">−15°</button><button type="button" title="向右旋转 15°" @click="rotateCanvasAnnotation(selectedAnnotation.id, 15)">＋15°</button></div>
-                </footer>
+                <button v-if="annotations.length > visibleAnnotationLayers.length" class="btn-ghost btn-sm mt-1" type="button" @click="layerVisibleLimit += 40">
+                  再显示 {{ Math.min(40, annotations.length - visibleAnnotationLayers.length) }} 个
+                </button>
+                <div v-if="selectedAnnotation" class="row-between gap-2 mt-1.5 px-2 py-1.5 rounded-sm bg-surface-2">
+                  <span class="stack gap-0.5 min-w-0">
+                    <b class="text-[11px] font-medium text-fg">{{ annotationKindLabel(selectedAnnotation) }}</b>
+                    <small class="text-[11px] text-fg-3">{{ selectedAnnotation.kind === 'arrow' ? '以箭头起点旋转' : `${Math.round(selectedAnnotation.rotation ?? 0)}°` }}</small>
+                  </span>
+                  <span class="row gap-1 shrink-0">
+                    <button class="btn-default btn-sm px-2" type="button" title="向左旋转 15°" @click="rotateCanvasAnnotation(selectedAnnotation.id, -15)">−15°</button>
+                    <button class="btn-default btn-sm px-2" type="button" title="向右旋转 15°" @click="rotateCanvasAnnotation(selectedAnnotation.id, 15)">＋15°</button>
+                  </span>
+                </div>
               </div>
             </section>
-            <p>选择标注后可拖动、缩放或旋转；图层面板与右键菜单可调整前后顺序。所有操作都进入撤销历史。</p>
           </template>
+
           <template v-else-if="activeMode === 'stitch'">
-            <section class="visual-capture-session" :class="{ active: captureSessionActive, error: captureSessionError }" :aria-busy="captureSessionBusy">
-              <header><span><i aria-hidden="true"></i><b>{{ captureSessionActive ? '桌面采集进行中' : '从前台窗口采集' }}</b></span><kbd>{{ CAPTURE_SHORTCUT }}</kbd></header>
-              <p v-if="captureSessionActive">切换到需要滚动的窗口，每滚动一屏按一次快捷键。结束后才会统一拼接，采集过程更流畅。</p>
-              <p v-else>只在本次会话注册快捷键；结束、切换工具或关闭页面都会立即注销。截图仅写入本机缓存。</p>
-              <div class="visual-capture-session__count"><strong>{{ captureSessionCount }}</strong><span>本次新截图<small v-if="captureSessionLastWindow">{{ captureSessionLastWindow }}</small></span><i>{{ imageFiles.length }} / {{ STITCH_MAX_FILES }}</i></div>
-              <div class="visual-capture-session__actions"><button class="primary-button" :disabled="captureSessionBusy || (!captureSessionActive && imageFiles.length >= STITCH_MAX_FILES)" @click="captureSessionActive ? stopCaptureSession() : startCaptureSession()"><AppIcon :name="captureSessionActive ? 'check' : 'camera'" :size="14"/>{{ captureSessionBusy ? '正在采集…' : captureSessionActive ? '结束并开始拼接' : '开始采集会话' }}</button><button v-if="captureSessionActive" class="quiet-button" :disabled="captureSessionBusy" @click="hideForCapture"><AppIcon name="minimize" :size="14"/>隐藏 Knitspace</button></div>
-              <p v-if="captureSessionError" class="visual-capture-session__error" role="alert"><AppIcon name="warning" :size="13"/>{{ captureSessionError }}</p>
-            </section>
-            <label><span>重叠方式</span><select v-model="stitchOverlapMode"><option value="auto">自动识别（推荐）</option><option value="manual">固定比例</option></select></label>
-            <label v-if="stitchOverlapMode === 'manual'"><span>每张顶部重复</span><input v-model.number="stitchManualOverlap" type="range" min="0" max="70" step="1"/><small>{{ stitchManualOverlap }}%</small></label>
-            <div class="visual-transform-summary"><b>{{ previewPending ? `${stitchProgress}% · ${stitchDetail}` : stitchResult ? `${stitchResult.width} × ${stitchResult.height} px` : '等待连续截图' }}</b><progress v-if="previewPending" class="visual-stitch-progress" max="100" :value="stitchProgress" :aria-label="stitchDetail"></progress><span>{{ stitchOverlapMode === 'auto' ? '只裁掉可信的重叠区域；识别不可靠时完整保留截图并提示检查，绝不静默丢内容。' : '固定裁掉每张后续截图顶部的相同比例，适合页面滚动距离一致的截图。' }}</span><button class="quiet-button" :disabled="previewPending || images.length < 2" @click="rebuildStitch">重新识别</button></div>
-            <div v-if="stitchResult?.warnings.length" class="visual-stitch-warning" role="status"><b>需要检查 {{ stitchResult.warnings.length }} 处接缝</b><span v-for="warning in stitchResult.warnings" :key="warning">{{ warning }}</span></div>
-            <p>可开始桌面采集并在目标窗口滚动后按 Ctrl+Alt+P，也可一次性拖入已有截图；结束采集后自动识别重叠，下方箭头可调整顺序。右键预览还能管理采集、重新识别、复制或查看实际像素。</p>
-          </template>
-          <template v-else>
-            <label><span>输出格式</span><select v-model="imageFormat"><option value="source">跟随源文件格式</option><option value="image/png">PNG</option><option value="image/jpeg">JPG</option><option value="image/webp">WebP</option></select></label>
-            <label v-if="activeMode === 'resize' && !sourcePassThrough"><span>最大宽度</span><input v-model.number="maxWidth" type="number" min="100" max="7680"/><small>{{ maxWidth }} px</small></label>
-            <label v-if="qualityApplies"><span>输出质量</span><input v-model.number="quality" type="range" min="20" max="100"/><small>{{ quality }}%{{ processedSizeLabel ? ` · 预览 ${processedSizeLabel}` : '' }}</small></label>
-            <label v-if="repeatedCompressionApplies"><span>重复压缩次数</span><input v-model.number="compressionPasses" type="number" min="1" :max="compressionPassLimit" step="1"/><small>当前图片最多 {{ compressionPassLimit }} 次</small></label>
-            <div v-if="qualityApplies" class="visual-transform-summary"><b>{{ activeOutputType === 'image/gif' ? `GIF 动画质量 ${quality}%` : compressionPasses === 1 ? '单次压缩' : `连续压缩 ${compressionPasses} 次` }}</b><span>{{ activeOutputType === 'image/gif' ? '逐帧重新量化颜色并保留帧时长和循环；质量越低，颜色精度越低、编码越快。' : '每次都会重新编码上一轮结果。大图会自动降低次数上限，每轮结束后立即释放位图内存。' }}</span></div>
-            <div v-else class="visual-transform-summary"><b>{{ sourcePassThrough ? `${sourceExtensionLabel(activeImageFile)} 原文件直出` : 'PNG 无损输出' }}</b><span>{{ sourcePassThrough ? 'GIF 会保留全部动画帧，其他暂不支持重编码的格式会保持源文件字节。' : 'PNG 没有有损质量参数，固定按 100% 无损输出；仍可缩放、裁剪和旋转。' }}</span></div>
-            <div v-if="activeMode === 'crop' && !sourcePassThrough" class="visual-transform-summary"><b>{{ cropPixelSummary }}</b><span>在画布上拖动即可重新框选；拖动边角改变大小，拖动中间移动选区。</span><button class="quiet-button" @click="resetCrop">恢复完整画面</button></div>
-            <div v-if="activeMode === 'rotate' && !sourcePassThrough" class="visual-transform-summary"><b>{{ rotation ? `${rotation}°` : '原始方向' }}</b><span>使用画布顶部的左转、右转按钮；可以连续点击。</span></div>
-            <p v-if="!sourcePassThrough">{{ activeMode === 'crop' ? '裁剪直接作用于画布选区；导出时批量应用同一比例。' : activeMode === 'rotate' ? '当前方向会实时预览；导出时批量应用到全部图片。' : '参数改变后会重新生成当前图片的真实处理预览；导出时批量应用到全部图片。' }}</p>
-          </template>
-          <div v-if="images.length" class="visual-source-thumbs" :class="{ 'is-stitch-order': activeMode === 'stitch' }" :aria-label="activeMode === 'stitch' ? '滚动截图顺序' : '已导入图片'">
-            <template v-if="activeMode === 'stitch'">
-              <div v-for="(item, index) in images" :key="item.url" class="visual-stitch-frame" :class="{ active: activeImageIndex === index }">
-                <button class="visual-stitch-frame__preview" :aria-label="`查看第 ${index + 1} 张：${item.name}`" :title="item.name" @click="selectActiveImage(index)"><img :src="item.url" :alt="item.name" loading="lazy" decoding="async"/><span>{{ index + 1 }}</span></button>
-                <span><button :disabled="index === 0" :aria-label="`将第 ${index + 1} 张上移`" @click="moveStitchFrame(index, -1)">↑</button><button :disabled="index === images.length - 1" :aria-label="`将第 ${index + 1} 张下移`" @click="moveStitchFrame(index, 1)">↓</button><button :aria-label="`移除第 ${index + 1} 张`" @click="removeStitchFrame(index)">×</button></span>
+            <section class="stack gap-2.5 p-3 border-b border-line">
+              <h3 class="text-[11px] font-semibold text-fg-3">桌面采集</h3>
+              <div
+                class="stack gap-2 p-2.5 rounded-sm border"
+                :class="captureSessionError ? 'border-danger bg-danger-soft' : captureSessionActive ? 'border-accent bg-accent-soft' : 'border-line bg-well'"
+                :aria-busy="captureSessionBusy"
+              >
+                <div class="row-between gap-2">
+                  <b class="row gap-1.5 text-[12px] font-medium" :class="captureSessionActive ? 'text-accent' : 'text-fg'">
+                    <i class="w-1.5 h-1.5 rounded-full" :class="captureSessionActive ? 'bg-accent animate-pulse' : 'bg-fg-3'" aria-hidden="true" />
+                    {{ captureSessionActive ? '采集进行中' : '从前台窗口采集' }}
+                  </b>
+                  <kbd class="kbd">{{ CAPTURE_SHORTCUT }}</kbd>
+                </div>
+                <p class="text-[11px] leading-relaxed" :class="captureSessionActive ? 'text-accent' : 'text-fg-3'">
+                  {{ captureSessionActive
+                    ? '切换到需要滚动的窗口，每滚动一屏按一次快捷键；结束后才统一拼接。'
+                    : '快捷键只在本次会话注册，结束、切换工具或关闭页面都会立即注销。' }}
+                </p>
+                <div class="row-between gap-2">
+                  <span class="row gap-1.5 text-[11px] text-fg-3">
+                    <strong class="text-[16px] font-semibold tabular-nums" :class="captureSessionActive ? 'text-accent' : 'text-fg'">{{ captureSessionCount }}</strong>
+                    张新截图
+                  </span>
+                  <span class="text-[11px] tabular-nums text-fg-3">{{ imageFiles.length }} / {{ STITCH_MAX_FILES }}</span>
+                </div>
+                <p v-if="captureSessionLastWindow" class="text-[11px] truncate text-fg-3">最近窗口：{{ captureSessionLastWindow }}</p>
+                <div class="stack gap-1.5">
+                  <button class="btn-primary btn-sm" :disabled="captureSessionBusy || (!captureSessionActive && imageFiles.length >= STITCH_MAX_FILES)" @click="captureSessionActive ? stopCaptureSession() : startCaptureSession()">
+                    <AppIcon :name="captureSessionActive ? 'check' : 'camera'" :size="14" />
+                    {{ captureSessionBusy ? '正在采集…' : captureSessionActive ? '结束并开始拼接' : '开始采集会话' }}
+                  </button>
+                  <button v-if="captureSessionActive" class="btn-default btn-sm" :disabled="captureSessionBusy" @click="hideForCapture">
+                    <AppIcon name="minimize" :size="14" />隐藏 Knitspace
+                  </button>
+                </div>
+                <p v-if="captureSessionError" class="row gap-1.5 text-[11px] text-danger" role="alert">
+                  <AppIcon name="warning" :size="13" class="shrink-0" />{{ captureSessionError }}
+                </p>
               </div>
-            </template>
-            <template v-else><button v-for="(item, index) in images" :key="item.url" :class="{ active: activeImageIndex === index }" :aria-label="`编辑 ${item.name}`" :title="item.name" @click="selectActiveImage(index)"><img :src="item.url" :alt="item.name"/><span>{{ index + 1 }}</span></button></template>
+            </section>
+
+            <section class="stack gap-2.5 p-3 border-b border-line">
+              <h3 class="text-[11px] font-semibold text-fg-3">拼接</h3>
+              <label class="stack gap-1.5">
+                <span class="text-[12px] text-fg-3">重叠方式</span>
+                <select v-model="stitchOverlapMode" class="field">
+                  <option value="auto">自动识别（推荐）</option>
+                  <option value="manual">固定比例</option>
+                </select>
+              </label>
+              <label v-if="stitchOverlapMode === 'manual'" class="stack gap-1.5">
+                <span class="row-between text-[12px] text-fg-3">每张顶部重复<b class="tabular-nums text-fg">{{ stitchManualOverlap }}%</b></span>
+                <input v-model.number="stitchManualOverlap" type="range" min="0" max="70" step="1" class="w-full accent-[var(--accent)]" />
+              </label>
+              <div class="stack gap-2 p-2.5 rounded-sm bg-surface-2">
+                <b class="text-[12px] font-medium text-fg">{{ previewPending ? `${stitchProgress}% · ${stitchDetail}` : stitchResult ? `${stitchResult.width} × ${stitchResult.height} px` : '等待连续截图' }}</b>
+                <progress v-if="previewPending" class="w-full h-1" max="100" :value="stitchProgress" :aria-label="stitchDetail" />
+                <span class="text-[11px] leading-relaxed text-fg-3">
+                  {{ stitchOverlapMode === 'auto'
+                    ? '只裁掉可信的重叠区域；识别不可靠时完整保留截图并提示检查，绝不静默丢内容。'
+                    : '固定裁掉每张后续截图顶部的相同比例，适合滚动距离一致的页面。' }}
+                </span>
+                <button class="btn-default btn-sm self-start" :disabled="previewPending || images.length < 2" @click="rebuildStitch">重新识别</button>
+              </div>
+              <div v-if="stitchResult?.warnings.length" class="stack gap-1 p-2.5 rounded-sm bg-warn-soft" role="status">
+                <b class="text-[11px] font-medium text-warn">需要检查 {{ stitchResult.warnings.length }} 处接缝</b>
+                <span v-for="warning in stitchResult.warnings" :key="warning" class="text-[11px] leading-relaxed text-warn">{{ warning }}</span>
+              </div>
+              <p class="text-[11px] leading-relaxed text-fg-3">左侧列表可以调整截图顺序或移除某一张；右键预览还能管理采集、重新识别和查看实际像素。</p>
+            </section>
+          </template>
+
+          <template v-else>
+            <section class="stack gap-2.5 p-3 border-b border-line">
+              <h3 class="text-[11px] font-semibold text-fg-3">输出</h3>
+              <label class="stack gap-1.5">
+                <span class="text-[12px] text-fg-3">输出格式</span>
+                <select v-model="imageFormat" class="field">
+                  <option value="source">跟随源文件格式</option>
+                  <option value="image/png">PNG</option>
+                  <option value="image/jpeg">JPG</option>
+                  <option value="image/webp">WebP</option>
+                </select>
+              </label>
+              <label v-if="activeMode === 'resize' && !sourcePassThrough" class="stack gap-1.5">
+                <span class="row-between text-[12px] text-fg-3">最大宽度<b class="tabular-nums text-fg">{{ maxWidth }} px</b></span>
+                <input v-model.number="maxWidth" type="number" min="100" max="7680" class="field" />
+              </label>
+              <label v-if="qualityApplies" class="stack gap-1.5">
+                <span class="row-between text-[12px] text-fg-3">输出质量<b class="tabular-nums text-fg">{{ quality }}%</b></span>
+                <input v-model.number="quality" type="range" min="20" max="100" class="w-full accent-[var(--accent)]" />
+                <small v-if="processedSizeLabel" class="text-[11px] tabular-nums text-fg-3">预览大小 {{ processedSizeLabel }}</small>
+              </label>
+              <label v-if="repeatedCompressionApplies" class="stack gap-1.5">
+                <span class="text-[12px] text-fg-3">重复压缩次数</span>
+                <input v-model.number="compressionPasses" type="number" min="1" :max="compressionPassLimit" step="1" class="field" />
+                <small class="text-[11px] text-fg-3">当前图片最多 {{ compressionPassLimit }} 次</small>
+              </label>
+            </section>
+
+            <section class="stack gap-2.5 p-3 border-b border-line">
+              <h3 class="text-[11px] font-semibold text-fg-3">这次会做什么</h3>
+              <div v-if="qualityApplies" class="stack gap-1.5 p-2.5 rounded-sm bg-surface-2">
+                <b class="text-[12px] font-medium text-fg">{{ activeOutputType === 'image/gif' ? `GIF 动画质量 ${quality}%` : compressionPasses === 1 ? '单次压缩' : `连续压缩 ${compressionPasses} 次` }}</b>
+                <span class="text-[11px] leading-relaxed text-fg-3">
+                  {{ activeOutputType === 'image/gif'
+                    ? '逐帧重新量化颜色并保留帧时长和循环；质量越低，颜色精度越低、编码越快。'
+                    : '每次都会重新编码上一轮结果。大图会自动降低次数上限，每轮结束后立即释放位图内存。' }}
+                </span>
+              </div>
+              <div v-else class="stack gap-1.5 p-2.5 rounded-sm bg-surface-2">
+                <b class="text-[12px] font-medium text-fg">{{ sourcePassThrough ? `${sourceExtensionLabel(activeImageFile)} 原文件直出` : 'PNG 无损输出' }}</b>
+                <span class="text-[11px] leading-relaxed text-fg-3">
+                  {{ sourcePassThrough
+                    ? 'GIF 会保留全部动画帧，其他暂不支持重编码的格式会保持源文件字节。'
+                    : 'PNG 没有有损质量参数，固定按 100% 无损输出；仍可缩放、裁剪和旋转。' }}
+                </span>
+              </div>
+              <div v-if="activeMode === 'crop' && !sourcePassThrough" class="stack gap-1.5 p-2.5 rounded-sm bg-surface-2">
+                <b class="text-[12px] font-medium tabular-nums text-fg">{{ cropPixelSummary }}</b>
+                <span class="text-[11px] leading-relaxed text-fg-3">在画布上拖动即可重新框选；拖边角改变大小，拖中间移动选区，方向键微调。</span>
+                <button class="btn-default btn-sm self-start" @click="resetCrop">恢复完整画面</button>
+              </div>
+              <div v-if="activeMode === 'rotate' && !sourcePassThrough" class="stack gap-1.5 p-2.5 rounded-sm bg-surface-2">
+                <b class="text-[12px] font-medium text-fg">{{ rotation ? `${rotation}°` : '原始方向' }}</b>
+                <span class="text-[11px] leading-relaxed text-fg-3">用画布顶部的左转、右转按钮，可以连续点击。</span>
+              </div>
+              <p v-if="!sourcePassThrough" class="text-[11px] leading-relaxed text-fg-3">
+                {{ activeMode === 'crop'
+                  ? '裁剪作用于画布选区；导出时按同一比例应用到全部图片。'
+                  : activeMode === 'rotate'
+                    ? '当前方向会实时预览；导出时应用到全部图片。'
+                    : '参数改变后会重新生成当前图片的真实预览；导出时应用到全部图片。' }}
+              </p>
+            </section>
+          </template>
           </div>
         </aside>
       </div>
 
-      <footer class="visual-statusbar"><p role="status">{{ message }}</p><div><button class="quiet-button" :disabled="copying || exporting || !outputReady" @click="copyCard">复制当前预览</button><button class="primary-button" :disabled="exporting || copying || !outputReady" @click="exportCard">{{ activeMode === 'stitch' ? '导出滚动长图' : `导出${images.length > 1 && activeMode !== 'compose' ? `全部 ${images.length} 张` : ''}` }}</button></div></footer>
+      <!-- One status line. The old page had a status bar here and a second
+           "刚刚导出" panel below the fold saying the same thing. -->
+      <footer class="row-between gap-3 shrink-0 px-3 h-10 border-t border-line">
+        <p class="min-w-0 truncate text-[12px] text-fg-3" role="status">{{ message }}</p>
+        <span v-if="lastOutputs.length" class="row gap-2 shrink-0">
+          <span class="row gap-1.5 text-[11px] text-success" :title="lastOutputs.map((output) => output.name).join(' · ')">
+            <AppIcon name="check" :size="13" />已导出 {{ lastOutputs.length }} 个文件
+          </span>
+          <button v-if="lastOutputs[0]?.path" class="btn-ghost btn-sm" @click="openLocation(lastOutputs[0].path)">
+            <AppIcon name="folder-open" :size="13" />打开位置
+          </button>
+        </span>
+      </footer>
     </section>
 
-    <section v-if="lastOutputs.length" class="visual-output-result panel"><span><b>刚刚导出 {{ lastOutputs.length }} 个文件</b><small>{{ lastOutputs.map(output => output.name).join(' · ') }}</small></span><button v-if="lastOutputs[0]?.path" class="primary-button" @click="openLocation(lastOutputs[0].path)">打开文件位置</button></section>
-    <div v-if="annotationMenu.open" ref="annotationMenuElement" class="annotation-context-menu" role="menu" aria-label="标注操作" :style="{ left: `${annotationMenu.x}px`, top: `${annotationMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleAnnotationMenuKeydown"><p>{{ annotationMenuAnnotation ? `${annotationKindLabel(annotationMenuAnnotation)}标注` : '标注操作' }}</p><button v-if="annotationMenuAnnotation?.kind === 'text'" role="menuitem" @click="editCanvasTextAnnotation(annotationMenu.id)">编辑文字…</button><button role="menuitem" @click="duplicateCanvasAnnotation(annotationMenu.id)">复制标注</button><button role="menuitem" :disabled="!annotationMenuLayer.canMoveForward" @click="moveCanvasAnnotationLayer(annotationMenu.id, 'forward')">上移一层</button><button role="menuitem" :disabled="!annotationMenuLayer.canMoveBackward" @click="moveCanvasAnnotationLayer(annotationMenu.id, 'backward')">下移一层</button><button role="menuitem" :disabled="!annotationMenuLayer.canMoveForward" @click="bringAnnotationToFront(annotationMenu.id)">置于最前</button><button role="menuitem" :disabled="!annotationMenuLayer.canMoveBackward" @click="moveCanvasAnnotationLayer(annotationMenu.id, 'back')">置于最后</button><button class="danger" role="menuitem" @click="removeAnnotation(annotationMenu.id)">删除标注</button></div>
     <Teleport to="body">
-      <div v-if="projectMenu.open" ref="projectMenuElement" class="visual-context-menu visual-project-context-menu" role="menu" aria-label="画布项目操作" :style="{ left: `${projectMenu.x}px`, top: `${projectMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleProjectMenuKeydown">
-        <p>画布操作 <small>{{ projectDirty ? '未保存' : projectId ? '已保存' : '新项目' }}</small></p>
-        <button role="menuitem" :disabled="projectSaving || !images.length || !projectDirty" @click="saveProjectFromMenu">保存画布项目 <kbd>Ctrl/⌘ S</kbd></button>
-        <button role="menuitem" :disabled="copying || exporting || !images.length" @click="copyProjectFromMenu">复制当前预览</button>
-        <button role="menuitem" :disabled="copying || exporting || !images.length" @click="exportProjectFromMenu">导出 PNG</button>
-        <button role="menuitem" :disabled="!projectId" @click="toggleProjectFavoriteFromMenu">{{ projectId && store.isContentFavorite('diagram', projectId) ? '取消收藏画布' : '收藏画布项目' }}</button>
-        <button role="menuitem" :disabled="!annotations.length" @click="clearProjectAnnotationsFromMenu">清空全部标注</button>
-        <button role="menuitem" @click="createProjectFromMenu">新建画布项目</button>
+      <!-- All three menus and the text editor are teleported: the workspace
+           clips its own overflow, and a menu opened near its edge used to be
+           cut in half. -->
+      <div
+        v-if="annotationMenu.open"
+        ref="annotationMenuElement"
+        class="fixed z-130 w-52 py-1 rounded-md bg-surface border border-line shadow-lg"
+        role="menu"
+        aria-label="标注操作"
+        :style="{ left: `${annotationMenu.x}px`, top: `${annotationMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleAnnotationMenuKeydown"
+      >
+        <p class="px-3 pt-1 pb-1.5 text-[11px] font-semibold text-fg-3">{{ annotationMenuAnnotation ? `${annotationKindLabel(annotationMenuAnnotation)}标注` : '标注操作' }}</p>
+        <button v-if="annotationMenuAnnotation?.kind === 'text'" class="menu-item" role="menuitem" @click="editCanvasTextAnnotation(annotationMenu.id)">编辑文字…</button>
+        <button class="menu-item" role="menuitem" @click="duplicateCanvasAnnotation(annotationMenu.id)">复制标注</button>
+        <button class="menu-item" role="menuitem" :disabled="!annotationMenuLayer.canMoveForward" @click="moveCanvasAnnotationLayer(annotationMenu.id, 'forward')">上移一层</button>
+        <button class="menu-item" role="menuitem" :disabled="!annotationMenuLayer.canMoveBackward" @click="moveCanvasAnnotationLayer(annotationMenu.id, 'backward')">下移一层</button>
+        <button class="menu-item" role="menuitem" :disabled="!annotationMenuLayer.canMoveForward" @click="bringAnnotationToFront(annotationMenu.id)">置于最前</button>
+        <button class="menu-item" role="menuitem" :disabled="!annotationMenuLayer.canMoveBackward" @click="moveCanvasAnnotationLayer(annotationMenu.id, 'back')">置于最后</button>
+        <span class="block my-1 divider" aria-hidden="true" />
+        <button class="menu-item menu-item-danger" role="menuitem" @click="removeAnnotation(annotationMenu.id)">删除标注</button>
       </div>
-      <div v-if="processMenu.open" ref="processMenuElement" class="visual-context-menu" role="menu" aria-label="图片预览操作" :style="{ left: `${processMenu.x}px`, top: `${processMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleProcessMenuKeydown">
-        <p>{{ activeMode === 'compose' && !images.length ? '开始自由画布' : '预览操作' }}</p>
-        <template v-if="activeMode === 'compose' && !images.length"><button v-for="preset in blankCanvasPresets" :key="preset.id" role="menuitem" :disabled="blankCanvasBusy" @click="createBlankCanvasFromMenu(preset)">新建{{ preset.label }} <kbd>{{ preset.width }} × {{ preset.height }}</kbd></button></template>
-        <button v-if="activeMode === 'stitch'" role="menuitem" :disabled="captureSessionBusy || (!captureSessionActive && imageFiles.length >= STITCH_MAX_FILES)" @click="captureSessionActive ? stopCaptureSession() : startCaptureSession()">{{ captureSessionActive ? '结束桌面采集并拼接' : '开始桌面采集会话' }} <kbd>{{ CAPTURE_SHORTCUT }}</kbd></button>
-        <button v-if="activeMode === 'stitch' && captureSessionActive" role="menuitem" :disabled="captureSessionBusy" @click="hideForCapture">隐藏 Knitspace 继续采集</button>
-        <button role="menuitem" :disabled="copying || exporting || !outputReady" @click="copyProcessPreview">复制当前预览</button>
-        <button v-if="activeMode === 'stitch'" role="menuitem" :disabled="previewPending || images.length < 2" @click="rebuildStitch">重新识别重叠</button>
-        <button role="menuitem" @click="resetProcessViewport">适应窗口 <kbd>Ctrl/⌘ 0</kbd></button>
-        <button role="menuitem" @click="actualSizeProcessViewport">实际像素 <kbd>Ctrl/⌘ 1</kbd></button>
-        <button v-if="activeMode === 'crop' && !sourcePassThrough" role="menuitem" @click="resetProcessCrop">恢复完整画面</button>
-        <button v-if="activeMode === 'rotate' && !sourcePassThrough && rotation" role="menuitem" @click="resetProcessRotation">恢复原始方向</button>
+
+      <div
+        v-if="projectMenu.open"
+        ref="projectMenuElement"
+        class="fixed z-130 w-60 py-1 rounded-md bg-surface border border-line shadow-lg"
+        role="menu"
+        aria-label="画布项目操作"
+        :style="{ left: `${projectMenu.x}px`, top: `${projectMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleProjectMenuKeydown"
+      >
+        <p class="row-between gap-2 px-3 pt-1 pb-1.5 text-[11px] font-semibold text-fg-3">
+          画布操作<small class="font-normal">{{ projectDirty ? '未保存' : projectId ? '已保存' : '新项目' }}</small>
+        </p>
+        <button class="menu-item" role="menuitem" :disabled="projectSaving || !images.length || !projectDirty" @click="saveProjectFromMenu">保存画布项目<kbd class="kbd">Ctrl/⌘ S</kbd></button>
+        <button class="menu-item" role="menuitem" :disabled="copying || exporting || !images.length" @click="copyProjectFromMenu">复制当前预览</button>
+        <button class="menu-item" role="menuitem" :disabled="copying || exporting || !images.length" @click="exportProjectFromMenu">导出 PNG</button>
+        <button class="menu-item" role="menuitem" :disabled="!projectId" @click="toggleProjectFavoriteFromMenu">{{ projectId && store.isContentFavorite('diagram', projectId) ? '取消收藏画布' : '收藏画布项目' }}</button>
+        <button class="menu-item" role="menuitem" :disabled="!annotations.length" @click="clearProjectAnnotationsFromMenu">清空全部标注</button>
+        <button class="menu-item" role="menuitem" @click="createProjectFromMenu">新建画布项目</button>
       </div>
+
+      <div
+        v-if="processMenu.open"
+        ref="processMenuElement"
+        class="fixed z-130 w-60 py-1 rounded-md bg-surface border border-line shadow-lg"
+        role="menu"
+        aria-label="图片预览操作"
+        :style="{ left: `${processMenu.x}px`, top: `${processMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleProcessMenuKeydown"
+      >
+        <p class="px-3 pt-1 pb-1.5 text-[11px] font-semibold text-fg-3">{{ activeMode === 'compose' && !images.length ? '开始自由画布' : '预览操作' }}</p>
+        <template v-if="activeMode === 'compose' && !images.length">
+          <button v-for="preset in blankCanvasPresets" :key="preset.id" class="menu-item" role="menuitem" :disabled="blankCanvasBusy" @click="createBlankCanvasFromMenu(preset)">
+            新建{{ preset.label }}<kbd class="kbd">{{ preset.width }} × {{ preset.height }}</kbd>
+          </button>
+        </template>
+        <button v-if="activeMode === 'stitch'" class="menu-item" role="menuitem" :disabled="captureSessionBusy || (!captureSessionActive && imageFiles.length >= STITCH_MAX_FILES)" @click="captureSessionActive ? stopCaptureSession() : startCaptureSession()">
+          {{ captureSessionActive ? '结束桌面采集并拼接' : '开始桌面采集会话' }}<kbd class="kbd">{{ CAPTURE_SHORTCUT }}</kbd>
+        </button>
+        <button v-if="activeMode === 'stitch' && captureSessionActive" class="menu-item" role="menuitem" :disabled="captureSessionBusy" @click="hideForCapture">隐藏 Knitspace 继续采集</button>
+        <button class="menu-item" role="menuitem" :disabled="copying || exporting || !outputReady" @click="copyProcessPreview">复制当前预览</button>
+        <button v-if="activeMode === 'stitch'" class="menu-item" role="menuitem" :disabled="previewPending || images.length < 2" @click="rebuildStitch">重新识别重叠</button>
+        <button class="menu-item" role="menuitem" @click="resetProcessViewport">适应窗口<kbd class="kbd">Ctrl/⌘ 0</kbd></button>
+        <button class="menu-item" role="menuitem" @click="actualSizeProcessViewport">实际像素<kbd class="kbd">Ctrl/⌘ 1</kbd></button>
+        <button v-if="activeMode === 'crop' && !sourcePassThrough" class="menu-item" role="menuitem" @click="resetProcessCrop">恢复完整画面</button>
+        <button v-if="activeMode === 'rotate' && !sourcePassThrough && rotation" class="menu-item" role="menuitem" @click="resetProcessRotation">恢复原始方向</button>
+      </div>
+
+      <section
+        v-if="annotationTextEditor.open"
+        ref="annotationTextEditorElement"
+        class="fixed z-130 w-64 stack gap-2 p-3 rounded-md bg-surface border border-line shadow-lg"
+        role="dialog"
+        aria-modal="false"
+        aria-label="编辑文字标注"
+        :style="{ left: `${annotationTextEditor.x}px`, top: `${annotationTextEditor.y}px` }"
+        @keydown.stop
+      >
+        <header class="row-between gap-2">
+          <b class="text-[12px] font-semibold text-fg">编辑文字标注</b>
+          <small class="text-[11px] text-fg-3">Enter 保存 · Esc 取消</small>
+        </header>
+        <input
+          ref="annotationTextEditorInput"
+          v-model="annotationTextEditor.text"
+          class="field"
+          maxlength="26"
+          aria-label="标注文字"
+          @keydown.enter.prevent="saveCanvasTextEdit"
+          @keydown.esc.prevent="cancelCanvasTextEdit"
+        />
+        <footer class="row justify-end gap-2">
+          <button class="btn-default btn-sm" @click="cancelCanvasTextEdit">取消</button>
+          <button class="btn-primary btn-sm" @click="saveCanvasTextEdit">保存</button>
+        </footer>
+      </section>
     </Teleport>
-    <section v-if="annotationTextEditor.open" ref="annotationTextEditorElement" class="annotation-text-editor" role="dialog" aria-modal="false" aria-label="编辑文字标注" :style="{ left: `${annotationTextEditor.x}px`, top: `${annotationTextEditor.y}px` }" @keydown.stop><header><span>编辑文字标注</span><small>Enter 保存 · Esc 取消</small></header><input ref="annotationTextEditorInput" v-model="annotationTextEditor.text" maxlength="26" aria-label="标注文字" @keydown.enter.prevent="saveCanvasTextEdit" @keydown.esc.prevent="cancelCanvasTextEdit" /><footer><button class="quiet-button" @click="cancelCanvasTextEdit">取消</button><button class="primary-button" @click="saveCanvasTextEdit">保存</button></footer></section>
   </div>
 </template>
+
+<style scoped>
+/*
+ * Two things here resist utilities, and both are machinery rather than design
+ * system: the menu row, which repeats eleven times across three menus, and the
+ * crop overlay — eight handle positions, a rule-of-thirds grid drawn with two
+ * gradients, and a 9999px shadow that dims everything outside the selection.
+ *
+ * The crop overlay's colours are deliberately fixed rather than themed. It
+ * sits on top of the user's own pixels, so it has to read the same against a
+ * dark photo and a white screenshot, in either UI theme.
+ */
+.menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  color: var(--fg-2);
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+  transition: color .12s ease, background .12s ease;
+}
+
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible:not(:disabled) {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.menu-item:focus-visible {
+  outline: none;
+}
+
+.menu-item:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.menu-item-danger {
+  color: var(--danger);
+}
+
+.menu-item-danger:hover:not(:disabled),
+.menu-item-danger:focus-visible:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.crop-layer {
+  position: absolute;
+  z-index: 4;
+  overflow: hidden;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.crop-selection {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  min-width: 4px;
+  min-height: 4px;
+  border: 2px solid rgb(255 255 255 / .92);
+  background-image:
+    linear-gradient(to right, transparent 33.1%, rgb(255 255 255 / .38) 33.2%, rgb(255 255 255 / .38) 33.7%, transparent 33.8%, transparent 66.2%, rgb(255 255 255 / .38) 66.3%, rgb(255 255 255 / .38) 66.8%, transparent 66.9%),
+    linear-gradient(to bottom, transparent 33.1%, rgb(255 255 255 / .38) 33.2%, rgb(255 255 255 / .38) 33.7%, transparent 33.8%, transparent 66.2%, rgb(255 255 255 / .38) 66.3%, rgb(255 255 255 / .38) 66.8%, transparent 66.9%);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / .55);
+  cursor: move;
+  touch-action: none;
+}
+
+.crop-selection:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.crop-selection > span {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  padding: 3px 7px;
+  border-radius: 5px;
+  color: #fff;
+  background: rgb(0 0 0 / .72);
+  font: 500 12px/1.2 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.crop-selection > i {
+  position: absolute;
+  z-index: 3;
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgb(0 0 0 / .45);
+  border-radius: 3px;
+  background: #fff;
+}
+
+.crop-selection .handle-nw { top: -6px; left: -6px; cursor: nwse-resize; }
+.crop-selection .handle-n { top: -6px; left: calc(50% - 6px); cursor: ns-resize; }
+.crop-selection .handle-ne { top: -6px; right: -6px; cursor: nesw-resize; }
+.crop-selection .handle-e { top: calc(50% - 6px); right: -6px; cursor: ew-resize; }
+.crop-selection .handle-se { right: -6px; bottom: -6px; cursor: nwse-resize; }
+.crop-selection .handle-s { bottom: -6px; left: calc(50% - 6px); cursor: ns-resize; }
+.crop-selection .handle-sw { bottom: -6px; left: -6px; cursor: nesw-resize; }
+.crop-selection .handle-w { top: calc(50% - 6px); left: -6px; cursor: ew-resize; }
+</style>

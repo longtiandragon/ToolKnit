@@ -97,7 +97,9 @@ function collect() {
      colours on purpose — the code-image card is midnight-dark even in light
      mode, because that is what the user is exporting — so holding them to
      the UI's contrast rules would report the feature as a defect. */
-  const CONTENT = /hljs|theme-|code-export|codesnap|card-preview|swatch|katex|markmap|mermaid|reading-/i
+  // `crop-selection` is the crop overlay: it sits on the user's own pixels, so
+  // it is fixed white-on-scrim in both themes by design, not by omission.
+  const CONTENT = /hljs|theme-|code-export|codesnap|card-preview|swatch|katex|markmap|mermaid|reading-|crop-selection|crop-layer/i
   const isContent = (element) => {
     for (let node = element; node; node = node.parentElement) {
       if (CONTENT.test(String(node.className || ''))) return true

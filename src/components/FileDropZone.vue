@@ -47,13 +47,25 @@ onBeforeUnmount(()=>{disposed=true;unlisten();previews.value.forEach(URL.revokeO
     @dragleave.prevent="active = false"
     @drop.prevent="drop"
   >
-    <!-- Compact and empty: one row, so a list can keep the height. -->
-    <div v-if="!files.length && compact" class="row gap-2.5 px-3 h-11">
+    <!-- Compact: one row at every state, so whatever sits beside it keeps the
+         height. The page that asked for `compact` is showing the files itself
+         in a list of its own, so repeating them here would be the same names
+         twice in one column. -->
+    <div v-if="compact" class="row gap-2.5 px-3 h-11">
       <AppIcon name="inbox" :size="16" class="shrink-0" :class="active && !disabled ? 'text-accent' : 'text-fg-3'" />
-      <span class="min-w-0 flex-1 truncate text-[12px]" :class="active && !disabled ? 'text-accent' : 'text-fg-3'">
-        {{ loading ? (desktopPathOnly ? '正在建立本地索引…' : '正在读取文件…') : active && !disabled ? '松手即可载入' : title }}
+      <span
+        class="min-w-0 flex-1 truncate text-[12px]"
+        :class="active && !disabled ? 'text-accent' : 'text-fg-3'"
+        :title="files.length ? `${files.length} 个文件 · ${formatSize(totalSize)}` : undefined"
+      >
+        {{ loading
+          ? (desktopPathOnly ? '正在建立本地索引…' : '正在读取文件…')
+          : active && !disabled
+            ? (files.length ? '松手即可追加' : '松手即可载入')
+            : files.length ? `${files.length} 个文件` : title }}
       </span>
-      <button class="btn-ghost btn-sm shrink-0" :disabled="disabled || loading" @click="chooseFiles">选择文件</button>
+      <button v-if="files.length" class="btn-ghost btn-sm shrink-0 text-fg-3 hover:not-disabled:text-danger" :disabled="disabled" @click="clear">清空</button>
+      <button class="btn-ghost btn-sm shrink-0" :disabled="disabled || loading" @click="chooseFiles">{{ files.length ? '添加' : '选择文件' }}</button>
     </div>
 
     <!-- Empty: the whole surface is the target, so it reads as one. -->

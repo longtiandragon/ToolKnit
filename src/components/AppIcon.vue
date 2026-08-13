@@ -69,6 +69,8 @@ import {
   Minus,
   Minimize2,
   Sigma,
+  MousePointer2,
+  Square,
 } from '@lucide/vue'
 
 const props = withDefaults(defineProps<{ name: string; size?: number; label?: string }>(), {
@@ -142,6 +144,8 @@ const icons: Record<string, Component> = {
   task: ListChecks,
   table: Table2,
   rule: Minus,
+  pointer: MousePointer2,
+  square: Square,
   minimize: Minimize2,
   math: Sigma,
   download: Download,

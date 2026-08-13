@@ -92,7 +92,11 @@
   --surface: #ffffff;
   --surface-2: #f2f4f7;
   --surface-3: #e9ecf1;
-  --well: #ffffff;
+  /* A well is a recess: the plane an input, a drop target or a canvas sits
+     *in*. It was #ffffff here, the same value as `--surface`, so in light mode
+     every text field, drop zone and editor canvas was flush with the panel
+     around it and only its hairline said where it started. */
+  --well: #f3f5f9;
 
   --fg: #0f1319;
   --fg-2: #4a5464;
