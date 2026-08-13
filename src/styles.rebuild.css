@@ -539,85 +539,31 @@ textarea:focus-visible,
   backdrop-filter: blur(8px);
 }
 
-.command-palette {
-  width: min(680px, calc(100vw - 40px));
-  border: 1px solid var(--line-strong);
-  border-radius: 16px;
-  background: var(--surface-overlay);
-  box-shadow: var(--shadow-xl);
-}
 
-.command-search {
-  padding: 14px 16px;
-}
 
-.command-search input {
-  height: 44px;
-  color: var(--text);
-  background: transparent;
-  font-size: 16px;
-}
 
-.command-search input::placeholder {
-  color: var(--fg-3);
-}
 
-.command-search button {
-  color: var(--muted);
-  background: var(--surface-2);
-  font-size: 13px;
-}
 
-.command-caption,
-.command-footer {
-  color: var(--muted);
-  background: var(--surface-2);
-  font-size: 13px;
-}
 
-.command-results > a {
-  min-height: 64px;
-  grid-template-columns: 42px minmax(0, 1fr) auto 28px;
-}
 
-.command-results > a > b {
-  width: 40px;
-  height: 40px;
-  color: var(--green);
-  background: var(--green-bg);
-}
 
-.command-results > a strong {
-  color: var(--text);
-  font-size: 14px;
-}
 
-.command-results > a small,
-.command-results > a i {
-  color: var(--muted);
-  font-size: 13px;
-}
 
-.task-drawer {
-  width: min(390px, calc(100vw - 24px));
-  border-left: 1px solid var(--line);
-  color: var(--text);
-  background: var(--surface-overlay);
-  box-shadow: -18px 0 54px var(--line);
-}
 
-.task-drawer h3,
-.close-dialog h3 {
-  font-size: 21px;
-}
 
-.task-drawer article b,
-.task-drawer article small,
-.task-drawer > p,
-.close-dialog p,
-.close-dialog label {
-  font-size: 13px;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Improve legacy pages while they migrate to the new component language. */
 .page-heading,
@@ -795,36 +741,13 @@ textarea:focus-visible,
 
 
 
-.route-error {
-  display: grid;
-  max-width: 760px;
-  min-height: 170px;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  gap: 16px;
-  align-items: center;
-  margin: 40px auto;
-  padding: 24px;
-}
 
-.route-error > b {
-  display: grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  border-radius: 12px;
-  color: var(--red);
-  background: var(--red-bg);
-}
 
-.route-error h2 {
-  font-size: 20px;
-}
 
-.route-error p {
-  margin-top: 5px;
-  color: var(--muted);
-  font-size: 12px;
-}
+
+
+
+
 
 .designed-empty {
   min-height: 170px;
@@ -1051,14 +974,9 @@ textarea:focus-visible,
     justify-self: start;
   }
 
-  .route-error {
-    grid-template-columns: 40px minmax(0, 1fr);
-  }
+  
 
-  .route-error > button {
-    grid-column: 2;
-    justify-self: start;
-  }
+  
 }
 
 @media (prefers-reduced-motion: reduce) {

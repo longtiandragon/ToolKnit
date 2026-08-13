@@ -140,6 +140,13 @@ export default defineConfig({
     ],
     ['menu-sep', 'shrink-0 my-1 h-px bg-line'],
 
+    // ── Command palette rows ──────────────────────────────────────────────
+    // Eight result kinds — spaces, favourites, recents, tools, canvases,
+    // knowledge, sources, clipboard — all render the same row. One shape.
+    ['command-row', 'row gap-2.5 px-2 py-1.5 rounded-sm transition-colors duration-120 hover:bg-accent-soft focus-visible:bg-accent-soft focus-visible:outline-none'],
+    ['command-row__mark', 'center w-8 h-8 shrink-0 rounded-sm bg-surface-2 text-fg-2'],
+    ['command-row__tag', 'shrink-0 text-[11px] not-italic text-fg-3'],
+
     // ── Form controls ─────────────────────────────────────────────────────
     [
       'field',

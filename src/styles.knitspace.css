@@ -89,131 +89,101 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .new-task { border-radius: 11px; background: var(--accent-solid-hover); box-shadow: 0 9px 18px var(--accent-soft); }
 .workspace-content { height: calc(100vh - 78px); }
 
-.vault-bootstrap {
-  display: grid;
-  min-height: min(520px, calc(100vh - 78px));
-  place-items: center;
-  align-content: center;
-  padding: 42px;
-  color: var(--text-secondary);
-  text-align: center;
-}
-.vault-bootstrap__mark {
-  display: grid;
-  width: 52px;
-  height: 52px;
-  margin-bottom: 16px;
-  place-items: center;
-  border: 1px solid var(--accent-soft);
-  border-radius: 17px;
-  color: var(--green-strong);
-  background: var(--surface-2);
-  box-shadow: var(--shadow-sm);
-}
+
+
 .vault-bootstrap .eyebrow { color: var(--green-strong); font: 700 12px var(--font-ui); letter-spacing: .12em; }
-.vault-bootstrap h2 { margin: 7px 0 8px; color: var(--text); font: 720 27px/1.25 var(--font-display); letter-spacing: -.035em; }
-.vault-bootstrap > small { margin-top: 10px; color: var(--muted); }
-.vault-bootstrap__progress { display: flex; width: min(330px, 66vw); gap: 6px; margin-top: 20px; }
-.vault-bootstrap__progress i { height: 4px; flex: 1; border-radius: 9px; background: var(--line); }
+
+
+
+
 .vault-bootstrap__progress i.active { background: var(--accent-solid); }
 
-.app-context-menu {
-  position: fixed;
-  z-index: var(--z-context-menu);
-  width: 220px;
-  overflow: hidden;
-  border: 1px solid var(--accent-soft);
-  border-radius: 13px;
-  color: var(--text);
-  background: var(--surface);
-  box-shadow: var(--shadow-lg);
-  animation: knit-menu-in .14s ease-out both;
-}
-.app-context-menu header { display: grid; gap: 3px; padding: 12px 13px 9px; border-bottom: 1px solid var(--line-weak); }
-.app-context-menu header span { color: var(--muted); font: 700 12px var(--font-ui); letter-spacing: .1em; text-transform: uppercase; }
-.app-context-menu header b { font-size: 13px; }
-.app-context-menu button { display: flex; width: 100%; align-items: center; gap: 9px; min-height: 38px; padding: 0 13px; border: 0; color: var(--text-secondary); background: transparent; font-size: 12px; text-align: left; }
-.app-context-menu button { cursor: pointer; transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out); }
-.app-context-menu button:hover, .app-context-menu button:focus-visible { color: var(--green-strong); background: var(--green-bg); }
-.app-context-menu button:focus-visible { outline: 2px solid color-mix(in srgb, var(--green) 48%, transparent); outline-offset: -2px; }
-.nav-context-menu,.workspace-context-menu { max-height: calc(100vh - 24px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
-.nav-context-menu header { position: sticky; z-index: 2; top: 0; background: var(--surface); }
-.command-content-context-menu { z-index: calc(var(--z-global-modal) + 1); width: min(252px, calc(100vw - 24px)); }
-.command-content-context-menu header { background: linear-gradient(120deg, color-mix(in srgb, var(--green-bg) 78%, transparent), transparent 74%); }
-.command-content-context-menu header b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.command-result-link--content { cursor: pointer; }
-.workspace-context-menu { width: 274px; }
-.workspace-context-menu header { padding-bottom: 10px; background: linear-gradient(125deg, var(--accent-soft), var(--surface-2) 72%); }
-.workspace-context-menu header small { color: var(--muted); font: 12px/1.35 var(--font-ui); }
-.workspace-context-menu__section { margin: 0; padding: 7px 12px 5px; border-bottom: 1px solid var(--line-weak); color: var(--muted); background: color-mix(in srgb, var(--surface-2) 56%, transparent); font: 700 12px/1.2 var(--font-ui); letter-spacing: .09em; }
-.workspace-context-menu button { align-items: flex-start; gap: 10px; min-height: 49px; padding-top: 8px; padding-bottom: 8px; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 .workspace-context-menu button .app-icon { flex: 0 0 auto; margin-top: 2px; color: var(--green-strong); }
-.workspace-context-menu button span { display: grid; min-width: 0; gap: 2px; }
-.workspace-context-menu button b { color: currentColor; font: 680 13px/1.25 var(--font-ui); }
-.workspace-context-menu button small { overflow: hidden; color: var(--muted); font: 12px/1.3 var(--font-ui); text-overflow: ellipsis; white-space: nowrap; }
-.workspace-context-menu button:hover small, .workspace-context-menu button:focus-visible small { color: color-mix(in srgb, var(--green-strong) 70%, var(--muted)); }
-.workspace-context-menu button.workspace-context-menu__feature { min-height: 37px; align-items: center; padding-top: 0; padding-bottom: 0; }
-.workspace-context-menu__feature > span { display: block !important; overflow: hidden; flex: 1; color: currentColor; font: 650 12px/1.3 var(--font-ui); text-overflow: ellipsis; white-space: nowrap; }
+
+
+
+
+
+
 .workspace-context-menu__feature > .app-icon:last-child { margin: 0 0 0 auto; color: var(--muted); }
 .workspace-context-menu button.workspace-context-menu__more-toggle { position: sticky; bottom: 0; z-index: 1; align-items: center; min-height: 42px; padding-top: 6px; padding-bottom: 6px; border-top: 1px solid var(--line-weak); border-bottom: 1px solid var(--line-weak); background: var(--surface); }
 .workspace-context-menu button.workspace-context-menu__more-toggle:hover,.workspace-context-menu button.workspace-context-menu__more-toggle:focus-visible { background: var(--green-bg); }
-.workspace-context-menu__more-chevron { display: grid !important; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; border-radius: 7px; color: var(--green-strong); background: var(--accent-soft); font: 750 14px/1 var(--font-ui); }
-.workspace-context-menu__feature--more { background: color-mix(in srgb, var(--surface) 96%, var(--green-bg)); }
+
+
 @keyframes knit-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.985); } to { opacity: 1; transform: none; } }
 
-.command-result-label { margin: 5px 10px 2px; padding: 9px 4px 4px; border-top: 1px solid var(--line-weak); color: var(--muted); font: 700 12px var(--font-ui); letter-spacing: .11em; text-transform: uppercase; }
-.command-results a:has(+ .command-result-label) { border-bottom: 0; }
-.command-space-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;padding:5px 10px 8px}.command-space-tile{display:grid;min-width:0;min-height:74px;grid-template-columns:28px minmax(0,1fr);align-items:center;gap:7px;padding:9px 8px;border:1px solid var(--line-weak);border-radius:10px;color:var(--text);background:var(--surface-2);transition:border-color .16s ease,background .16s ease,color .16s ease}.command-space-tile:hover,.command-space-tile:focus-visible{border-color:var(--accent-soft);color:var(--green-strong);background:var(--green-bg)}.command-space-tile:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 50%,transparent);outline-offset:1px}.command-space-tile>b{display:grid;width:28px;height:28px;place-items:center;border-radius:8px;color:var(--green-strong);background:var(--green-bg)}.command-space-tile>span{display:grid;min-width:0;gap:3px}.command-space-tile strong,.command-space-tile small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.command-space-tile strong{font:700 13px var(--font-ui)}.command-space-tile small{color:var(--muted);font:11px var(--font-ui)}
+
+
+
 
 /* Ctrl+K remains a fast search, but the browse state makes every implemented
    workflow discoverable without requiring the user to know its name first. */
 .command-palette--browse { width: min(780px, calc(100vw - 40px)); }
-.command-caption > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.command-browse-toggle { display: inline-flex; min-height: 29px; flex: 0 0 auto; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--accent-soft); border-radius: 7px; color: var(--green-strong); background: var(--surface-2); font: 700 12px var(--font-ui); }
+
+
 .command-browse-toggle:hover, .command-browse-toggle:focus-visible, .command-browse-toggle.active { border-color: var(--accent-soft); background: var(--green-bg); }
-.command-browse-toggle kbd { padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); background: var(--surface); font: 700 11px var(--font-mono); }
-.command-feature-map { max-height: min(530px, 64vh); padding: 13px 14px 15px; overflow-y: auto; background: linear-gradient(180deg, var(--surface-2), var(--surface)); }
-.command-feature-map > header { display: flex; align-items: end; justify-content: space-between; gap: 18px; padding: 1px 3px 11px; }
-.command-feature-map > header p { margin: 0 0 3px; color: var(--green-strong); font: 750 11px var(--font-ui); letter-spacing: .12em; }
-.command-feature-map > header strong { color: var(--text); font: 700 13px var(--font-ui); }
-.command-feature-map > header small { color: var(--muted); font: 12px var(--font-ui); white-space: nowrap; }
-.command-feature-map__grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
-.command-feature-group { min-width: 0; overflow: hidden; border: 1px solid var(--accent-soft); border-radius: 11px; background: var(--surface-2); box-shadow: 0 4px 13px var(--accent-soft); }
-.command-feature-group:last-child:nth-child(odd) { grid-column: 1 / -1; }
-.command-feature-group__heading { display: grid; min-width: 0; grid-template-columns: 31px minmax(0,1fr) auto; align-items: center; gap: 9px; padding: 10px 11px; border-bottom: 1px solid var(--line-weak); color: var(--text); background: linear-gradient(110deg, var(--accent-soft), transparent 70%); }
-.command-feature-group__heading:hover, .command-feature-group__heading:focus-visible { color: var(--green-strong); background: var(--accent-soft); }
-.command-feature-group__heading > b { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; color: var(--green-strong); background: var(--surface-2); }
-.command-feature-group__heading > span { display: grid; min-width: 0; gap: 2px; }
-.command-feature-group__heading strong { font: 720 13px var(--font-ui); }
-.command-feature-group__heading small { color: var(--muted); font: 11px var(--font-ui); }
-.command-feature-group__heading > i { color: var(--green-strong); font-size: 13px; font-style: normal; }
-.command-feature-group nav { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); padding: 6px; }
-.command-feature-group nav a { display: flex; min-width: 0; min-height: 31px; align-items: center; gap: 6px; padding: 0 7px; border-radius: 6px; color: var(--text-secondary); font: 620 12px var(--font-ui); }
-.command-feature-group nav a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 .command-feature-group nav a .app-icon { flex: 0 0 auto; color: var(--muted); }
-.command-feature-group nav a:hover, .command-feature-group nav a:focus-visible { color: var(--green-strong); background: var(--green-bg); }
+
 .command-feature-group nav a:hover .app-icon, .command-feature-group nav a:focus-visible .app-icon { color: currentColor; }
-.app-context-menu--over-command { z-index: 190; }
-.command-footer > small { margin-left: auto; color: var(--muted); font: 11px var(--font-ui); }
-@media (max-width: 760px) { .command-feature-map__grid { grid-template-columns: 1fr; } .command-feature-group:last-child:nth-child(odd) { grid-column: auto; } .command-feature-map > header small { display: none; } }
+
+
+@media (max-width: 760px) {    }
 
 /* The command center is a daily desktop surface, so even its secondary labels
    stay readable against warm paper instead of collapsing into 8px metadata. */
 .command-space-tile strong { font-size: 12px; }
-.command-space-tile small { font-size: 12px; }
-.command-browse-toggle { min-height: 32px; padding-inline: 9px; font-size: 12px; }
-.command-browse-toggle kbd { font-size: 12px; }
-.command-feature-map > header p { font-size: 12px; }
-.command-feature-map > header strong { font-size: 15px; }
-.command-feature-map > header small { font-size: 12px; }
-.command-feature-group__heading strong { font-size: 12px; }
-.command-feature-group__heading small { font-size: 12px; }
-.command-feature-group nav a { min-height: 36px; gap: 7px; padding-inline: 8px; font-size: 13px; }
-.command-footer > small { font-size: 12px; }
-.command-result-link--content, .command-result-link--tool { cursor: pointer; }
-.command-backdrop { padding: clamp(24px, 8vh, 72px) 12px 12px; overflow: hidden; }
-.command-backdrop > .command-palette { display: flex; max-height: calc(100vh - clamp(24px, 8vh, 72px) - 12px); flex-direction: column; }
-.command-backdrop .command-feature-map, .command-backdrop .command-results { min-height: 0; flex: 1 1 auto; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Today: a quiet command surface, not another busy dashboard. */
 .workbench-dashboard { max-width: 1540px; padding: 24px 30px 30px; }
@@ -379,12 +349,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Command results keep navigation and auxiliary actions as sibling controls:
    valid HTML makes the palette's desktop focus loop predictable. */
 .command-results > .command-result-row { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); }
-.command-results > .command-result-row--tool { grid-template-columns: minmax(0, 1fr) 31px; align-items: stretch; }
-.command-results .command-result-link { display: grid; min-width: 0; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 11px; border: 1px solid transparent; border-radius: 8px; color: var(--text); }
-.command-results .command-result-link:hover, .command-results .command-result-link:focus-visible { border-color: color-mix(in srgb, var(--green) 26%, transparent); background: var(--green-bg); transform: translateX(2px); }
-.command-results .command-result-link > b { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 7px; color: var(--green-strong); background: var(--green-bg); }
-.command-results .command-result-link > span { min-width: 0; }.command-results .command-result-link strong, .command-results .command-result-link small { display: block; }.command-results .command-result-link strong { font-size: 12px; }.command-results .command-result-link small { overflow: hidden; margin-top: 4px; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.command-results .command-result-link i { color: var(--muted); font-size: 12px; font-style: normal; }
-.command-results .command-result-row--tool .command-favorite { align-self: center; justify-self: center; }.command-results .command-favorite:focus-visible { outline: 2px solid color-mix(in srgb, var(--green) 48%, transparent); outline-offset: 1px; }
+
+
+
+
+
+
 
 
 /* Obsidian/Typora YAML remains source-owned. This quiet property ribbon makes
@@ -593,30 +563,30 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   contain: layout paint;
   user-select: none;
 }
-.desktop-titlebar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 0; }
-.desktop-titlebar__identity { display: flex; min-width: 0; align-items: center; gap: 8px; padding-left: 11px; pointer-events: none; }
-.desktop-titlebar__identity span { display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid var(--surface-2); border-radius: 6px; color: var(--accent-fg); background: var(--accent-soft); font: 760 11px var(--font-ui); }
-.desktop-titlebar__identity b { overflow: hidden; color: var(--fg); font: 650 13px var(--font-ui); letter-spacing: .01em; text-overflow: ellipsis; white-space: nowrap; }
-.desktop-titlebar__identity small { display: grid; min-width: 32px; height: 17px; place-items: center; padding: 0 5px; border: 1px solid var(--surface-2); border-radius: 5px; color: var(--fg); background: var(--surface-2); font: 720 11px var(--font-ui); letter-spacing: .08em; }
-.desktop-titlebar__identity small.is-personal { color: var(--warn); border-color: var(--warn-soft); background: var(--warn-soft); }
-.desktop-titlebar__route { display: flex; min-width: 0; align-items: baseline; justify-content: center; gap: 7px; pointer-events: none; }
-.desktop-titlebar__route span { overflow: hidden; max-width: 240px; color: var(--fg); font: 650 12px var(--font-ui); text-overflow: ellipsis; white-space: nowrap; }
-.desktop-titlebar__route small { overflow: hidden; max-width: 150px; color: var(--fg); font: 650 11px var(--font-ui); text-overflow: ellipsis; white-space: nowrap; }
-.desktop-window-controls { justify-self: end; display: flex; height: 34px; align-items: stretch; }
-.desktop-window-controls button { position: relative; display: grid; width: 45px; height: 34px; place-items: center; padding: 0; border: 0; border-radius: 0; color: var(--fg); background: transparent; box-shadow: none; }
-.desktop-window-controls button:hover, .desktop-window-controls button:focus-visible { color: var(--fg); background: var(--surface-2); }
-.desktop-window-controls button:focus-visible { z-index: 1; outline: 2px solid var(--accent); outline-offset: -2px; }
-.desktop-window-controls__close:hover, .desktop-window-controls__close:focus-visible { background: var(--danger) !important; }
-.window-glyph { position: relative; display: block; width: 11px; height: 11px; color: currentColor; }
-.window-glyph--minimize::before { position: absolute; content: ''; right: 1px; bottom: 2px; left: 1px; height: 1px; background: currentColor; }
-.window-glyph--maximize { width: 10px; height: 10px; border: 1px solid currentColor; }
-.window-glyph--restore::before, .window-glyph--restore::after { position: absolute; content: ''; width: 8px; height: 8px; border: 1px solid currentColor; }
-.window-glyph--restore::before { top: 0; right: 0; }
-.window-glyph--restore::after { bottom: 0; left: 0; background: var(--accent-solid); }
-.desktop-window-controls button:hover .window-glyph--restore::after, .desktop-window-controls button:focus-visible .window-glyph--restore::after { background: var(--accent-solid); }
-.window-glyph--close::before, .window-glyph--close::after { position: absolute; content: ''; top: 5px; left: 0; width: 12px; height: 1px; background: currentColor; }
-.window-glyph--close::before { transform: rotate(45deg); }
-.window-glyph--close::after { transform: rotate(-45deg); }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 .has-desktop-titlebar { padding-top: 34px; }
 .has-desktop-titlebar .rail { top: 34px; }
@@ -625,18 +595,18 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .has-desktop-titlebar .vault-bootstrap { min-height: min(520px, calc(100vh - 112px)); }
 .has-desktop-titlebar .task-drawer { top: 110px; max-height: calc(100vh - 130px); }
 
-.titlebar-context-menu { width: 226px; }
-.titlebar-context-menu header { background: linear-gradient(125deg, var(--accent-soft), var(--surface) 72%); }
-.titlebar-context-menu button { min-height: 37px; }
-.titlebar-context-menu button kbd { margin-left: auto; padding: 2px 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); background: var(--surface-2); font: 11px var(--font-mono); }
+
+
+
+
 .titlebar-context-menu button.danger { border-top: 1px solid var(--line-weak); color: var(--danger); }
 .titlebar-context-menu button.danger:hover, .titlebar-context-menu button.danger:focus-visible { color: var(--danger); background: var(--danger-soft); }
 
-.titlebar-menu-icon { display: grid; width: 15px; height: 15px; flex: 0 0 auto; place-items: center; color: currentColor; font: 720 14px/1 var(--font-ui); }
+
 
 @media (max-width: 1080px) {
-  .desktop-titlebar { grid-template-columns: 1fr auto; }
-  .desktop-titlebar__route { display: none; }
+  
+  
 }
 
 /* Backup is two deliberately distinct recovery paths: a portable workspace
@@ -697,7 +667,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Unsaved Markdown is a data-safety state, not a transient toast. Keep it
    visible in the list, editor chrome, and native title bar without relying on
    color alone. */
-.save-state.is-dirty{color:var(--warn);font-weight:700}.save-state.is-dirty i{background:var(--warn);box-shadow:0 0 0 4px var(--warn-soft)}
+.save-state.is-dirty{color:var(--warn);font-weight:700}
 .editor-recovery-banner{display:flex;align-items:center;gap:11px;margin:0 18px 12px;padding:10px 12px;border:1px solid var(--warn-soft);border-radius:10px;color:var(--text);background:linear-gradient(90deg,var(--surface-2),var(--surface-2));box-shadow:0 5px 18px var(--warn-soft)}.editor-recovery-banner__icon{display:grid;place-items:center;flex:0 0 30px;height:30px;border-radius:8px;color:var(--warn);background:var(--surface-2)}.editor-recovery-banner>div:nth-child(2){min-width:0;display:grid;gap:2px}.editor-recovery-banner b{font-size:12px}.editor-recovery-banner small{color:var(--text-secondary);font-size:12px;line-height:1.45}.editor-recovery-banner__actions{display:flex;align-items:center;gap:7px;margin-left:auto;white-space:nowrap}.editor-recovery-banner__actions button{min-height:31px;padding:0 10px;font-size:12px}.editor-recovery-banner__actions .primary-button{box-shadow:none}
 @media(max-width:900px){.editor-recovery-banner{align-items:flex-start;flex-wrap:wrap}.editor-recovery-banner__actions{width:100%;justify-content:flex-end}}
 .document-tab-strip{display:flex;align-items:stretch;gap:2px;min-width:0;height:35px;padding:4px 7px 0;border-bottom:1px solid var(--line-weak);overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;background:linear-gradient(180deg,var(--surface-2),var(--surface-2))}.document-workspace-tab{position:relative;display:flex;flex:0 1 190px;min-width:96px;max-width:210px;height:30px;border:1px solid transparent;border-bottom:0;border-radius:7px 7px 0 0;color:var(--text-secondary);transition:background-color var(--duration-fast) var(--ease-out),border-color var(--duration-fast) var(--ease-out),color var(--duration-fast) var(--ease-out)}.document-workspace-tab:hover{color:var(--text);background:var(--surface-2)}.document-workspace-tab.active{z-index:1;color:var(--text);border-color:var(--line);background:var(--surface-raised);box-shadow:0 -2px 8px var(--accent-soft)}.document-workspace-tab>button[role=tab]{display:flex;align-items:center;gap:7px;min-width:0;flex:1;padding:0 27px 0 9px;border:0;color:inherit;background:transparent;font:650 12px/1 var(--font-ui);cursor:pointer}.document-workspace-tab>button[role=tab]>i{flex:0 0 6px;width:6px;height:6px;border-radius:50%;background:var(--accent-soft)}.document-workspace-tab.active>button[role=tab]>i{background:var(--accent-solid)}.document-workspace-tab.dirty>button[role=tab]>i{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}.document-workspace-tab>button[role=tab]>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.document-workspace-tab>button[role=tab]>small{position:absolute;right:7px;top:-4px;padding:1px 4px;border-radius:4px;color:var(--warn);background:var(--surface-2);font:700 11px var(--font-ui);pointer-events:none}.document-workspace-tab__close{position:absolute;right:5px;top:6px;display:grid;place-items:center;width:18px;height:18px;padding:0;border:0;border-radius:5px;color:var(--muted);background:transparent;opacity:0;cursor:pointer;transition:opacity var(--duration-fast),background-color var(--duration-fast),color var(--duration-fast)}.document-workspace-tab:hover .document-workspace-tab__close,.document-workspace-tab.active .document-workspace-tab__close,.document-workspace-tab__close:focus-visible{opacity:1}.document-workspace-tab.dirty .document-workspace-tab__close{top:8px}.document-workspace-tab__close:hover{color:var(--text);background:var(--accent-soft)}.document-workspace-tab :focus-visible{outline:2px solid var(--accent-soft);outline-offset:-2px}.document-tab-context-menu{position:fixed;z-index:80;width:224px;padding:7px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:0 15px 36px var(--accent-soft);backdrop-filter:blur(14px)}.document-tab-context-menu p{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 3px 5px;padding:7px 8px 9px;border-bottom:1px solid var(--line-weak);overflow:hidden;color:var(--text);font:700 12px var(--font-ui);white-space:nowrap;text-overflow:ellipsis}.document-tab-context-menu p small{flex:0 0 auto;color:var(--muted);font:700 11px var(--font-ui)}.document-tab-context-menu button{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:31px;padding:0 9px;border:0;border-radius:6px;color:var(--text-secondary);background:transparent;text-align:left;font:600 12px var(--font-ui);cursor:pointer}.document-tab-context-menu button:hover,.document-tab-context-menu button:focus-visible{color:var(--text);background:var(--accent-soft);outline:0}.document-tab-context-menu button.separator{margin-top:4px;border-top:1px solid var(--line-weak);border-radius:0 0 6px 6px}.document-tab-context-menu kbd{color:var(--muted);font:11px var(--font-mono)}
@@ -705,7 +675,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
    above inspectors, while the close target never overlaps the dirty label. */
 .document-tab-context-menu{z-index:var(--z-context-menu)}
 .document-workspace-tab:hover>button[role=tab]>small,.document-workspace-tab:focus-within>button[role=tab]>small{visibility:hidden}
-.desktop-titlebar__route small.is-dirty{max-width:220px;color:var(--warn)}
+
 .document-unsaved-backdrop{position:fixed;inset:0;z-index:var(--z-global-modal);display:grid;place-items:center;padding:24px;background:var(--line-strong);backdrop-filter:blur(3px);animation:fade-in var(--duration-modal) var(--ease-out) both}
 .document-unsaved-dialog{display:grid;width:min(490px,calc(100vw - 40px));grid-template-columns:44px minmax(0,1fr);gap:14px;padding:22px;border:1px solid var(--accent-soft);border-radius:16px;background:linear-gradient(145deg,var(--surface),var(--surface-2));box-shadow:0 28px 90px var(--accent-soft);animation:scale-in var(--duration-modal) var(--ease-out) both}
 .document-unsaved-dialog__mark{display:grid;width:42px;height:42px;place-items:center;border:1px solid var(--warn-soft);border-radius:12px;color:var(--warn);background:var(--warn-soft)}.document-unsaved-dialog>div{min-width:0}.document-unsaved-dialog .eyebrow{color:var(--warn)}.document-unsaved-dialog h3{margin-top:6px;color:var(--text);font:720 20px/1.25 var(--font-display);letter-spacing:-.025em}.document-unsaved-dialog>div>p:last-child{margin-top:8px;color:var(--text-secondary);font:12px/1.72 var(--font-ui)}
