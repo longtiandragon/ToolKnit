@@ -1402,6 +1402,18 @@ const questionDetailFields = [
   { key: 'errorReason', label: '错误原因', placeholder: '例如：遗漏边界、概念混淆、时间复杂度判断失误。' },
 ] as const
 
+/* The eight formats that were worth an icon rather than a menu row. */
+const editorQuickFormats = [
+  { command: 'bold', icon: 'bold', title: '粗体 · Ctrl+B', aria: '切换粗体' },
+  { command: 'italic', icon: 'italic', title: '斜体 · Ctrl+I', aria: '切换斜体' },
+  { command: 'inline-code', icon: 'inline-code', title: '行内代码 · Ctrl+E', aria: '切换行内代码' },
+  { command: 'link', icon: 'link', title: '链接 · Ctrl+Shift+L', aria: '插入链接' },
+  { command: 'quote', icon: 'quote', title: '引用', aria: '切换引用' },
+  { command: 'numbered-list', icon: 'sort', title: '有序列表', aria: '切换有序列表' },
+  { command: 'bullet-list', icon: 'list', title: '无序列表', aria: '切换无序列表' },
+  { command: 'task-list', icon: 'task', title: '任务列表', aria: '切换任务列表' },
+] as const
+
 const noteSourceTabs = [
   { id: 'vault', label: 'Knitspace 资料库' },
   { id: 'workspace', label: '外部工作区' },
@@ -4832,192 +4844,490 @@ onBeforeUnmount(() => {
 
       </aside>
     </div>
-    <div v-if="noteStarterMenu" ref="noteStarterMenuElement" class="note-starter-menu" role="menu" aria-label="新建学习笔记模板" :style="{ left: noteStarterMenu.x + 'px', top: noteStarterMenu.y + 'px' }" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, noteStarterMenuElement, () => closeNoteStarterMenu(true))">
-      <p>从模板开始 <small>普通 Markdown · 可随时删改</small></p>
-      <button v-for="template in noteStarterTemplates" :key="template.id" role="menuitem" @click="createNoteFromTemplate(template)"><span><b>{{ template.label }}</b><small>{{ template.description }}</small></span><i>{{ template.subject }}</i></button>
-    </div>
-    <div v-if="previewSelectionMenu" ref="previewSelectionMenuElement" class="document-context-menu preview-selection-context-menu" :style="{ left: `${previewSelectionMenu.x}px`, top: `${previewSelectionMenu.y}px` }" role="menu" aria-label="阅读选区操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, previewSelectionMenuElement, () => closePreviewSelectionMenu(true))">
-      <p><span>{{ previewSelectionSummary(previewSelectionMenu.text) }}</span><small>{{ previewSelectionMenu.text.length.toLocaleString('zh-CN') }} 字</small></p>
-      <button role="menuitem" @click="copyPreviewSelection('markdown')"><span><AppIcon name="file-text" :size="14" />复制为 Markdown</span><kbd>Ctrl+Shift+C</kbd></button>
-      <button role="menuitem" @click="copyPreviewSelection('text')"><span><AppIcon name="duplicate" :size="14" />复制无格式文字</span><kbd>Ctrl+C</kbd></button>
-      <button role="menuitem" @click="copyPreviewSelection('html')"><span><AppIcon name="code" :size="14" />复制为 HTML 代码</span></button>
-      <button role="menuitem" @click="openPreviewSelectionInCodeImage"><span><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd>选区</kbd></button>
-      <button role="menuitem" @click="pinPreviewSelectionAsSnippet"><span><AppIcon name="star" :size="14" />固定为常用片段</span><kbd>本地</kbd></button>
-      <button class="separator" role="menuitem" @click="createNoteFromPreviewSelection"><span><AppIcon name="book" :size="14" />从选区创建笔记</span></button>
-      <button role="menuitem" @click="createQuestionFromPreviewSelection"><span><AppIcon name="review" :size="14" />从选区创建题目</span></button>
-      <button class="separator" role="menuitem" @click="openPreviewSelectionInAi('summarize')"><span><AppIcon name="sparkle" :size="14" />提炼选区要点</span><kbd>AI 草稿</kbd></button>
-      <button role="menuitem" @click="openPreviewSelectionInAi('rewrite')"><span><AppIcon name="sparkle" :size="14" />交给 AI 改写</span></button>
-    </div>
-    <div v-if="documentMenu" ref="documentMenuElement" class="document-context-menu" :style="{ left: `${documentMenu.x}px`, top: `${documentMenu.y}px` }" role="menu" @click.stop @keydown="handleDocumentMenuKeydown">
-      <p>{{ documentMenu.document.title }}</p>
-      <template v-if="documentMenu.document.id === selectedId && crashDraft"><button role="menuitem" @click="closeDocumentMenu(); restoreCrashDraft()">恢复异常退出草稿</button><button role="menuitem" @click="closeDocumentMenu(); discardCrashDraft()">放弃恢复点</button></template>
-      <button role="menuitem" @click="pick(documentMenu.document); closeDocumentMenu()">在此打开</button>
-      <button v-if="documentMenu.document.kind === 'question'" role="menuitem" @click="openQuestionStructureFromDocument(documentMenu.document)">编辑题目结构 <kbd>题干 / 答案 / 错因</kbd></button>
-      <button role="menuitem" @click="openDocumentSearch(documentMenu.document)">在文档中查找 <kbd>Ctrl+F</kbd></button>
-      <button role="menuitem" @click="openDocumentInFocus(documentMenu.document)">{{ focusMode && selectedId === documentMenu.document.id ? '退出专注阅读' : '专注阅读此文档' }}</button>
-      <button v-if="mode === 'split' && selectedId === documentMenu.document.id" role="menuitem" @click="toggleSplitScrollSync">{{ splitScrollSync ? '关闭分屏滚动联动' : '开启分屏滚动联动' }}</button>
-      <button role="menuitem" @click="copyDocumentWikiLink(documentMenu.document)">复制双链 [[{{ documentMenu.document.title }}]]</button>
-      <button role="menuitem" @click="copyWholeDocumentMarkdown(documentMenu.document)">复制整篇 Markdown</button>
-      <button role="menuitem" :disabled="Boolean(documentOutput)" @click="exportDocumentHtml(documentMenu.document)">导出可打印 HTML… <kbd>Ctrl+Shift+E</kbd></button>
-      <button role="menuitem" @click="openVersionHistory(documentMenu.document)">查看版本历史 <kbd>本地</kbd></button>
-      <button role="menuitem" @click="toggleDocumentFavorite(documentMenu.document)">{{ store.isContentFavorite(documentMenu.document.kind, documentMenu.document.id) ? '取消收藏' : '加入收藏' }}</button>
-      <button v-if="store.isContentRecent(documentMenu.document.kind, documentMenu.document.id)" role="menuitem" @click="removeDocumentFromRecents(documentMenu.document)">从最近使用移除</button>
-      <button role="menuitem" @click="duplicateDocument(documentMenu.document)">创建独立副本</button>
-      <button v-if="folderFilter && !isInsideFolder(documentMenu.document, folderFilter)" role="menuitem" @click="moveDocumentToFolder(documentMenu.document, folderFilter)">移至“{{ folderFilter }}”</button>
-      <button v-if="documentMenu.document.folder" role="menuitem" @click="moveDocumentToFolder(documentMenu.document)">移至收件箱</button>
-      <button role="menuitem" @click="saveAsMarkdown(documentMenu.document); closeDocumentMenu()">另存为并关联 Markdown…</button>
-      <button v-if="documentMenu.document.externalFile" role="menuitem" @click="reloadExternalMarkdown(documentMenu.document); closeDocumentMenu()">载入外部文件版本</button>
-      <button v-if="documentMenu.document.externalFile" role="menuitem" @click="unlinkExternalMarkdown(documentMenu.document); closeDocumentMenu()">断开外部文件关联</button>
-      <button class="danger" role="menuitem" @click="removeDocument(documentMenu.document); closeDocumentMenu()">删除文档</button>
-    </div>
-    <section v-if="questionStructureMenu && draft?.kind === 'question'" ref="questionStructureMenuElement" class="document-context-menu question-structure-context-menu" :style="{ left: `${questionStructureMenu.x}px`, top: `${questionStructureMenu.y}px` }" role="menu" aria-label="题目结构操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, questionStructureMenuElement, () => closeQuestionStructureMenu(true))">
-      <p>{{ draft.title }}<small>{{ currentQuestionStructure.completed }} / {{ currentQuestionStructure.total }} 已填写</small></p>
-      <button role="menuitem" @click="openQuestionStructure('stem')">编辑题干</button>
-      <button role="menuitem" @click="openQuestionStructure('source')">补充来源 / 出处</button>
-      <button v-if="currentQuestionSource.raw" role="menuitem" @click="copyCurrentQuestionSource">复制来源 / 出处</button>
-      <button v-if="currentQuestionSource.kind !== 'text'" role="menuitem" @click="openCurrentQuestionSource">{{ questionSourceActionLabel(currentQuestionSource) }}</button>
-      <button role="menuitem" @click="openQuestionStructure('answer')">编辑答案与解析</button>
-      <button role="menuitem" @click="openQuestionStructure('wrongAnswer')">记录错误做法与错因</button>
-      <button role="menuitem" @click="toggleCurrentQuestionReview('answer')">{{ questionReviewFacetEnabled(draft, 'answer') ? '关闭答案回忆卡' : '启用答案回忆卡' }}</button>
-      <button role="menuitem" @click="toggleCurrentQuestionReview('error')">{{ questionReviewFacetEnabled(draft, 'error') ? '关闭错因复盘卡' : '启用错因复盘卡' }}</button>
-      <button role="menuitem" :disabled="!questionReviewCards(draft).length" @click="openCurrentQuestionReview">去复习当前题型</button>
-    </section>
-    <div v-if="documentVersionMenu" ref="documentVersionMenuElement" class="document-context-menu document-version-context-menu" :style="{ left: `${documentVersionMenu.x}px`, top: `${documentVersionMenu.y}px` }" role="menu" aria-label="文档版本操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, documentVersionMenuElement, () => closeDocumentVersionMenu(true))">
-      <p>{{ formatDocumentVersionTime(documentVersionMenu.version.savedAt) }}<small>{{ formatDocumentVersionSize(documentVersionMenu.version.byteSize) }}</small></p>
-      <button v-if="!documentVersionMenu.version.isCurrent" role="menuitem" @click="restoreDocumentVersion(documentVersionMenu.version)">载入为未保存草稿</button>
-      <button role="menuitem" @click="copyDocumentVersion(documentVersionMenu.version)">复制这个版本的 Markdown</button>
-    </div>
-    <div v-if="editorContextMenu" ref="editorContextMenuElement" class="markdown-editor-context-menu markdown-editor-context-menu--typora" :class="{ 'submenus-left': editorContextMenu.submenusLeft }" :style="{ left: `${editorContextMenu.x}px`, top: `${editorContextMenu.y}px` }" role="menu" aria-label="Markdown 编辑操作" @click.stop @contextmenu.prevent @keydown.stop="handleEditorContextMenuKeydown">
-      <header class="markdown-menu-context" aria-hidden="true">
-        <b><AppIcon :name="editorContextIcon(editorContextMenu.context)" :size="14" /></b>
-        <span><strong>{{ editorContextMenu.context.label }}</strong><small :title="editorContextMenu.context.detail">{{ editorContextMenu.context.detail }}</small></span>
-        <kbd>L{{ editorContextMenu.context.line }}</kbd>
-      </header>
-      <div class="markdown-menu-icon-grid markdown-menu-icon-grid--clipboard" role="group" aria-label="剪贴板快捷操作">
-        <button role="menuitem" :disabled="!editorContextMenu.hasSelection" title="剪切" aria-label="剪切选中文字" @click="runEditorClipboard('cut')"><AppIcon name="cut" :size="16" /></button>
-        <button role="menuitem" :disabled="!editorContextMenu.hasSelection" title="复制" aria-label="复制选中文字" @click="runEditorClipboard('copy')"><AppIcon name="duplicate" :size="16" /></button>
-        <button role="menuitem" title="粘贴并保留 Markdown 格式" aria-label="粘贴并保留 Markdown 格式" @click="runEditorClipboard('paste-rich')"><AppIcon name="clipboard" :size="16" /></button>
-        <button role="menuitem" :disabled="!editorContextMenu.hasSelection" title="删除" aria-label="删除选中文字" @click="deleteEditorSelection"><AppIcon name="trash" :size="16" /></button>
+    <!-- ── Context menus ───────────────────────────────────────────────────
+         Fifteen of them, and they had grown four class names — `.document-
+         context-menu`, `.relation-context-menu`, `.wiki-context-menu`,
+         `.note-starter-menu` — with four paddings, four radii and three hover
+         colours. They now share the `menu-panel` / `menu-title` / `menu-item`
+         shortcuts.
+
+         All teleported: the workspace clips its own overflow and the page
+         root animates on entry, either of which can trap a fixed element. -->
+    <Teleport to="body">
+      <div
+        v-if="noteStarterMenu"
+        ref="noteStarterMenuElement"
+        class="menu-panel w-72"
+        role="menu"
+        aria-label="新建学习笔记模板"
+        :style="{ left: `${noteStarterMenu.x}px`, top: `${noteStarterMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, noteStarterMenuElement, () => closeNoteStarterMenu(true))"
+      >
+        <p class="menu-title">从模板开始<small class="font-normal">普通 Markdown · 可随时删改</small></p>
+        <button v-for="template in noteStarterTemplates" :key="template.id" class="menu-item" role="menuitem" @click="createNoteFromTemplate(template)">
+          <span class="stack gap-0.5 min-w-0">
+            <b class="font-medium">{{ template.label }}</b>
+            <small class="text-[11px] text-fg-3">{{ template.description }}</small>
+          </span>
+          <i class="shrink-0 not-italic text-[11px] text-fg-3">{{ template.subject }}</i>
+        </button>
       </div>
-      <button v-if="editorContextMenu.context.kind === 'wiki-link'" class="markdown-menu-row markdown-menu-context-action" role="menuitem" @click="openEditorContextWikiMenu"><span><AppIcon name="book" :size="14" />打开或创建这条双链</span><kbd>[[…]]</kbd></button>
-      <button v-else-if="editorContextMenu.context.target" class="markdown-menu-row markdown-menu-context-action" role="menuitem" @click="copyEditorContextTarget"><span><AppIcon name="duplicate" :size="14" />复制{{ editorContextMenu.context.kind === 'image' ? '图片路径' : '链接地址' }}</span><kbd>当前项</kbd></button>
-      <button v-else-if="editorContextMenu.context.kind === 'inline-code'" class="markdown-menu-row markdown-menu-context-action" role="menuitem" @click="openEditorContextCodeImage"><span><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd>行内</kbd></button>
-      <button v-else-if="editorContextMenu.context.kind === 'heading'" class="markdown-menu-row markdown-menu-context-action" role="menuitem" @click="copyEditorContextHeadingLink"><span><AppIcon name="link" :size="14" />复制当前段落双链</span><kbd>[[#]]</kbd></button>
-      <div class="markdown-menu-branch" data-editor-submenu="clipboard" :class="{ open: editorContextSubmenu === 'clipboard' }" @mouseenter="setEditorContextSubmenu('clipboard')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-clipboard" :aria-expanded="editorContextSubmenu === 'clipboard'" @click="openEditorContextSubmenu('clipboard')"><span>复制 / 粘贴…</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-clipboard" class="markdown-menu-submenu" role="menu" aria-label="复制和粘贴选项">
-          <button role="menuitem" @click="runEditorHistory('undo')"><span>撤销</span><kbd>Ctrl+Z</kbd></button>
-          <button role="menuitem" @click="runEditorHistory('redo')"><span>重做</span><kbd>Ctrl+Y</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('markdown')"><span>复制为 Markdown</span><kbd>Ctrl+Shift+C</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('html')"><span>复制为 HTML 代码</span></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('plain')"><span>复制内容并简化格式</span></button>
-          <button class="separator" role="menuitem" @click="runEditorClipboard('paste-rich')"><span>粘贴并保留 Markdown 格式</span><kbd>Ctrl+V</kbd></button>
-          <button role="menuitem" @click="runEditorClipboard('paste')"><span>粘贴为纯文本</span><kbd>Ctrl+Shift+V</kbd></button>
-          <button role="menuitem" :disabled="imagePasteState === 'saving'" @click="pasteClipboardImage"><span>粘贴剪贴板图片</span><kbd>本地</kbd></button>
-          <button class="separator" role="menuitem" @click="runEditorHistory('select-all')"><span>全选当前文档</span><kbd>Ctrl+A</kbd></button>
-        </section>
+
+      <div
+        v-if="previewSelectionMenu"
+        ref="previewSelectionMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="阅读选区操作"
+        :style="{ left: `${previewSelectionMenu.x}px`, top: `${previewSelectionMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, previewSelectionMenuElement, () => closePreviewSelectionMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate font-normal text-fg-2">{{ previewSelectionSummary(previewSelectionMenu.text) }}</span>
+          <small class="shrink-0 font-normal tabular-nums">{{ previewSelectionMenu.text.length.toLocaleString('zh-CN') }} 字</small>
+        </p>
+        <button class="menu-item" role="menuitem" @click="copyPreviewSelection('markdown')"><span class="row gap-2"><AppIcon name="file-text" :size="14" />复制为 Markdown</span><kbd class="kbd">Ctrl+Shift+C</kbd></button>
+        <button class="menu-item" role="menuitem" @click="copyPreviewSelection('text')"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制无格式文字</span><kbd class="kbd">Ctrl+C</kbd></button>
+        <button class="menu-item" role="menuitem" @click="copyPreviewSelection('html')"><span class="row gap-2"><AppIcon name="code" :size="14" />复制为 HTML 代码</span></button>
+        <button class="menu-item" role="menuitem" @click="openPreviewSelectionInCodeImage"><span class="row gap-2"><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd class="kbd">选区</kbd></button>
+        <button class="menu-item" role="menuitem" @click="pinPreviewSelectionAsSnippet"><span class="row gap-2"><AppIcon name="star" :size="14" />固定为常用片段</span><kbd class="kbd">本地</kbd></button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="createNoteFromPreviewSelection"><span class="row gap-2"><AppIcon name="book" :size="14" />从选区创建笔记</span></button>
+        <button class="menu-item" role="menuitem" @click="createQuestionFromPreviewSelection"><span class="row gap-2"><AppIcon name="review" :size="14" />从选区创建题目</span></button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="openPreviewSelectionInAi('summarize')"><span class="row gap-2"><AppIcon name="sparkle" :size="14" />提炼选区要点</span><kbd class="kbd">AI 草稿</kbd></button>
+        <button class="menu-item" role="menuitem" @click="openPreviewSelectionInAi('rewrite')"><span class="row gap-2"><AppIcon name="sparkle" :size="14" />交给 AI 改写</span></button>
       </div>
-      <div class="markdown-menu-icon-grid markdown-menu-icon-grid--format" role="group" aria-label="高频 Markdown 格式">
-        <button role="menuitem" title="粗体 · Ctrl+B" aria-label="切换粗体" @click="applyEditorCommand('bold')"><AppIcon name="bold" :size="15" /></button>
-        <button role="menuitem" title="斜体 · Ctrl+I" aria-label="切换斜体" @click="applyEditorCommand('italic')"><AppIcon name="italic" :size="15" /></button>
-        <button role="menuitem" title="行内代码 · Ctrl+E" aria-label="切换行内代码" @click="applyEditorCommand('inline-code')"><AppIcon name="inline-code" :size="15" /></button>
-        <button role="menuitem" title="链接 · Ctrl+Shift+L" aria-label="插入链接" @click="applyEditorCommand('link')"><AppIcon name="link" :size="15" /></button>
-        <button role="menuitem" title="引用" aria-label="切换引用" @click="applyEditorCommand('quote')"><AppIcon name="quote" :size="15" /></button>
-        <button role="menuitem" title="有序列表" aria-label="切换有序列表" @click="applyEditorCommand('numbered-list')"><AppIcon name="sort" :size="15" /></button>
-        <button role="menuitem" title="无序列表" aria-label="切换无序列表" @click="applyEditorCommand('bullet-list')"><AppIcon name="list" :size="15" /></button>
-        <button role="menuitem" title="任务列表" aria-label="切换任务列表" @click="applyEditorCommand('task-list')"><AppIcon name="task" :size="15" /></button>
+
+      <div
+        v-if="documentMenu"
+        ref="documentMenuElement"
+        class="menu-panel w-68 max-h-[calc(100vh-24px)] overflow-y-auto"
+        role="menu"
+        :style="{ left: `${documentMenu.x}px`, top: `${documentMenu.y}px` }"
+        @click.stop
+        @keydown="handleDocumentMenuKeydown"
+      >
+        <p class="menu-title"><span class="min-w-0 truncate">{{ documentMenu.document.title }}</span></p>
+        <template v-if="documentMenu.document.id === selectedId && crashDraft">
+          <button class="menu-item" role="menuitem" @click="closeDocumentMenu(); restoreCrashDraft()">恢复异常退出草稿</button>
+          <button class="menu-item" role="menuitem" @click="closeDocumentMenu(); discardCrashDraft()">放弃恢复点</button>
+          <i class="menu-sep" aria-hidden="true" />
+        </template>
+        <button class="menu-item" role="menuitem" @click="pick(documentMenu.document); closeDocumentMenu()">在此打开</button>
+        <button v-if="documentMenu.document.kind === 'question'" class="menu-item" role="menuitem" @click="openQuestionStructureFromDocument(documentMenu.document)">
+          编辑题目结构<kbd class="kbd">题干 / 答案 / 错因</kbd>
+        </button>
+        <button class="menu-item" role="menuitem" @click="openDocumentSearch(documentMenu.document)">在文档中查找<kbd class="kbd">Ctrl+F</kbd></button>
+        <button class="menu-item" role="menuitem" @click="openDocumentInFocus(documentMenu.document)">{{ focusMode && selectedId === documentMenu.document.id ? '退出专注阅读' : '专注阅读此文档' }}</button>
+        <button v-if="mode === 'split' && selectedId === documentMenu.document.id" class="menu-item" role="menuitem" @click="toggleSplitScrollSync">{{ splitScrollSync ? '关闭分屏滚动联动' : '开启分屏滚动联动' }}</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="copyDocumentWikiLink(documentMenu.document)"><span class="min-w-0 truncate">复制双链 [[{{ documentMenu.document.title }}]]</span></button>
+        <button class="menu-item" role="menuitem" @click="copyWholeDocumentMarkdown(documentMenu.document)">复制整篇 Markdown</button>
+        <button class="menu-item" role="menuitem" :disabled="Boolean(documentOutput)" @click="exportDocumentHtml(documentMenu.document)">导出可打印 HTML…<kbd class="kbd">Ctrl+Shift+E</kbd></button>
+        <button class="menu-item" role="menuitem" @click="openVersionHistory(documentMenu.document)">查看版本历史<kbd class="kbd">本地</kbd></button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="toggleDocumentFavorite(documentMenu.document)">{{ store.isContentFavorite(documentMenu.document.kind, documentMenu.document.id) ? '取消收藏' : '加入收藏' }}</button>
+        <button v-if="store.isContentRecent(documentMenu.document.kind, documentMenu.document.id)" class="menu-item" role="menuitem" @click="removeDocumentFromRecents(documentMenu.document)">从最近使用移除</button>
+        <button class="menu-item" role="menuitem" @click="duplicateDocument(documentMenu.document)">创建独立副本</button>
+        <button v-if="folderFilter && !isInsideFolder(documentMenu.document, folderFilter)" class="menu-item" role="menuitem" @click="moveDocumentToFolder(documentMenu.document, folderFilter)">
+          <span class="min-w-0 truncate">移至“{{ folderFilter }}”</span>
+        </button>
+        <button v-if="documentMenu.document.folder" class="menu-item" role="menuitem" @click="moveDocumentToFolder(documentMenu.document)">移至收件箱</button>
+        <button class="menu-item" role="menuitem" @click="saveAsMarkdown(documentMenu.document); closeDocumentMenu()">另存为并关联 Markdown…</button>
+        <button v-if="documentMenu.document.externalFile" class="menu-item" role="menuitem" @click="reloadExternalMarkdown(documentMenu.document); closeDocumentMenu()">载入外部文件版本</button>
+        <button v-if="documentMenu.document.externalFile" class="menu-item" role="menuitem" @click="unlinkExternalMarkdown(documentMenu.document); closeDocumentMenu()">断开外部文件关联</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item menu-item-danger" role="menuitem" @click="removeDocument(documentMenu.document); closeDocumentMenu()">删除文档</button>
       </div>
-      <div class="markdown-menu-branch markdown-menu-branch--code separator" data-editor-submenu="code" :class="{ open: editorContextSubmenu === 'code' }" @mouseenter="setEditorContextSubmenu('code')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-code" :aria-expanded="editorContextSubmenu === 'code'" @click="openEditorContextSubmenu('code')"><span>代码块</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-code" class="markdown-menu-submenu" role="menu" aria-label="代码块语言">
-          <template v-if="editorContextMenu.context.kind === 'code'">
-            <button role="menuitem" @click="copyEditorContextCode"><span><AppIcon name="duplicate" :size="14" />复制当前代码块</span><kbd>{{ editorContextMenu.context.language || '纯文本' }}</kbd></button>
-            <button class="separator" role="menuitem" :disabled="!editorContextMenu.context.text" @click="openEditorContextCodeImage"><span><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd>当前块</kbd></button>
+
+      <section
+        v-if="questionStructureMenu && draft?.kind === 'question'"
+        ref="questionStructureMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="题目结构操作"
+        :style="{ left: `${questionStructureMenu.x}px`, top: `${questionStructureMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, questionStructureMenuElement, () => closeQuestionStructureMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ draft.title }}</span>
+          <small class="shrink-0 font-normal tabular-nums">{{ currentQuestionStructure.completed }} / {{ currentQuestionStructure.total }}</small>
+        </p>
+        <button class="menu-item" role="menuitem" @click="openQuestionStructure('stem')">编辑题干</button>
+        <button class="menu-item" role="menuitem" @click="openQuestionStructure('source')">补充来源 / 出处</button>
+        <button v-if="currentQuestionSource.raw" class="menu-item" role="menuitem" @click="copyCurrentQuestionSource">复制来源 / 出处</button>
+        <button v-if="currentQuestionSource.kind !== 'text'" class="menu-item" role="menuitem" @click="openCurrentQuestionSource">{{ questionSourceActionLabel(currentQuestionSource) }}</button>
+        <button class="menu-item" role="menuitem" @click="openQuestionStructure('answer')">编辑答案与解析</button>
+        <button class="menu-item" role="menuitem" @click="openQuestionStructure('wrongAnswer')">记录错误做法与错因</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="toggleCurrentQuestionReview('answer')">{{ questionReviewFacetEnabled(draft, 'answer') ? '关闭答案回忆卡' : '启用答案回忆卡' }}</button>
+        <button class="menu-item" role="menuitem" @click="toggleCurrentQuestionReview('error')">{{ questionReviewFacetEnabled(draft, 'error') ? '关闭错因复盘卡' : '启用错因复盘卡' }}</button>
+        <button class="menu-item" role="menuitem" :disabled="!questionReviewCards(draft).length" @click="openCurrentQuestionReview">去复习当前题型</button>
+      </section>
+
+      <div
+        v-if="documentVersionMenu"
+        ref="documentVersionMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="文档版本操作"
+        :style="{ left: `${documentVersionMenu.x}px`, top: `${documentVersionMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, documentVersionMenuElement, () => closeDocumentVersionMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ formatDocumentVersionTime(documentVersionMenu.version.savedAt) }}</span>
+          <small class="shrink-0 font-normal tabular-nums">{{ formatDocumentVersionSize(documentVersionMenu.version.byteSize) }}</small>
+        </p>
+        <button v-if="!documentVersionMenu.version.isCurrent" class="menu-item" role="menuitem" @click="restoreDocumentVersion(documentVersionMenu.version)">载入为未保存草稿</button>
+        <button class="menu-item" role="menuitem" @click="copyDocumentVersion(documentVersionMenu.version)">复制这个版本的 Markdown</button>
+      </div>
+
+      <!-- The editor menu keeps `markdown-menu-*` on its structural parts:
+           the roving-focus keyboard handler queries them by class, and the
+           flyouts need real CSS (a scoped block below) rather than utilities. -->
+      <div
+        v-if="editorContextMenu"
+        ref="editorContextMenuElement"
+        class="markdown-editor-context-menu menu-panel w-60 overflow-visible! py-1.5"
+        :class="{ 'submenus-left': editorContextMenu.submenusLeft }"
+        :style="{ left: `${editorContextMenu.x}px`, top: `${editorContextMenu.y}px` }"
+        role="menu"
+        aria-label="Markdown 编辑操作"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleEditorContextMenuKeydown"
+      >
+        <header class="row gap-2 px-3 pb-2 mb-1 border-b border-line" aria-hidden="true">
+          <b class="center w-6 h-6 shrink-0 rounded-sm bg-surface-2 text-fg-2"><AppIcon :name="editorContextIcon(editorContextMenu.context)" :size="13" /></b>
+          <span class="stack gap-0.5 min-w-0 flex-1">
+            <strong class="text-[12px] font-medium truncate text-fg">{{ editorContextMenu.context.label }}</strong>
+            <small class="text-[11px] truncate text-fg-3" :title="editorContextMenu.context.detail">{{ editorContextMenu.context.detail }}</small>
+          </span>
+          <kbd class="kbd shrink-0">L{{ editorContextMenu.context.line }}</kbd>
+        </header>
+
+        <div class="markdown-menu-icon-grid grid grid-cols-4 gap-1 px-2 pb-2 border-b border-line" role="group" aria-label="剪贴板快捷操作">
+          <button class="center h-8 rounded-sm border border-line text-fg-2 transition-colors duration-120 hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft hover:not-disabled:text-accent disabled:opacity-40 disabled:cursor-not-allowed" role="menuitem" :disabled="!editorContextMenu.hasSelection" title="剪切" aria-label="剪切选中文字" @click="runEditorClipboard('cut')"><AppIcon name="cut" :size="15" /></button>
+          <button class="center h-8 rounded-sm border border-line text-fg-2 transition-colors duration-120 hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft hover:not-disabled:text-accent disabled:opacity-40 disabled:cursor-not-allowed" role="menuitem" :disabled="!editorContextMenu.hasSelection" title="复制" aria-label="复制选中文字" @click="runEditorClipboard('copy')"><AppIcon name="duplicate" :size="15" /></button>
+          <button class="center h-8 rounded-sm border border-line text-fg-2 transition-colors duration-120 hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft hover:not-disabled:text-accent disabled:opacity-40 disabled:cursor-not-allowed" role="menuitem" title="粘贴并保留 Markdown 格式" aria-label="粘贴并保留 Markdown 格式" @click="runEditorClipboard('paste-rich')"><AppIcon name="clipboard" :size="15" /></button>
+          <button class="center h-8 rounded-sm border border-line text-fg-2 transition-colors duration-120 hover:not-disabled:border-danger hover:not-disabled:bg-danger-soft hover:not-disabled:text-danger disabled:opacity-40 disabled:cursor-not-allowed" role="menuitem" :disabled="!editorContextMenu.hasSelection" title="删除" aria-label="删除选中文字" @click="deleteEditorSelection"><AppIcon name="trash" :size="15" /></button>
+        </div>
+
+        <button v-if="editorContextMenu.context.kind === 'wiki-link'" class="markdown-menu-row markdown-menu-context-action menu-item" role="menuitem" @click="openEditorContextWikiMenu"><span class="row gap-2"><AppIcon name="book" :size="14" />打开或创建这条双链</span><kbd class="kbd">[[…]]</kbd></button>
+        <button v-else-if="editorContextMenu.context.target" class="markdown-menu-row markdown-menu-context-action menu-item" role="menuitem" @click="copyEditorContextTarget"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制{{ editorContextMenu.context.kind === 'image' ? '图片路径' : '链接地址' }}</span><kbd class="kbd">当前项</kbd></button>
+        <button v-else-if="editorContextMenu.context.kind === 'inline-code'" class="markdown-menu-row markdown-menu-context-action menu-item" role="menuitem" @click="openEditorContextCodeImage"><span class="row gap-2"><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd class="kbd">行内</kbd></button>
+        <button v-else-if="editorContextMenu.context.kind === 'heading'" class="markdown-menu-row markdown-menu-context-action menu-item" role="menuitem" @click="copyEditorContextHeadingLink"><span class="row gap-2"><AppIcon name="link" :size="14" />复制当前段落双链</span><kbd class="kbd">[[#]]</kbd></button>
+
+        <div class="markdown-menu-branch" data-editor-submenu="clipboard" :class="{ open: editorContextSubmenu === 'clipboard' }" @mouseenter="setEditorContextSubmenu('clipboard')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-clipboard" :aria-expanded="editorContextSubmenu === 'clipboard'" @click="openEditorContextSubmenu('clipboard')"><span>复制 / 粘贴…</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-clipboard" class="markdown-menu-submenu" role="menu" aria-label="复制和粘贴选项">
+            <button class="menu-item" role="menuitem" @click="runEditorHistory('undo')"><span>撤销</span><kbd class="kbd">Ctrl+Z</kbd></button>
+            <button class="menu-item" role="menuitem" @click="runEditorHistory('redo')"><span>重做</span><kbd class="kbd">Ctrl+Y</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('markdown')"><span>复制为 Markdown</span><kbd class="kbd">Ctrl+Shift+C</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('html')"><span>复制为 HTML 代码</span></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('plain')"><span>复制内容并简化格式</span></button>
+            <i class="menu-sep" aria-hidden="true" />
+            <button class="menu-item" role="menuitem" @click="runEditorClipboard('paste-rich')"><span>粘贴并保留 Markdown 格式</span><kbd class="kbd">Ctrl+V</kbd></button>
+            <button class="menu-item" role="menuitem" @click="runEditorClipboard('paste')"><span>粘贴为纯文本</span><kbd class="kbd">Ctrl+Shift+V</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="imagePasteState === 'saving'" @click="pasteClipboardImage"><span>粘贴剪贴板图片</span><kbd class="kbd">本地</kbd></button>
+            <i class="menu-sep" aria-hidden="true" />
+            <button class="menu-item" role="menuitem" @click="runEditorHistory('select-all')"><span>全选当前文档</span><kbd class="kbd">Ctrl+A</kbd></button>
+          </section>
+        </div>
+
+        <div class="markdown-menu-icon-grid grid grid-cols-4 gap-1 px-2 py-2 border-y border-line" role="group" aria-label="高频 Markdown 格式">
+          <button v-for="quick in editorQuickFormats" :key="quick.command" class="center h-8 rounded-sm border border-line text-fg-2 transition-colors duration-120 hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft hover:not-disabled:text-accent" role="menuitem" :title="quick.title" :aria-label="quick.aria" @click="applyEditorCommand(quick.command)">
+            <AppIcon :name="quick.icon" :size="15" />
+          </button>
+        </div>
+
+        <div class="markdown-menu-branch markdown-menu-branch--code" data-editor-submenu="code" :class="{ open: editorContextSubmenu === 'code' }" @mouseenter="setEditorContextSubmenu('code')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-code" :aria-expanded="editorContextSubmenu === 'code'" @click="openEditorContextSubmenu('code')"><span>代码块</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-code" class="markdown-menu-submenu" role="menu" aria-label="代码块语言">
+            <template v-if="editorContextMenu.context.kind === 'code'">
+              <button class="menu-item" role="menuitem" @click="copyEditorContextCode"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制当前代码块</span><kbd class="kbd">{{ editorContextMenu.context.language || '纯文本' }}</kbd></button>
+              <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.context.text" @click="openEditorContextCodeImage"><span class="row gap-2"><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd class="kbd">当前块</kbd></button>
+              <i class="menu-sep" aria-hidden="true" />
+            </template>
+            <button v-for="language in codeBlockLanguages" :key="language.value || 'plain'" class="menu-item" role="menuitem" @click="insertEditorCodeBlock(language.value)">
+              <span>{{ language.label }}</span><code v-if="language.value" class="shrink-0 font-mono text-[11px] text-fg-3">{{ language.value }}</code>
+            </button>
+          </section>
+        </div>
+
+        <div class="markdown-menu-branch markdown-menu-branch--insert" data-editor-submenu="insert" :class="{ open: editorContextSubmenu === 'insert' }" @mouseenter="setEditorContextSubmenu('insert')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-insert" :aria-expanded="editorContextSubmenu === 'insert'" @click="openEditorContextSubmenu('insert')"><span>插入</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-insert" class="markdown-menu-submenu" role="menu" aria-label="Markdown 插入项">
+            <button class="menu-item" role="menuitem" :disabled="imagePasteState === 'saving'" @click="importLocalMarkdownImages"><span class="row gap-2"><AppIcon name="file-image" :size="14" />本地图片…</span><kbd class="kbd">最多 12 张</kbd></button>
+            <button class="menu-item" role="menuitem" @click="pasteClipboardImage"><span class="row gap-2"><AppIcon name="file-image" :size="14" />剪贴板图片</span><kbd class="kbd">本地</kbd></button>
+            <button class="menu-item" role="menuitem" @click="applyEditorCommand('link')"><span class="row gap-2"><AppIcon name="link" :size="14" />链接</span></button>
+            <button class="menu-item" role="menuitem" @click="openMarkdownInsert('table')"><span class="row gap-2"><AppIcon name="table" :size="14" />表格…</span><kbd class="kbd">配置尺寸</kbd></button>
+            <button class="menu-item" role="menuitem" @click="insertEditorSnippet('\n\n---\n\n')"><span class="row gap-2"><AppIcon name="rule" :size="14" />分隔线</span></button>
+            <button class="menu-item" role="menuitem" @click="openMarkdownInsert('formula')"><span class="row gap-2"><AppIcon name="math" :size="14" />公式…</span><kbd class="kbd">即时预览</kbd></button>
+            <button class="menu-item" role="menuitem" @click="insertEditorSnippet('[[笔记标题]]')"><span class="row gap-2"><AppIcon name="book" :size="14" />笔记双链</span></button>
+          </section>
+        </div>
+
+        <div class="markdown-menu-branch markdown-menu-branch--tools" data-editor-submenu="tools" :class="{ open: editorContextSubmenu === 'tools' }" @mouseenter="setEditorContextSubmenu('tools')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-tools" :aria-expanded="editorContextSubmenu === 'tools'" @click="openEditorContextSubmenu('tools')"><span>常用工具</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-tools" class="markdown-menu-submenu" role="menu" aria-label="选区常用工具">
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInCodeImage"><span class="row gap-2"><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd class="kbd">仅选区</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInAi('rewrite')"><span class="row gap-2"><AppIcon name="sparkle" :size="14" />交给 AI 改写</span><kbd class="kbd">需确认配置</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="pinSelectionAsSnippet"><span class="row gap-2"><AppIcon name="star" :size="14" />固定为常用片段</span><kbd class="kbd">本地</kbd></button>
+          </section>
+        </div>
+
+        <div class="markdown-menu-branch markdown-menu-branch--study" data-editor-submenu="study" :class="{ open: editorContextSubmenu === 'study' }" @mouseenter="setEditorContextSubmenu('study')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-study" :aria-expanded="editorContextSubmenu === 'study'" @click="openEditorContextSubmenu('study')"><span>学习工具</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-study" class="markdown-menu-submenu" role="menu" aria-label="选区学习工具">
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="createNoteFromSelection"><span class="row gap-2"><AppIcon name="book" :size="14" />从选区创建笔记</span><kbd class="kbd">本地</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="createQuestionFromSelection"><span class="row gap-2"><AppIcon name="review" :size="14" />从选区创建题目</span><kbd class="kbd">进入错题库</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInAi('summarize')"><span class="row gap-2"><AppIcon name="sparkle" :size="14" />提炼选区要点</span><kbd class="kbd">AI 草稿</kbd></button>
+          </section>
+        </div>
+
+        <div class="markdown-menu-branch markdown-menu-branch--document" data-editor-submenu="document" :class="{ open: editorContextSubmenu === 'document' }" @mouseenter="setEditorContextSubmenu('document')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-document" :aria-expanded="editorContextSubmenu === 'document'" @click="openEditorContextSubmenu('document')"><span>文档操作</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-document" class="markdown-menu-submenu" role="menu" aria-label="文档操作">
+            <template v-if="crashDraft">
+              <button class="menu-item" role="menuitem" @click="closeEditorContextMenu(); restoreCrashDraft()"><span>恢复异常退出草稿</span><kbd class="kbd">本地</kbd></button>
+              <button class="menu-item" role="menuitem" @click="closeEditorContextMenu(); discardCrashDraft()"><span>放弃恢复点</span></button>
+              <i class="menu-sep" aria-hidden="true" />
+            </template>
+            <button class="menu-item" role="menuitem" @click="openDocumentSearch()"><span>在当前文档中查找</span><kbd class="kbd">Ctrl+F</kbd></button>
+            <button class="menu-item" role="menuitem" @click="copyCurrentDocumentWikiLink"><span>复制当前文档双链</span></button>
+            <button class="menu-item" role="menuitem" @click="copyWholeDocumentMarkdown()"><span>复制整篇 Markdown</span></button>
+            <button class="menu-item" role="menuitem" :disabled="Boolean(documentOutput)" @click="exportDocumentHtml()"><span>导出可打印 HTML…</span><kbd class="kbd">Ctrl+Shift+E</kbd></button>
+            <button class="menu-item" role="menuitem" @click="openVersionHistory()"><span>查看版本历史</span><kbd class="kbd">本地</kbd></button>
+            <button class="menu-item" role="menuitem" @click="openSplitFromEditorMenu"><span>切换为分屏编辑</span><kbd class="kbd">Alt+2</kbd></button>
+            <button class="menu-item" role="menuitem" @click="openFocusFromEditorMenu"><span>{{ focusMode ? '退出专注阅读' : '进入专注阅读' }}</span><kbd class="kbd">Ctrl+Shift+F</kbd></button>
+          </section>
+        </div>
+      </div>
+
+      <div
+        v-if="externalFileMenu && draft?.externalFile"
+        ref="externalFileMenuElement"
+        class="menu-panel w-68"
+        role="menu"
+        aria-label="外部 Markdown 文件操作"
+        :style="{ left: `${externalFileMenu.x}px`, top: `${externalFileMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, externalFileMenuElement, () => closeExternalFileMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ draft.externalFile.name }}</span>
+          <small class="shrink-0 font-normal">{{ externalFileWatchMode === 'native' ? '本机实时监听' : externalFileWatchMode === 'poll' ? '低频检查' : '外部 Markdown' }}</small>
+        </p>
+        <button v-if="externalFileChanged" class="menu-item" role="menuitem" @click="openExternalConflictReview(draft)"><span class="row gap-2"><AppIcon name="diff" :size="14" />比较并处理版本</span><kbd class="kbd">推荐</kbd></button>
+        <button class="menu-item" role="menuitem" @click="recheckExternalMarkdown"><span class="row gap-2"><AppIcon name="refresh" :size="14" />立即检查磁盘变化</span></button>
+        <button class="menu-item" role="menuitem" @click="revealExternalMarkdown"><span class="row gap-2"><AppIcon name="folder" :size="14" />在资源管理器中显示</span></button>
+        <button class="menu-item" role="menuitem" @click="copyExternalMarkdownPath"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制完整路径</span></button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="closeExternalFileMenu(); saveAsMarkdown(draft)"><span class="row gap-2"><AppIcon name="download" :size="14" />另存为并重新关联…</span></button>
+        <button class="menu-item" role="menuitem" @click="closeExternalFileMenu(); unlinkExternalMarkdown(draft)"><span class="row gap-2"><AppIcon name="link" :size="14" />断开文件关联</span></button>
+      </div>
+
+      <div
+        v-if="managedVaultMenu && managedVaultAlert && draft"
+        ref="managedVaultMenuElement"
+        class="menu-panel w-68"
+        role="menu"
+        aria-label="Vault Markdown 变化操作"
+        :style="{ left: `${managedVaultMenu.x}px`, top: `${managedVaultMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, managedVaultMenuElement, () => closeManagedVaultMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ draft.title }}</span>
+          <small class="shrink-0 font-normal" :class="managedVaultAlert.status === 'missing' ? 'text-danger' : 'text-warn'">
+            {{ managedVaultAlert.status === 'missing' ? 'Vault 文件缺失' : '检测到磁盘修改' }}
+          </small>
+        </p>
+        <button v-if="managedVaultAlert.status === 'pending'" class="menu-item" role="menuitem" @click="openManagedVaultConflict"><span class="row gap-2"><AppIcon name="diff" :size="14" />比较并处理版本</span><kbd class="kbd">推荐</kbd></button>
+        <button v-else class="menu-item" role="menuitem" @click="recreateManagedVaultMarkdown"><span class="row gap-2"><AppIcon name="refresh" :size="14" />用当前版本重新创建</span></button>
+        <button class="menu-item" role="menuitem" @click="openManagedVaultVersionHistory"><span class="row gap-2"><AppIcon name="clock" :size="14" />查看版本历史</span></button>
+        <button class="menu-item" role="menuitem" @click="copyManagedVaultDocumentId"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制文档 ID</span></button>
+      </div>
+
+      <div
+        v-if="frontmatterMenu && frontmatter"
+        ref="frontmatterMenuElement"
+        class="menu-panel w-60"
+        role="menu"
+        aria-label="文档属性操作"
+        :style="{ left: `${frontmatterMenu.x}px`, top: `${frontmatterMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, frontmatterMenuElement, () => closeFrontmatterMenu(true))"
+      >
+        <p class="menu-title">
+          文档属性
+          <small class="shrink-0 font-normal">{{ frontmatter.error ? 'YAML 需要检查' : `${frontmatter.entries.length}${frontmatter.truncated ? '+' : ''} 项` }}</small>
+        </p>
+        <button class="menu-item" role="menuitem" @click="copyFrontmatter('yaml')">复制 YAML 原文</button>
+        <button class="menu-item" role="menuitem" :disabled="!frontmatter.json" @click="copyFrontmatter('json')">复制为 JSON</button>
+        <button class="menu-item" role="menuitem" @click="editFrontmatterSource">在源码中编辑</button>
+        <button class="menu-item" role="menuitem" @click="toggleFrontmatterExpanded">{{ frontmatterExpanded ? '收起属性' : '展开全部属性' }}</button>
+      </div>
+
+      <div
+        v-if="relationMenu"
+        ref="relationMenuElement"
+        class="menu-panel w-56"
+        role="menu"
+        aria-label="关联知识操作"
+        :style="{ left: `${relationMenu.x}px`, top: `${relationMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, relationMenuElement, () => closeRelationMenu(true))"
+      >
+        <p class="menu-title"><span class="min-w-0 truncate">{{ relationMenu.title }}</span></p>
+        <button class="menu-item" role="menuitem" @click="openRelated(relationMenu.relation.fromId === draft?.id ? relationMenu.relation.toId : relationMenu.relation.fromId, relationMenu.kind); closeRelationMenu()">打开关联内容</button>
+        <button class="menu-item menu-item-danger" role="menuitem" @click="removeRelation(relationMenu.relation, relationMenu.title)">移除关联</button>
+      </div>
+
+      <div
+        v-if="wikiContextMenu"
+        ref="wikiContextMenuElement"
+        class="menu-panel"
+        :class="wikiContextMenu.externalEligible ? 'w-76' : 'w-60'"
+        role="menu"
+        aria-label="双链操作"
+        :style="{ left: `${wikiContextMenu.x}px`, top: `${wikiContextMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, wikiContextMenuElement, () => closeWikiContextMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ wikiContextMenu.title }}<small v-if="wikiContextMenu.heading" class="font-normal"> · {{ wikiContextMenu.heading }}</small></span>
+          <small v-if="wikiContextMenu.externalEligible" class="shrink-0 font-normal">外部工作区</small>
+        </p>
+        <template v-if="wikiContextMenu.target">
+          <button class="menu-item" role="menuitem" @click="openWikiLink(wikiContextMenu.title, wikiContextMenu.heading); closeWikiContextMenu()">打开知识库内容</button>
+          <button v-if="draft && wikiContextMenu.target.id !== draft.id" class="menu-item" role="menuitem" @click="relateWikiTarget">与当前内容建立关联</button>
+        </template>
+        <template v-else-if="wikiContextMenu.externalEligible">
+          <button v-if="wikiContextMenu.resolving" class="menu-item" role="menuitem" disabled>正在工作区查找精确文件…</button>
+          <button
+            v-for="candidate in wikiContextMenu.externalCandidates.slice(0, 6)"
+            :key="candidate.relativePath"
+            v-memo="[candidate.relativePath, wikiContextMenu.heading]"
+            class="menu-item"
+            role="menuitem"
+            :title="candidate.relativePath"
+            @click="openExternalWikiCandidate(candidate, wikiContextMenu?.heading)"
+          >
+            <span class="stack gap-0.5 min-w-0">
+              打开外部 Markdown
+              <small class="text-[11px] truncate font-mono text-fg-3">{{ candidate.relativePath }}</small>
+            </span>
+          </button>
+          <button v-if="wikiContextMenu.externalCandidates.length > 6" class="menu-item" role="menuitem" disabled>另有 {{ wikiContextMenu.externalCandidates.length - 6 }} 个同名文件，请使用路径双链</button>
+          <button v-if="wikiContextMenu.resolutionError" class="menu-item" role="menuitem" disabled>查找失败 · {{ wikiContextMenu.resolutionError }}</button>
+          <template v-if="!wikiContextMenu.resolving">
+            <i class="menu-sep" aria-hidden="true" />
+            <button class="menu-item" role="menuitem" @click="createWikiNote"><span class="min-w-0 truncate">改为新建内部笔记“{{ wikiContextMenu.title }}”</span></button>
           </template>
-          <button v-for="language in codeBlockLanguages" :key="language.value || 'plain'" role="menuitem" @click="insertEditorCodeBlock(language.value)"><span>{{ language.label }}</span><code v-if="language.value">{{ language.value }}</code></button>
-        </section>
+        </template>
+        <button v-else class="menu-item" role="menuitem" @click="createWikiNote"><span class="min-w-0 truncate">新建“{{ wikiContextMenu.title }}”笔记</span></button>
       </div>
-      <div class="markdown-menu-branch markdown-menu-branch--insert" data-editor-submenu="insert" :class="{ open: editorContextSubmenu === 'insert' }" @mouseenter="setEditorContextSubmenu('insert')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-insert" :aria-expanded="editorContextSubmenu === 'insert'" @click="openEditorContextSubmenu('insert')"><span>插入</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-insert" class="markdown-menu-submenu" role="menu" aria-label="Markdown 插入项">
-          <button role="menuitem" :disabled="imagePasteState === 'saving'" @click="importLocalMarkdownImages"><span><AppIcon name="file-image" :size="14" />本地图片…</span><kbd>最多 12 张</kbd></button>
-          <button role="menuitem" @click="pasteClipboardImage"><span><AppIcon name="file-image" :size="14" />剪贴板图片</span><kbd>本地</kbd></button>
-          <button role="menuitem" @click="applyEditorCommand('link')"><span><AppIcon name="link" :size="14" />链接</span></button>
-          <button role="menuitem" @click="openMarkdownInsert('table')"><span><AppIcon name="table" :size="14" />表格…</span><kbd>配置尺寸</kbd></button>
-          <button role="menuitem" @click="insertEditorSnippet('\n\n---\n\n')"><span><AppIcon name="rule" :size="14" />分隔线</span></button>
-          <button role="menuitem" @click="openMarkdownInsert('formula')"><span><AppIcon name="math" :size="14" />公式…</span><kbd>即时预览</kbd></button>
-          <button role="menuitem" @click="insertEditorSnippet('[[笔记标题]]')"><span><AppIcon name="book" :size="14" />笔记双链</span></button>
-        </section>
+
+      <div
+        v-if="headingContextMenu"
+        ref="headingContextMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="段落操作"
+        :style="{ left: `${headingContextMenu.x}px`, top: `${headingContextMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, headingContextMenuElement, () => closeHeadingContextMenu(true))"
+      >
+        <p class="menu-title"><span class="min-w-0 truncate">段落 · {{ headingContextMenu.heading }}</span></p>
+        <button class="menu-item" role="menuitem" @click="copyHeadingWikiLink"><span class="min-w-0 truncate">复制段落双链 [[{{ draft?.title }}#{{ headingContextMenu.heading }}]]</span></button>
+        <button class="menu-item" role="menuitem" @click="copyHeadingTitle">复制段落标题</button>
       </div>
-      <div class="markdown-menu-branch markdown-menu-branch--tools separator" data-editor-submenu="tools" :class="{ open: editorContextSubmenu === 'tools' }" @mouseenter="setEditorContextSubmenu('tools')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-tools" :aria-expanded="editorContextSubmenu === 'tools'" @click="openEditorContextSubmenu('tools')"><span>常用工具</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-tools" class="markdown-menu-submenu" role="menu" aria-label="选区常用工具">
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInCodeImage"><span><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd>仅选区</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInAi('rewrite')"><span><AppIcon name="sparkle" :size="14" />交给 AI 改写</span><kbd>需确认配置</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="pinSelectionAsSnippet"><span><AppIcon name="star" :size="14" />固定为常用片段</span><kbd>本地</kbd></button>
-        </section>
+
+      <div
+        v-if="questionAttachmentMenu"
+        ref="questionAttachmentMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="题目附件操作"
+        :style="{ left: `${questionAttachmentMenu.x}px`, top: `${questionAttachmentMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, questionAttachmentMenuElement, () => closeQuestionAttachmentMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ questionAttachmentMenu.attachment.name }}</span>
+          <small class="shrink-0 font-normal tabular-nums">{{ formatQuestionAttachmentSize(questionAttachmentMenu.attachment.size) }}</small>
+        </p>
+        <button class="menu-item" role="menuitem" :disabled="!questionAttachmentMenu.attachment.available" @click="revealQuestionAttachment(questionAttachmentMenu.attachment)">在资源管理器中查看</button>
+        <button class="menu-item" role="menuitem" @click="copyQuestionAttachmentName(questionAttachmentMenu.attachment)">复制附件名称</button>
+        <button class="menu-item menu-item-danger" role="menuitem" @click="removeQuestionAttachment(questionAttachmentMenu.attachment)">从题目中移除</button>
       </div>
-      <div class="markdown-menu-branch markdown-menu-branch--study" data-editor-submenu="study" :class="{ open: editorContextSubmenu === 'study' }" @mouseenter="setEditorContextSubmenu('study')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-study" :aria-expanded="editorContextSubmenu === 'study'" @click="openEditorContextSubmenu('study')"><span>学习工具</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-study" class="markdown-menu-submenu" role="menu" aria-label="选区学习工具">
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="createNoteFromSelection"><span><AppIcon name="book" :size="14" />从选区创建笔记</span><kbd>本地</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="createQuestionFromSelection"><span><AppIcon name="review" :size="14" />从选区创建题目</span><kbd>进入错题库</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInAi('summarize')"><span><AppIcon name="sparkle" :size="14" />提炼选区要点</span><kbd>AI 草稿</kbd></button>
-        </section>
+
+      <div
+        v-if="documentStatisticsMenu"
+        ref="documentStatisticsMenuElement"
+        class="menu-panel w-60"
+        role="menu"
+        aria-label="文档统计操作"
+        :style="{ left: `${documentStatisticsMenu.x}px`, top: `${documentStatisticsMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, documentStatisticsMenuElement, () => closeDocumentStatisticsMenu(true))"
+      >
+        <p class="menu-title">文档统计<small class="shrink-0 font-normal">{{ documentStatisticsPending ? '正在更新' : '本机 Worker' }}</small></p>
+        <button class="menu-item" role="menuitem" @click="documentStatisticsExpanded = !documentStatisticsExpanded; closeDocumentStatisticsMenu(true)">{{ documentStatisticsExpanded ? '收起完整统计' : '查看完整统计' }}</button>
+        <button class="menu-item" role="menuitem" :disabled="!documentStatistics" @click="copyDocumentStatistics">复制统计摘要</button>
+        <button class="menu-item" role="menuitem" @click="scheduleDocumentStatistics(true); closeDocumentStatisticsMenu(true)">立即重新统计</button>
       </div>
-      <div class="markdown-menu-branch markdown-menu-branch--document" data-editor-submenu="document" :class="{ open: editorContextSubmenu === 'document' }" @mouseenter="setEditorContextSubmenu('document')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-document" :aria-expanded="editorContextSubmenu === 'document'" @click="openEditorContextSubmenu('document')"><span>文档操作</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-document" class="markdown-menu-submenu" role="menu" aria-label="文档操作">
-          <template v-if="crashDraft"><button role="menuitem" @click="closeEditorContextMenu(); restoreCrashDraft()"><span>恢复异常退出草稿</span><kbd>本地</kbd></button><button class="separator" role="menuitem" @click="closeEditorContextMenu(); discardCrashDraft()"><span>放弃恢复点</span></button></template>
-          <button role="menuitem" @click="openDocumentSearch()"><span>在当前文档中查找</span><kbd>Ctrl+F</kbd></button>
-          <button role="menuitem" @click="copyCurrentDocumentWikiLink"><span>复制当前文档双链</span></button>
-          <button role="menuitem" @click="copyWholeDocumentMarkdown()"><span>复制整篇 Markdown</span></button>
-          <button role="menuitem" :disabled="Boolean(documentOutput)" @click="exportDocumentHtml()"><span>导出可打印 HTML…</span><kbd>Ctrl+Shift+E</kbd></button>
-          <button role="menuitem" @click="openVersionHistory()"><span>查看版本历史</span><kbd>本地</kbd></button>
-          <button role="menuitem" @click="openSplitFromEditorMenu"><span>切换为分屏编辑</span><kbd>Alt+2</kbd></button>
-          <button role="menuitem" @click="openFocusFromEditorMenu"><span>{{ focusMode ? '退出专注阅读' : '进入专注阅读' }}</span><kbd>Ctrl+Shift+F</kbd></button>
-        </section>
+
+      <div
+        v-if="largePreviewMenu"
+        ref="largePreviewMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="大文档阅读操作"
+        :style="{ left: `${largePreviewMenu.x}px`, top: `${largePreviewMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, largePreviewMenuElement, () => closeLargePreviewMenu(true))"
+      >
+        <p class="menu-title">
+          大文档阅读
+          <small class="shrink-0 font-normal">
+            {{ previewPending
+              ? (previewRenderProgress?.total ? `${previewRenderPercent}% · 渐进载入` : 'Worker 分析中')
+              : fullLargePreviewRequested ? '完整阅读模式' : '轻量保护模式' }}
+          </small>
+        </p>
+        <button v-if="!fullLargePreviewRequested" class="menu-item" role="menuitem" @click="requestFullLargePreview">渐进加载完整预览</button>
+        <button v-else class="menu-item" role="menuitem" @click="cancelFullLargePreview">{{ previewPending ? '停止加载' : '返回轻量模式' }}</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="returnLargeDocumentToSource">返回源码模式</button>
       </div>
-    </div>
-    <div v-if="externalFileMenu && draft?.externalFile" ref="externalFileMenuElement" class="document-context-menu external-file-context-menu" :style="{ left: `${externalFileMenu.x}px`, top: `${externalFileMenu.y}px` }" role="menu" aria-label="外部 Markdown 文件操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, externalFileMenuElement, () => closeExternalFileMenu(true))">
-      <p>{{ draft.externalFile.name }}<small>{{ externalFileWatchMode === 'native' ? '本机实时监听' : externalFileWatchMode === 'poll' ? '低频检查' : '外部 Markdown' }}</small></p>
-      <button v-if="externalFileChanged" role="menuitem" @click="openExternalConflictReview(draft)"><span><AppIcon name="diff" :size="14" />比较并处理版本</span><kbd>推荐</kbd></button>
-      <button role="menuitem" @click="recheckExternalMarkdown"><span><AppIcon name="refresh" :size="14" />立即检查磁盘变化</span></button>
-      <button role="menuitem" @click="revealExternalMarkdown"><span><AppIcon name="folder" :size="14" />在资源管理器中显示</span></button>
-      <button role="menuitem" @click="copyExternalMarkdownPath"><span><AppIcon name="duplicate" :size="14" />复制完整路径</span></button>
-      <button role="menuitem" @click="closeExternalFileMenu(); saveAsMarkdown(draft)"><span><AppIcon name="download" :size="14" />另存为并重新关联…</span></button>
-      <button role="menuitem" @click="closeExternalFileMenu(); unlinkExternalMarkdown(draft)"><span><AppIcon name="link" :size="14" />断开文件关联</span></button>
-    </div>
-    <div v-if="managedVaultMenu && managedVaultAlert && draft" ref="managedVaultMenuElement" class="document-context-menu managed-vault-menu" :style="{ left: `${managedVaultMenu.x}px`, top: `${managedVaultMenu.y}px` }" role="menu" aria-label="Vault Markdown 变化操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, managedVaultMenuElement, () => closeManagedVaultMenu(true))">
-      <p>{{ draft.title }}<small>{{ managedVaultAlert.status === 'missing' ? 'Vault 文件缺失' : '检测到磁盘修改' }}</small></p>
-      <button v-if="managedVaultAlert.status === 'pending'" role="menuitem" @click="openManagedVaultConflict"><span><AppIcon name="diff" :size="14" />比较并处理版本</span><kbd>推荐</kbd></button>
-      <button v-else role="menuitem" @click="recreateManagedVaultMarkdown"><span><AppIcon name="refresh" :size="14" />用当前版本重新创建</span></button>
-      <button role="menuitem" @click="openManagedVaultVersionHistory"><span><AppIcon name="clock" :size="14" />查看版本历史</span></button>
-      <button role="menuitem" @click="copyManagedVaultDocumentId"><span><AppIcon name="duplicate" :size="14" />复制文档 ID</span></button>
-    </div>
+    </Teleport>
+
     <ExternalMarkdownConflictDialog v-if="externalConflict" :title="externalConflict.current.title" :file-name="externalConflict.disk.name" :preview="externalConflict.preview" :busy="externalConflictBusy" :error="externalConflictError" @decision="resolveExternalConflict" />
     <ExternalMarkdownConflictDialog v-if="managedVaultConflict" managed-vault :title="managedVaultConflict.current.title" file-name="Vault Markdown" :preview="managedVaultConflict.preview" :busy="managedVaultConflictBusy" :error="managedVaultConflictError" @decision="resolveManagedVaultConflict" />
     <UnsavedChangesDialog v-if="unsavedPrompt" :item-label="draft?.title || '未命名文档'" :target-label="unsavedPrompt.targetLabel" item-kind="文档" @decision="resolveUnsavedDecision" />
     <MarkdownInsertDialog v-if="markdownInsertPanel" :initial-panel="markdownInsertPanel.panel" :initial-formula-recognition="markdownInsertPanel.recognizeFormula" :selected-text="markdownInsertPanel.selectedText" @close="closeMarkdownInsert()" @insert="insertStructuredMarkdown" />
     <QuestionImportDialog v-if="questionImportOpen" @cancel="closeQuestionImport" @complete="completeQuestionImport" />
-    <div v-if="frontmatterMenu && frontmatter" ref="frontmatterMenuElement" class="relation-context-menu markdown-frontmatter-context-menu" :style="{ left: `${frontmatterMenu.x}px`, top: `${frontmatterMenu.y}px` }" role="menu" aria-label="文档属性操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, frontmatterMenuElement, () => closeFrontmatterMenu(true))"><p>文档属性<small>{{ frontmatter.error ? 'YAML 需要检查' : `${frontmatter.entries.length}${frontmatter.truncated ? '+' : ''} 项` }}</small></p><button role="menuitem" @click="copyFrontmatter('yaml')">复制 YAML 原文</button><button role="menuitem" :disabled="!frontmatter.json" @click="copyFrontmatter('json')">复制为 JSON</button><button role="menuitem" @click="editFrontmatterSource">在源码中编辑</button><button role="menuitem" @click="toggleFrontmatterExpanded">{{ frontmatterExpanded ? '收起属性' : '展开全部属性' }}</button></div>
-    <div v-if="relationMenu" ref="relationMenuElement" class="relation-context-menu" :style="{ left: `${relationMenu.x}px`, top: `${relationMenu.y}px` }" role="menu" aria-label="关联知识操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, relationMenuElement, () => closeRelationMenu(true))"><p>{{ relationMenu.title }}</p><button role="menuitem" @click="openRelated(relationMenu.relation.fromId === draft?.id ? relationMenu.relation.toId : relationMenu.relation.fromId, relationMenu.kind); closeRelationMenu()">打开关联内容</button><button class="danger" role="menuitem" @click="removeRelation(relationMenu.relation, relationMenu.title)">移除关联</button></div>
-    <div v-if="wikiContextMenu" ref="wikiContextMenuElement" class="wiki-context-menu" :class="{ 'wiki-context-menu--external': wikiContextMenu.externalEligible }" :style="{ left: `${wikiContextMenu.x}px`, top: `${wikiContextMenu.y}px` }" role="menu" aria-label="双链操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, wikiContextMenuElement, () => closeWikiContextMenu(true))">
-      <p>{{ wikiContextMenu.title }}<small v-if="wikiContextMenu.heading"> · {{ wikiContextMenu.heading }}</small><small v-if="wikiContextMenu.externalEligible">外部工作区</small></p>
-      <template v-if="wikiContextMenu.target"><button role="menuitem" @click="openWikiLink(wikiContextMenu.title, wikiContextMenu.heading); closeWikiContextMenu()">打开知识库内容</button><button v-if="draft && wikiContextMenu.target.id !== draft.id" role="menuitem" @click="relateWikiTarget">与当前内容建立关联</button></template>
-      <template v-else-if="wikiContextMenu.externalEligible">
-        <button v-if="wikiContextMenu.resolving" role="menuitem" disabled>正在工作区查找精确文件…</button>
-        <button v-for="candidate in wikiContextMenu.externalCandidates.slice(0, 6)" :key="candidate.relativePath" v-memo="[candidate.relativePath, wikiContextMenu.heading]" class="wiki-context-menu__external" role="menuitem" :title="candidate.relativePath" @click="openExternalWikiCandidate(candidate, wikiContextMenu?.heading)"><span>打开外部 Markdown</span><small>{{ candidate.relativePath }}</small></button>
-        <button v-if="wikiContextMenu.externalCandidates.length > 6" role="menuitem" disabled>另有 {{ wikiContextMenu.externalCandidates.length - 6 }} 个同名文件，请使用路径双链</button>
-        <button v-if="wikiContextMenu.resolutionError" role="menuitem" disabled>查找失败 · {{ wikiContextMenu.resolutionError }}</button>
-        <button v-if="!wikiContextMenu.resolving" class="wiki-context-menu__internal" role="menuitem" @click="createWikiNote">改为新建内部笔记“{{ wikiContextMenu.title }}”</button>
-      </template>
-      <button v-else role="menuitem" @click="createWikiNote">新建“{{ wikiContextMenu.title }}”笔记</button>
-    </div>
-    <div v-if="headingContextMenu" ref="headingContextMenuElement" class="markdown-heading-context-menu" :style="{ left: `${headingContextMenu.x}px`, top: `${headingContextMenu.y}px` }" role="menu" aria-label="段落操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, headingContextMenuElement, () => closeHeadingContextMenu(true))"><p>段落 · {{ headingContextMenu.heading }}</p><button role="menuitem" @click="copyHeadingWikiLink">复制段落双链 [[{{ draft?.title }}#{{ headingContextMenu.heading }}]]</button><button role="menuitem" @click="copyHeadingTitle">复制段落标题</button></div>
-    <div v-if="questionAttachmentMenu" ref="questionAttachmentMenuElement" class="relation-context-menu question-attachment-context-menu" :style="{ left: `${questionAttachmentMenu.x}px`, top: `${questionAttachmentMenu.y}px` }" role="menu" aria-label="题目附件操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, questionAttachmentMenuElement, () => closeQuestionAttachmentMenu(true))"><p>{{ questionAttachmentMenu.attachment.name }}<small>{{ formatQuestionAttachmentSize(questionAttachmentMenu.attachment.size) }}</small></p><button role="menuitem" :disabled="!questionAttachmentMenu.attachment.available" @click="revealQuestionAttachment(questionAttachmentMenu.attachment)">在资源管理器中查看</button><button role="menuitem" @click="copyQuestionAttachmentName(questionAttachmentMenu.attachment)">复制附件名称</button><button class="danger" role="menuitem" @click="removeQuestionAttachment(questionAttachmentMenu.attachment)">从题目中移除</button></div>
-    <div v-if="documentStatisticsMenu" ref="documentStatisticsMenuElement" class="relation-context-menu document-statistics-menu" :style="{ left: `${documentStatisticsMenu.x}px`, top: `${documentStatisticsMenu.y}px` }" role="menu" aria-label="文档统计操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, documentStatisticsMenuElement, () => closeDocumentStatisticsMenu(true))"><p>文档统计<small>{{ documentStatisticsPending ? '正在更新' : '本机 Worker' }}</small></p><button role="menuitem" @click="documentStatisticsExpanded = !documentStatisticsExpanded; closeDocumentStatisticsMenu(true)">{{ documentStatisticsExpanded ? '收起完整统计' : '查看完整统计' }}</button><button role="menuitem" :disabled="!documentStatistics" @click="copyDocumentStatistics">复制统计摘要</button><button role="menuitem" @click="scheduleDocumentStatistics(true); closeDocumentStatisticsMenu(true)">立即重新统计</button></div>
-    <div v-if="largePreviewMenu" ref="largePreviewMenuElement" class="relation-context-menu large-preview-context-menu" :style="{ left: `${largePreviewMenu.x}px`, top: `${largePreviewMenu.y}px` }" role="menu" aria-label="大文档阅读操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, largePreviewMenuElement, () => closeLargePreviewMenu(true))"><p>大文档阅读<small>{{ previewPending ? (previewRenderProgress?.total ? `${previewRenderPercent}% · 渐进载入` : 'Worker 分析中') : fullLargePreviewRequested ? '完整阅读模式' : '轻量保护模式' }}</small></p><button v-if="!fullLargePreviewRequested" role="menuitem" @click="requestFullLargePreview">渐进加载完整预览</button><button v-else role="menuitem" @click="cancelFullLargePreview">{{ previewPending ? '停止加载' : '返回轻量模式' }}</button><button class="separator" role="menuitem" @click="returnLargeDocumentToSource">返回源码模式</button></div>
   </div>
 </template>
 
@@ -5030,14 +5340,30 @@ onBeforeUnmount(() => {
 :global(.document-focus-mode .workspace-content){height:100%}
 :global(.has-desktop-titlebar.document-focus-mode .workspace){height:calc(100vh - 34px)}
 :global(.has-desktop-titlebar.document-focus-mode .workspace-content){height:100%}
-.external-markdown-bar:focus-visible{position:relative;z-index:1;outline:2px solid color-mix(in srgb,var(--green) 44%,transparent);outline-offset:-2px}
-.external-markdown-bar>button:not(.quiet-button):hover,.external-markdown-bar>button:not(.quiet-button):focus-visible{color:var(--warn);text-decoration:underline;text-underline-offset:3px}
-.external-file-context-menu{width:270px}.external-file-context-menu>p{display:grid;gap:2px}.external-file-context-menu>p small{overflow:hidden;color:var(--muted);font:11px var(--font-mono);text-overflow:ellipsis;white-space:nowrap}.external-file-context-menu>button span{display:inline-flex;min-width:0;align-items:center;gap:8px}
-.managed-vault-alert{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;margin:0 14px 10px;padding:10px 11px;border:1px solid var(--warn-soft);border-radius:10px;color:var(--warn);background:linear-gradient(110deg,var(--surface-2),var(--surface));box-shadow:0 5px 18px var(--warn-soft)}
-.managed-vault-alert>span{display:grid;width:32px;height:32px;place-items:center;border-radius:9px;color:var(--warn);background:var(--surface-2)}.managed-vault-alert>div:nth-child(2){display:grid;min-width:0;gap:3px}.managed-vault-alert b{color:var(--warn);font:720 11px/1.35 var(--font-ui)}.managed-vault-alert small{color:var(--fg-2);font:11px/1.5 var(--font-ui)}.managed-vault-alert>div:last-child{display:flex;align-items:center;gap:6px}.managed-vault-alert button{min-height:31px;white-space:nowrap}.managed-vault-alert.is-missing{border-color:var(--danger-soft);background:linear-gradient(110deg,var(--surface-2),var(--surface))}.managed-vault-alert.is-missing>span{color:var(--danger);background:var(--surface-2)}.managed-vault-alert:focus-visible{outline:2px solid var(--warn);outline-offset:2px}
-.managed-vault-menu{width:270px}.managed-vault-menu>p{display:grid;gap:2px}.managed-vault-menu>p small{color:var(--muted);font:11px var(--font-mono)}.managed-vault-menu>button span{display:inline-flex;align-items:center;gap:8px}
 .markdown-preview--deferred:focus-visible{outline:3px solid color-mix(in srgb,var(--green) 38%,transparent);outline-offset:-5px}
 .markdown-render-status{z-index:3;display:grid;grid-template-columns:minmax(0,auto) auto;align-items:center;gap:6px 11px;min-width:min(310px,calc(100% - 32px));max-width:390px;padding:8px 9px 8px 12px;border-radius:12px}.markdown-render-status>div{display:grid;min-width:0;gap:2px}.markdown-render-status>div span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.markdown-render-status>div small{color:var(--reading-muted,var(--muted));font:600 11px/1.35 var(--font-ui)}.markdown-render-status--ready{border-color:var(--accent-soft);background:var(--surface)}.markdown-render-status__track{grid-column:1/-1;display:block;height:3px;overflow:hidden;border-radius:99px;background:var(--accent-soft)}.markdown-render-status__track>i{display:block;height:100%;border-radius:inherit;background:var(--green);transition:width 120ms ease-out}.markdown-render-status .quiet-button{grid-column:2;grid-row:1;min-height:29px;padding-inline:10px;border-color:var(--accent-soft);color:var(--green-strong);background:var(--surface);box-shadow:var(--shadow-xs);font-size:11px}.markdown-render-status .quiet-button:hover,.markdown-render-status .quiet-button:focus-visible{border-color:var(--accent);background:var(--green-bg)}.markdown-render-status:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){.markdown-render-status__track>i{transition:none}}
-@media(max-width:860px){.managed-vault-alert{grid-template-columns:34px minmax(0,1fr);margin-inline:10px}.managed-vault-alert>div:last-child{grid-column:1/-1;justify-content:flex-end}}
+
+/* The editor's context menu is the only one with flyouts. Utilities cannot
+   express "reveal a panel that hangs off my right edge, or my left edge when
+   there is no room", so that part stays real CSS. Everything visible inside
+   it — panel, rows, separators — uses the shared menu shortcuts. */
+.markdown-menu-branch{position:relative}
+.markdown-menu-submenu{
+  position:absolute;top:-6px;left:calc(100% - 2px);z-index:1;
+  display:flex;flex-direction:column;width:250px;
+  max-height:min(360px,calc(100vh - 24px));overflow-y:auto;overscroll-behavior:contain;
+  padding:4px 0;visibility:hidden;opacity:0;
+  border:1px solid var(--line);border-radius:10px;background:var(--surface);
+  box-shadow:var(--shadow-lg);transform:translateX(-4px);pointer-events:none;
+  transition:opacity .12s ease,transform .12s ease,visibility .12s;
+}
+.markdown-menu-branch--code>.markdown-menu-submenu,
+.markdown-menu-branch--insert>.markdown-menu-submenu,
+.markdown-menu-branch--tools>.markdown-menu-submenu,
+.markdown-menu-branch--study>.markdown-menu-submenu,
+.markdown-menu-branch--document>.markdown-menu-submenu{top:auto;bottom:-6px}
+.markdown-editor-context-menu.submenus-left .markdown-menu-submenu{right:calc(100% - 2px);left:auto;transform:translateX(4px)}
+.markdown-menu-branch:hover>.markdown-menu-submenu,
+.markdown-menu-branch.open>.markdown-menu-submenu{visibility:visible;opacity:1;transform:translateX(0);pointer-events:auto}
 </style>

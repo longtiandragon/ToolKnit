@@ -2558,7 +2558,7 @@ async function openLocation(path?: string) {
       <div
         v-if="annotationMenu.open"
         ref="annotationMenuElement"
-        class="fixed z-130 w-52 py-1 rounded-md bg-surface border border-line shadow-lg"
+        class="menu-panel w-52"
         role="menu"
         aria-label="标注操作"
         :style="{ left: `${annotationMenu.x}px`, top: `${annotationMenu.y}px` }"
@@ -2566,21 +2566,21 @@ async function openLocation(path?: string) {
         @contextmenu.prevent
         @keydown.stop="handleAnnotationMenuKeydown"
       >
-        <p class="px-3 pt-1 pb-1.5 text-[11px] font-semibold text-fg-3">{{ annotationMenuAnnotation ? `${annotationKindLabel(annotationMenuAnnotation)}标注` : '标注操作' }}</p>
+        <p class="menu-title">{{ annotationMenuAnnotation ? `${annotationKindLabel(annotationMenuAnnotation)}标注` : '标注操作' }}</p>
         <button v-if="annotationMenuAnnotation?.kind === 'text'" class="menu-item" role="menuitem" @click="editCanvasTextAnnotation(annotationMenu.id)">编辑文字…</button>
         <button class="menu-item" role="menuitem" @click="duplicateCanvasAnnotation(annotationMenu.id)">复制标注</button>
         <button class="menu-item" role="menuitem" :disabled="!annotationMenuLayer.canMoveForward" @click="moveCanvasAnnotationLayer(annotationMenu.id, 'forward')">上移一层</button>
         <button class="menu-item" role="menuitem" :disabled="!annotationMenuLayer.canMoveBackward" @click="moveCanvasAnnotationLayer(annotationMenu.id, 'backward')">下移一层</button>
         <button class="menu-item" role="menuitem" :disabled="!annotationMenuLayer.canMoveForward" @click="bringAnnotationToFront(annotationMenu.id)">置于最前</button>
         <button class="menu-item" role="menuitem" :disabled="!annotationMenuLayer.canMoveBackward" @click="moveCanvasAnnotationLayer(annotationMenu.id, 'back')">置于最后</button>
-        <span class="block my-1 divider" aria-hidden="true" />
+        <i class="menu-sep" aria-hidden="true" />
         <button class="menu-item menu-item-danger" role="menuitem" @click="removeAnnotation(annotationMenu.id)">删除标注</button>
       </div>
 
       <div
         v-if="projectMenu.open"
         ref="projectMenuElement"
-        class="fixed z-130 w-60 py-1 rounded-md bg-surface border border-line shadow-lg"
+        class="menu-panel w-60"
         role="menu"
         aria-label="画布项目操作"
         :style="{ left: `${projectMenu.x}px`, top: `${projectMenu.y}px` }"
@@ -2588,7 +2588,7 @@ async function openLocation(path?: string) {
         @contextmenu.prevent
         @keydown.stop="handleProjectMenuKeydown"
       >
-        <p class="row-between gap-2 px-3 pt-1 pb-1.5 text-[11px] font-semibold text-fg-3">
+        <p class="menu-title">
           画布操作<small class="font-normal">{{ projectDirty ? '未保存' : projectId ? '已保存' : '新项目' }}</small>
         </p>
         <button class="menu-item" role="menuitem" :disabled="projectSaving || !images.length || !projectDirty" @click="saveProjectFromMenu">保存画布项目<kbd class="kbd">Ctrl/⌘ S</kbd></button>
@@ -2602,7 +2602,7 @@ async function openLocation(path?: string) {
       <div
         v-if="processMenu.open"
         ref="processMenuElement"
-        class="fixed z-130 w-60 py-1 rounded-md bg-surface border border-line shadow-lg"
+        class="menu-panel w-60"
         role="menu"
         aria-label="图片预览操作"
         :style="{ left: `${processMenu.x}px`, top: `${processMenu.y}px` }"
@@ -2610,7 +2610,7 @@ async function openLocation(path?: string) {
         @contextmenu.prevent
         @keydown.stop="handleProcessMenuKeydown"
       >
-        <p class="px-3 pt-1 pb-1.5 text-[11px] font-semibold text-fg-3">{{ activeMode === 'compose' && !images.length ? '开始自由画布' : '预览操作' }}</p>
+        <p class="menu-title">{{ activeMode === 'compose' && !images.length ? '开始自由画布' : '预览操作' }}</p>
         <template v-if="activeMode === 'compose' && !images.length">
           <button v-for="preset in blankCanvasPresets" :key="preset.id" class="menu-item" role="menuitem" :disabled="blankCanvasBusy" @click="createBlankCanvasFromMenu(preset)">
             新建{{ preset.label }}<kbd class="kbd">{{ preset.width }} × {{ preset.height }}</kbd>
@@ -2631,7 +2631,7 @@ async function openLocation(path?: string) {
       <section
         v-if="annotationTextEditor.open"
         ref="annotationTextEditorElement"
-        class="fixed z-130 w-64 stack gap-2 p-3 rounded-md bg-surface border border-line shadow-lg"
+        class="menu-panel w-64 gap-2 p-3"
         role="dialog"
         aria-modal="false"
         aria-label="编辑文字标注"
@@ -2662,56 +2662,14 @@ async function openLocation(path?: string) {
 
 <style scoped>
 /*
- * Two things here resist utilities, and both are machinery rather than design
- * system: the menu row, which repeats eleven times across three menus, and the
- * crop overlay — eight handle positions, a rule-of-thirds grid drawn with two
- * gradients, and a 9999px shadow that dims everything outside the selection.
+ * The crop overlay resists utilities: eight handle positions, a rule-of-thirds
+ * grid drawn with two gradients, and a 9999px shadow that dims everything
+ * outside the selection.
  *
- * The crop overlay's colours are deliberately fixed rather than themed. It
- * sits on top of the user's own pixels, so it has to read the same against a
- * dark photo and a white screenshot, in either UI theme.
+ * Its colours are deliberately fixed rather than themed. It sits on top of the
+ * user's own pixels, so it has to read the same against a dark photo and a
+ * white screenshot, in either UI theme.
  */
-.menu-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  height: 32px;
-  padding: 0 12px;
-  border: 0;
-  color: var(--fg-2);
-  background: transparent;
-  font-size: 12px;
-  text-align: left;
-  transition: color .12s ease, background .12s ease;
-}
-
-.menu-item:hover:not(:disabled),
-.menu-item:focus-visible:not(:disabled) {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.menu-item:focus-visible {
-  outline: none;
-}
-
-.menu-item:disabled {
-  opacity: .45;
-  cursor: not-allowed;
-}
-
-.menu-item-danger {
-  color: var(--danger);
-}
-
-.menu-item-danger:hover:not(:disabled),
-.menu-item-danger:focus-visible:not(:disabled) {
-  color: var(--danger);
-  background: var(--danger-soft);
-}
-
 .crop-layer {
   position: absolute;
   z-index: 4;

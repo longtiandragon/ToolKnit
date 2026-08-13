@@ -125,6 +125,25 @@ async function run() {
   await page.waitForTimeout(900)
   await shot('question-inspector')
 
+  // Right-click is a first-class interaction here; the menus are teleported,
+  // so they have to clear the workspace's own overflow clipping.
+  const row = page.locator('[aria-label="文档列表"] button').first()
+  await row.click({ button: 'right' })
+  await page.waitForTimeout(500)
+  await shot('document-menu')
+  await page.keyboard.press('Escape')
+
+  await page.locator('button:has-text("编辑")').first().click()
+  await page.waitForTimeout(800)
+  const editor = page.locator('.cm-content')
+  const editorBox = await editor.boundingBox()
+  if (editorBox) await page.mouse.click(editorBox.x + 120, editorBox.y + 60, { button: 'right' })
+  await page.waitForTimeout(500)
+  await shot('editor-menu')
+  await page.locator('[data-editor-submenu="insert"]').hover()
+  await page.waitForTimeout(500)
+  await shot('editor-submenu')
+
   await browser.close()
 
   const html = `<html><body style="margin:0;background:#111;font:11px sans-serif">

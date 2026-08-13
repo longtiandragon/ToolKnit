@@ -1345,31 +1345,8 @@ textarea:focus-visible,
   text-align: center;
 }
 
-.documents-layout > .detail-empty > div {
-  display: grid;
-  justify-items: center;
-  gap: 8px;
-}
-
-.documents-layout > .detail-empty b {
-  color: var(--text);
-  font-size: 18px;
-}
-
-.documents-layout > .detail-empty p {
-  font-size: 12px;
-}
-
-.editor-header {
-  padding: 14px 16px;
-}
-
 .title-input {
   font: 700 20px/1.3 var(--font-display);
-}
-
-.tag-editor {
-  padding: 8px 16px;
 }
 
 .editor-grid textarea {

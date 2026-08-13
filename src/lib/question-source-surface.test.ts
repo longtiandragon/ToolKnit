@@ -15,7 +15,8 @@ describe('question provenance surfaces', () => {
     expect(documents).toContain('{{ currentQuestionSource.hint }}')
     expect(documents).toContain('questionSourceActionLabel(currentQuestionSource)')
     expect(documents).toContain('复制来源 / 出处')
-    expect(documents).toContain('role="menu" aria-label="题目结构操作"')
+    expect(documents).toMatch(/aria-label="题目结构操作"/)
+    expect(documents).toMatch(/ref="questionStructureMenuElement"[\s\S]{0,400}?role="menu"/)
   })
 
   it('opens review Markdown links and exposes provenance in the card menu', () => {

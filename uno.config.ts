@@ -118,6 +118,28 @@ export default defineConfig({
     ],
     ['btn-tool-active', 'bg-accent-soft text-accent font-medium'],
 
+    // ── Context menus ─────────────────────────────────────────────────────
+    // Right-click is a first-class interaction in this app — /documents alone
+    // opens fifteen menus — and they had grown four separate class names with
+    // four slightly different paddings, radii and hover colours. One set.
+    // Panels are always teleported to `body`, hence `fixed`.
+    ['menu-panel', 'fixed z-130 stack py-1 rounded-md bg-surface border border-line shadow-lg'],
+    ['menu-title', 'row-between gap-3 px-3 pt-1 pb-1.5 text-[11px] font-semibold text-fg-3'],
+    [
+      'menu-item',
+      'flex items-center justify-between gap-3 w-full shrink-0 min-h-8 px-3 py-1 ' +
+        'text-[12px] text-fg-2 text-left transition-colors duration-120 ' +
+        'hover:not-disabled:bg-accent-soft hover:not-disabled:text-accent ' +
+        'focus-visible:not-disabled:bg-accent-soft focus-visible:not-disabled:text-accent ' +
+        'focus-visible:outline-none disabled:opacity-45 disabled:cursor-not-allowed',
+    ],
+    [
+      'menu-item-danger',
+      'text-danger hover:not-disabled:bg-danger-soft hover:not-disabled:text-danger ' +
+        'focus-visible:not-disabled:bg-danger-soft focus-visible:not-disabled:text-danger',
+    ],
+    ['menu-sep', 'shrink-0 my-1 h-px bg-line'],
+
     // ── Form controls ─────────────────────────────────────────────────────
     [
       'field',
