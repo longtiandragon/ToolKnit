@@ -6,7 +6,12 @@ const review = readFileSync(new URL('../views/ReviewView.vue', import.meta.url),
 
 describe('question provenance surfaces', () => {
   it('keeps source visible and actionable in the structured question inspector', () => {
-    expect(documents).toContain('class="question-source-field"')
+    // Matched on the field itself rather than the wrapper's class name: the
+    // contract is that a question's provenance has its own labelled input in
+    // the inspector, not that the label is styled by `.question-source-field`.
+    expect(documents).toContain('来源 / 出处')
+    expect(documents).toContain('draft.questionDetails.source')
+    expect(documents).toContain('data-question-field="source"')
     expect(documents).toContain('{{ currentQuestionSource.hint }}')
     expect(documents).toContain('questionSourceActionLabel(currentQuestionSource)')
     expect(documents).toContain('复制来源 / 出处')

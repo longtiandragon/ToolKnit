@@ -599,6 +599,14 @@ a:hover {
   padding: 36px clamp(32px, 7vw, 92px) 80px;
 }
 
+/* Reading measure. Focus mode has always capped the line length at 820px;
+   ordinary preview never did, so on a wide window a paragraph ran the full
+   width of the editor and the eye lost the line it was on. */
+.editor-grid--preview .markdown-preview.markdown-content {
+  width: min(100%, 780px);
+  margin-inline: auto;
+}
+
 .editor-grid--split .markdown-preview {
   padding: 28px 34px 70px;
 }

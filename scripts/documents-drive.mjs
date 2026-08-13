@@ -121,7 +121,7 @@ async function run() {
   await page.waitForTimeout(1000)
   await shot('question-new')
 
-  await page.locator('button:has-text("题目与复习")').first().click().catch(() => {})
+  await page.locator('button:has-text("题目与复习")').first().click()
   await page.waitForTimeout(900)
   await shot('question-inspector')
 
