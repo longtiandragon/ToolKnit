@@ -3,7 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { inspectDesktopInputFile, isDesktop, listenWindowFileDrops, readDesktopInputFile } from '@/lib/native'
 import { acceptsDroppedFile, exceedsDroppedFileLimit, filesWithinDropBudget, formatDropFileSize } from '@/lib/file-drop-policy'
 import AppIcon from '@/components/AppIcon.vue'
-const props=withDefaults(defineProps<{modelValue:File[];accept?:string;multiple?:boolean;title?:string;hint?:string;disabled?:boolean;maxFileBytes?:number;maxTotalBytes?:number;maxFiles?:number;desktopPathOnly?:boolean}>(),{accept:'*/*',multiple:true,title:'拖入文件立即开始',hint:'支持批量文件；原件保持只读',disabled:false,maxFiles:100,desktopPathOnly:false})
+/**
+ * `compact` collapses the empty state from a tall invitation into a single
+ * row. A library that already holds files does not need to be invited to
+ * accept more — but it still has to stay mounted, because this component owns
+ * the desktop drag-and-drop listener, and unmounting it to save space would
+ * silently turn off dropping files onto the window.
+ */
+const props=withDefaults(defineProps<{modelValue:File[];accept?:string;multiple?:boolean;title?:string;hint?:string;disabled?:boolean;maxFileBytes?:number;maxTotalBytes?:number;maxFiles?:number;desktopPathOnly?:boolean;compact?:boolean}>(),{accept:'*/*',multiple:true,title:'拖入文件立即开始',hint:'支持批量文件；原件保持只读',disabled:false,maxFiles:100,desktopPathOnly:false,compact:false})
 const emit=defineEmits<{ 'update:modelValue':[files:File[]]; 'desktop-paths':[paths:string[]]; 'request-desktop-choose':[]; error:[message:string] }>();const input=ref<HTMLInputElement>();const active=ref(false);const loading=ref(false);const previews=ref(new Map<File,string>());let unlisten:()=>void=()=>{};let disposed=false
 const files=computed(()=>props.modelValue)
 function accepted(file:Pick<File,'name'|'type'>){return acceptsDroppedFile(file,props.accept)}
@@ -40,8 +47,17 @@ onBeforeUnmount(()=>{disposed=true;unlisten();previews.value.forEach(URL.revokeO
     @dragleave.prevent="active = false"
     @drop.prevent="drop"
   >
+    <!-- Compact and empty: one row, so a list can keep the height. -->
+    <div v-if="!files.length && compact" class="row gap-2.5 px-3 h-11">
+      <AppIcon name="inbox" :size="16" class="shrink-0" :class="active && !disabled ? 'text-accent' : 'text-fg-3'" />
+      <span class="min-w-0 flex-1 truncate text-[12px]" :class="active && !disabled ? 'text-accent' : 'text-fg-3'">
+        {{ loading ? (desktopPathOnly ? '正在建立本地索引…' : '正在读取文件…') : active && !disabled ? '松手即可载入' : title }}
+      </span>
+      <button class="btn-ghost btn-sm shrink-0" :disabled="disabled || loading" @click="chooseFiles">选择文件</button>
+    </div>
+
     <!-- Empty: the whole surface is the target, so it reads as one. -->
-    <div v-if="!files.length" class="flex-1 stack items-center justify-center gap-3 px-6 py-10 text-center">
+    <div v-else-if="!files.length" class="flex-1 stack items-center justify-center gap-3 px-6 py-10 text-center">
       <span class="center w-11 h-11 rounded-lg bg-surface-2 text-fg-3" :class="active && !disabled ? 'text-accent' : ''">
         <AppIcon name="inbox" :size="22" />
       </span>
