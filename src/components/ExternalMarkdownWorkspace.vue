@@ -746,39 +746,180 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="external-workspace" aria-label="外部 Markdown 工作区">
-    <div v-if="!root" class="external-workspace__empty">
-      <span><AppIcon name="folder" :size="22" /></span>
-      <b>打开你的 Markdown 资料夹</b>
-      <p>只读取你展开的层级；正文会在点开文件时才载入。</p>
-      <button class="primary-button" @click="chooseWorkspace">选择资料夹</button>
+  <!-- The file tree lives in the 288px list column of /documents, so every
+       decision here is about that width: one line per entry, depth carried by
+       padding rather than nested boxes, and names that truncate instead of
+       wrapping into a second row the virtualiser does not account for. -->
+  <section class="stack flex-1 min-h-0 min-w-0" aria-label="外部 Markdown 工作区">
+    <!-- Not configured. No folder has ever been chosen, so there is nothing to
+         retry and nothing to refresh — only one thing to do. -->
+    <div v-if="!root" class="stack items-center justify-center gap-2 flex-1 min-h-0 px-6 py-10 text-center">
+      <span class="center w-11 h-11 shrink-0 rounded-md bg-accent-soft text-accent"><AppIcon name="folder" :size="22" /></span>
+      <b class="text-[13px] font-semibold text-fg">打开你的 Markdown 资料夹</b>
+      <p class="max-w-56 text-[12px] leading-relaxed text-fg-3">只读取你展开的层级；正文会在点开文件时才载入。</p>
+      <button class="btn-primary btn-sm mt-1" @click="chooseWorkspace">选择资料夹</button>
     </div>
+
     <template v-else>
-      <header class="external-workspace__header" tabindex="0" role="group" aria-label="Markdown 工作区；右键或菜单键打开根目录操作" aria-haspopup="menu" :aria-expanded="Boolean(rootMenu)" @contextmenu.prevent.stop="openRootMenu" @keydown="openRootMenuFromKeyboard">
-        <div><span>外部工作区</span><b :title="root">{{ rootName }}</b></div>
-        <div class="external-workspace__header-actions"><button title="在根目录新建 Markdown" aria-label="在根目录新建 Markdown" @click="openCreateDialog('markdown')"><AppIcon name="plus" :size="13" /></button><button title="在根目录新建资料夹" aria-label="在根目录新建资料夹" @click="openCreateDialog('directory')"><AppIcon name="folder" :size="13" /></button><button class="quiet-button" title="更换 Markdown 工作区" @click="chooseWorkspace">更换</button></div>
+      <header
+        class="row-between gap-2 shrink-0 px-2.5 h-10 border-b border-line transition-colors duration-120 focus-visible:bg-accent-soft"
+        tabindex="0"
+        role="group"
+        aria-label="Markdown 工作区；右键或菜单键打开根目录操作"
+        aria-haspopup="menu"
+        :aria-expanded="Boolean(rootMenu)"
+        @contextmenu.prevent.stop="openRootMenu"
+        @keydown="openRootMenuFromKeyboard"
+      >
+        <span class="row gap-2 min-w-0">
+          <AppIcon name="folder-open" :size="14" class="shrink-0 text-accent" />
+          <b class="min-w-0 truncate text-[13px] font-semibold text-fg" :title="root">{{ rootName }}</b>
+        </span>
+        <span class="row gap-0.5 shrink-0">
+          <button class="center w-7 h-7 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" title="在根目录新建 Markdown" aria-label="在根目录新建 Markdown" @click="openCreateDialog('markdown')"><AppIcon name="plus" :size="14" /></button>
+          <button class="center w-7 h-7 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" title="在根目录新建资料夹" aria-label="在根目录新建资料夹" @click="openCreateDialog('directory')"><AppIcon name="folder" :size="14" /></button>
+          <button class="btn-default btn-sm h-7 px-2" title="更换 Markdown 工作区" @click="chooseWorkspace">更换</button>
+        </span>
       </header>
-      <div class="external-workspace__path" :title="root"><AppIcon name="folder-open" :size="13" /><span>{{ root }}</span><small class="external-workspace__watch" :class="workspaceWatchMode" :title="workspaceLastSyncedAt ? `最近同步：${new Date(workspaceLastSyncedAt).toLocaleTimeString('zh-CN')}` : workspaceWatchLabel"><i aria-hidden="true"></i>{{ workspaceWatchLabel }}</small><button title="同步已展开的工作区层级" aria-label="同步已展开的工作区层级" :disabled="workspaceSyncing" @click="refreshWorkspace"><AppIcon name="refresh" :size="13" /></button></div>
-      <div class="external-workspace__search-scope"><span>查找范围</span><div role="tablist" aria-label="工作区搜索范围"><button type="button" role="tab" :aria-selected="searchScope === 'name'" :class="{ active: searchScope === 'name' }" @click="setSearchScope('name')">名称</button><button type="button" role="tab" :aria-selected="searchScope === 'content'" :class="{ active: searchScope === 'content' }" @click="setSearchScope('content')">正文</button></div><small>{{ searchScope === 'content' ? '后台受限读取' : '不读取正文' }}</small></div>
-      <label class="external-workspace__search"><AppIcon name="search" :size="13" /><input ref="searchInputElement" v-model="searchQuery" type="search" autocomplete="off" spellcheck="false" :aria-label="searchInputLabel" :placeholder="searchPlaceholder" @keydown="handleSearchInputKeydown" /><small v-if="searchPending">查找中</small><small v-else-if="searchQuery.trim() && searchReady">{{ searchResults.length }} 项</small><button v-if="searchQuery" type="button" title="清除搜索" aria-label="清除工作区搜索" @click="clearWorkspaceSearch"><AppIcon name="close" :size="11" /></button><kbd v-else>{{ searchScope === 'content' ? '正文' : '名称' }}</kbd></label>
-      <div v-if="cutEntry" class="external-workspace__move-banner" role="status" aria-live="polite">
-        <AppIcon name="cut" :size="14" />
-        <span><small>待移动</small><b :title="cutEntry.relativePath">{{ cutEntry.name }}</b></span>
-        <button :disabled="!canMoveCutTo('')" @click="moveCutEntry('')">{{ canMoveCutTo('') ? '移到根目录' : '已在根目录' }}</button>
-        <button class="icon-button" title="取消剪切" aria-label="取消剪切" @click="cancelMove"><AppIcon name="close" :size="13" /></button>
+
+      <!-- Where the tree is reading from, and whether it is still in step with
+           the disk. The dot is the state; the words say the same thing for
+           anyone who cannot use the colour. -->
+      <div class="row gap-1.5 shrink-0 px-2.5 h-8 border-b border-line">
+        <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-3" :title="root">{{ root }}</span>
+        <small
+          class="row gap-1 shrink-0 text-[11px] font-medium"
+          :class="workspaceWatchMode === 'native' ? 'text-success' : workspaceWatchMode === 'starting' ? 'text-warn' : 'text-fg-3'"
+          :title="workspaceLastSyncedAt ? `最近同步：${new Date(workspaceLastSyncedAt).toLocaleTimeString('zh-CN')}` : workspaceWatchLabel"
+        >
+          <i class="w-1.5 h-1.5 shrink-0 rounded-full" :class="workspaceWatchMode === 'native' ? 'bg-success' : workspaceWatchMode === 'starting' ? 'bg-warn' : 'bg-line-strong'" aria-hidden="true"></i>{{ workspaceWatchLabel }}
+        </small>
+        <button class="center w-7 h-7 shrink-0 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg disabled:opacity-45 disabled:cursor-wait" title="同步已展开的工作区层级" aria-label="同步已展开的工作区层级" :disabled="workspaceSyncing" @click="refreshWorkspace"><AppIcon name="refresh" :size="13" /></button>
       </div>
-      <div v-if="searchQuery.trim() && !searchReady" class="external-workspace__state external-workspace__search-hint" role="status">{{ searchScope === 'content' ? '正文搜索请输入至少 2 个中文字符或 3 个其他字符。' : '中文可输入 1 个字；英文或数字再输入 1 个字符开始查找。' }}</div>
-      <div v-else-if="searchQuery.trim() && searchError" class="external-workspace__state is-error" role="alert"><span>{{ searchError }}</span><button @click="scheduleWorkspaceSearch">重试</button></div>
-      <div v-else-if="searchQuery.trim() && searchPending && !searchResults.length" class="external-workspace__state" role="status">{{ searchScope === 'content' ? '正在后台查找正文；单文件与累计读取量都有安全上限…' : '正在后台查找文件名；不会读取正文…' }}</div>
-      <nav v-else-if="searchQuery.trim() && searchResults.length" class="external-workspace__search-results" aria-label="工作区 Markdown 搜索结果">
-        <button v-for="(entry, index) in searchResults" :key="entry.relativePath" v-memo="[entry.relativePath, entry.size, entry.line, entry.preview, activePath === entry.path]" data-workspace-search-row :class="{ active: activePath === entry.path, 'content-match': searchScope === 'content' }" :title="`${entry.relativePath}${entry.line ? `，点击打开并定位到第 ${entry.line} 行` : ''}；右键查看更多操作`" aria-haspopup="menu" @click="activate(searchableEntry(entry))" @contextmenu.prevent.stop="openMenu($event, searchableEntry(entry))" @keydown="handleSearchResultKeydown($event, index, entry)"><AppIcon name="file-text" :size="14" /><span><b>{{ entry.name }}</b><small>{{ entry.relativePath.split('/').slice(0, -1).join(' / ') || rootName }}<template v-if="entry.line"> · 第 {{ entry.line }} 行</template></small><em v-if="entry.preview">{{ entry.preview }}</em></span><i>{{ entry.line ? `L${entry.line}` : typeof entry.size === 'number' ? `${Math.max(1, Math.round(entry.size / 1024))} KB` : 'MD' }}</i></button>
+
+      <!-- Search, then what it is allowed to read. The scope sits under the
+           field because it modifies the field, and the note on its right is
+           the privacy promise: a name search never opens a file. -->
+      <div class="stack gap-1.5 shrink-0 p-2 border-b border-line">
+        <label class="row gap-2 h-8 px-2.5 rounded-sm bg-well border border-line transition-colors duration-120 focus-within:border-accent">
+          <AppIcon name="search" :size="13" class="shrink-0 text-fg-3" />
+          <input
+            ref="searchInputElement"
+            v-model="searchQuery"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            class="min-w-0 flex-1 appearance-none bg-transparent border-0 text-[12px] text-fg focus:outline-none [&::-webkit-search-cancel-button]:hidden"
+            :aria-label="searchInputLabel"
+            :placeholder="searchPlaceholder"
+            @keydown="handleSearchInputKeydown"
+          />
+          <small v-if="searchPending" class="shrink-0 text-[11px] text-fg-3">查找中</small>
+          <small v-else-if="searchQuery.trim() && searchReady" class="shrink-0 text-[11px] tabular-nums text-fg-3">{{ searchResults.length }} 项</small>
+          <button v-if="searchQuery" type="button" class="center w-5 h-5 shrink-0 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" title="清除搜索" aria-label="清除工作区搜索" @click="clearWorkspaceSearch"><AppIcon name="close" :size="11" /></button>
+          <kbd v-else class="kbd shrink-0">{{ searchScope === 'content' ? '正文' : '名称' }}</kbd>
+        </label>
+        <div class="row gap-2">
+          <div class="row gap-0.5 shrink-0 p-0.5 rounded-sm bg-surface-2 border border-line" role="tablist" aria-label="工作区搜索范围">
+            <button type="button" role="tab" class="center h-6 px-2.5 rounded-[4px] text-[11px] transition-colors duration-120" :class="searchScope === 'name' ? 'bg-surface text-accent font-medium' : 'text-fg-3 hover:text-fg'" :aria-selected="searchScope === 'name'" @click="setSearchScope('name')">名称</button>
+            <button type="button" role="tab" class="center h-6 px-2.5 rounded-[4px] text-[11px] transition-colors duration-120" :class="searchScope === 'content' ? 'bg-surface text-accent font-medium' : 'text-fg-3 hover:text-fg'" :aria-selected="searchScope === 'content'" @click="setSearchScope('content')">正文</button>
+          </div>
+          <small class="min-w-0 flex-1 truncate text-right text-[11px] text-fg-3">{{ searchScope === 'content' ? '后台受限读取' : '不读取正文' }}</small>
+        </div>
+      </div>
+
+      <!-- A staged move is a mode: it changes what right-clicking a folder
+           does, so it stays on screen until it is used or cancelled. -->
+      <div v-if="cutEntry" class="stack gap-1.5 shrink-0 p-2 border-b border-line bg-accent-soft" role="status" aria-live="polite">
+        <div class="row gap-1.5 min-w-0">
+          <AppIcon name="cut" :size="13" class="shrink-0 text-accent" />
+          <small class="shrink-0 text-[11px] font-medium text-accent">待移动</small>
+          <b class="min-w-0 flex-1 truncate text-[12px] font-medium text-fg" :title="cutEntry.relativePath">{{ cutEntry.name }}</b>
+          <button class="center w-7 h-7 shrink-0 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" title="取消剪切" aria-label="取消剪切" @click="cancelMove"><AppIcon name="close" :size="13" /></button>
+        </div>
+        <button class="btn-default btn-sm w-full" :disabled="!canMoveCutTo('')" @click="moveCutEntry('')">{{ canMoveCutTo('') ? '移到根目录' : '已在根目录' }}</button>
+      </div>
+
+      <!-- One slot, eight states. Each says what is true of *this* state: too
+           few characters, a failed read, a search still running, an empty
+           result, an empty folder, a folder that will not open. -->
+      <div v-if="searchQuery.trim() && !searchReady" class="stack items-center justify-center gap-2 flex-1 min-h-0 px-6 text-center" role="status">
+        <AppIcon name="search" :size="18" class="shrink-0 text-fg-3" />
+        <p class="text-[12px] leading-relaxed text-fg-3">{{ searchScope === 'content' ? '正文搜索请输入至少 2 个中文字符或 3 个其他字符。' : '中文可输入 1 个字；英文或数字再输入 1 个字符开始查找。' }}</p>
+      </div>
+      <div v-else-if="searchQuery.trim() && searchError" class="stack items-center justify-center gap-2 flex-1 min-h-0 px-6 text-center" role="alert">
+        <span class="center w-11 h-11 shrink-0 rounded-md bg-danger-soft text-danger"><AppIcon name="warning" :size="20" /></span>
+        <b class="text-[13px] font-medium text-danger">这次搜索没有完成</b>
+        <p class="text-[12px] leading-relaxed text-fg-3">{{ searchError }}</p>
+        <button class="btn-default btn-sm mt-1" @click="scheduleWorkspaceSearch">重试</button>
+      </div>
+      <div v-else-if="searchQuery.trim() && searchPending && !searchResults.length" class="stack items-center justify-center gap-2 flex-1 min-h-0 px-6 text-center" role="status">
+        <AppIcon name="search" :size="18" class="shrink-0 text-fg-3" />
+        <p class="text-[12px] leading-relaxed text-fg-3">{{ searchScope === 'content' ? '正在后台查找正文；单文件与累计读取量都有安全上限…' : '正在后台查找文件名；不会读取正文…' }}</p>
+      </div>
+      <nav v-else-if="searchQuery.trim() && searchResults.length" class="flex-1 min-h-0 overflow-y-auto" aria-label="工作区 Markdown 搜索结果">
+        <button
+          v-for="(entry, index) in searchResults"
+          :key="entry.relativePath"
+          v-memo="[entry.relativePath, entry.size, entry.line, entry.preview, activePath === entry.path]"
+          data-workspace-search-row
+          class="flex gap-2 w-full px-2.5 py-2 text-left border-l-2 transition-colors duration-120"
+          :class="[
+            activePath === entry.path ? 'border-l-accent bg-accent-soft' : 'border-l-transparent hover:bg-surface-2',
+            searchScope === 'content' ? 'items-start' : 'items-center',
+          ]"
+          :title="`${entry.relativePath}${entry.line ? `，点击打开并定位到第 ${entry.line} 行` : ''}；右键查看更多操作`"
+          aria-haspopup="menu"
+          @click="activate(searchableEntry(entry))"
+          @contextmenu.prevent.stop="openMenu($event, searchableEntry(entry))"
+          @keydown="handleSearchResultKeydown($event, index, entry)"
+        >
+          <AppIcon name="file-text" :size="14" class="shrink-0 mt-0.5" :class="activePath === entry.path ? 'text-accent' : 'text-fg-3'" />
+          <span class="stack gap-0.5 min-w-0 flex-1">
+            <b class="truncate text-[12px] font-medium" :class="activePath === entry.path ? 'text-accent' : 'text-fg'">{{ entry.name }}</b>
+            <small class="truncate text-[11px] text-fg-3">{{ entry.relativePath.split('/').slice(0, -1).join(' / ') || rootName }}<template v-if="entry.line"> · 第 {{ entry.line }} 行</template></small>
+            <em v-if="entry.preview" class="mt-0.5 line-clamp-2 not-italic text-[12px] leading-snug text-fg-2">{{ entry.preview }}</em>
+          </span>
+          <i class="shrink-0 not-italic text-[11px] tabular-nums text-fg-3">{{ entry.line ? `L${entry.line}` : typeof entry.size === 'number' ? `${Math.max(1, Math.round(entry.size / 1024))} KB` : 'MD' }}</i>
+        </button>
       </nav>
-      <div v-else-if="searchQuery.trim()" class="external-workspace__state"><span>{{ searchScope === 'content' ? '在安全读取范围内没有找到匹配正文。' : '没有匹配的 Markdown 文件。' }}</span><button @click="clearWorkspaceSearch">返回文件树</button></div>
-      <div v-else-if="workspaceLoading && !directories['']" class="external-workspace__state" role="status">正在读取当前层级…</div>
-      <div v-else-if="workspaceError && !directories['']" class="external-workspace__state is-error" role="alert"><span>{{ workspaceError }}</span><button @click="loadDirectory('')">重试</button></div>
-      <div v-else-if="!visibleEntries.length" class="external-workspace__state"><span>这个资料夹里还没有 Markdown。</span><button @click="loadDirectory('')">重新读取</button></div>
-      <div v-else id="external-workspace-tree" ref="treeElement" class="external-workspace__tree" role="tree" aria-label="Markdown 文件树" @scroll.passive="scrollTop = ($event.currentTarget as HTMLElement).scrollTop">
-        <div class="external-workspace__spacer" :style="{ height: `${treeWindow.before}px` }" aria-hidden="true" />
+      <div v-else-if="searchQuery.trim()" class="stack items-center justify-center gap-2 flex-1 min-h-0 px-6 text-center">
+        <AppIcon name="search" :size="18" class="shrink-0 text-fg-3" />
+        <p class="text-[12px] leading-relaxed text-fg-3">{{ searchScope === 'content' ? '在安全读取范围内没有找到匹配正文。' : '没有匹配的 Markdown 文件。' }}</p>
+        <button class="btn-default btn-sm mt-1" @click="clearWorkspaceSearch">返回文件树</button>
+      </div>
+      <div v-else-if="workspaceLoading && !directories['']" class="stack items-center justify-center gap-2 flex-1 min-h-0 px-6 text-center" role="status">
+        <AppIcon name="refresh" :size="18" class="shrink-0 text-fg-3" />
+        <p class="text-[12px] leading-relaxed text-fg-3">正在读取当前层级…</p>
+      </div>
+      <div v-else-if="workspaceError && !directories['']" class="stack items-center justify-center gap-2 flex-1 min-h-0 px-6 text-center" role="alert">
+        <span class="center w-11 h-11 shrink-0 rounded-md bg-danger-soft text-danger"><AppIcon name="shield" :size="20" /></span>
+        <b class="text-[13px] font-medium text-danger">读不到这个资料夹</b>
+        <p class="text-[12px] leading-relaxed text-fg-2">{{ workspaceError }}</p>
+        <p class="max-w-60 text-[11px] leading-relaxed text-fg-3">确认资料夹仍在原处、没有被移走或卸载，并且当前账户有读取权限；也可以在上方更换成别的资料夹。</p>
+        <button class="btn-default btn-sm mt-1" @click="loadDirectory('')">重试</button>
+      </div>
+      <div v-else-if="!visibleEntries.length" class="stack items-center justify-center gap-2 flex-1 min-h-0 px-6 text-center">
+        <span class="center w-11 h-11 shrink-0 rounded-md bg-surface-2 text-fg-3"><AppIcon name="folder-open" :size="20" /></span>
+        <b class="text-[13px] font-medium text-fg">这个资料夹里还没有 Markdown</b>
+        <p class="max-w-60 text-[12px] leading-relaxed text-fg-3">用上方的新建按钮建一份，或者把已有的 .md 文件放进这个资料夹再重新读取。</p>
+        <button class="btn-default btn-sm mt-1" @click="loadDirectory('')">重新读取</button>
+      </div>
+      <div
+        v-else
+        id="external-workspace-tree"
+        ref="treeElement"
+        class="flex-1 min-h-0 overflow-auto [overflow-anchor:none] [scrollbar-gutter:stable]"
+        role="tree"
+        aria-label="Markdown 文件树"
+        @scroll.passive="scrollTop = ($event.currentTarget as HTMLElement).scrollTop"
+      >
+        <div :style="{ height: `${treeWindow.before}px` }" aria-hidden="true" />
+        <!-- Rows are exactly ROW_HEIGHT (30px) tall: the virtual window
+             multiplies by that number, so h-7.5 here is load-bearing.
+             Indentation is capped at eight levels — past that the step would
+             cost more than the filename it is describing, and `aria-level`
+             still carries the real depth. -->
         <button
           v-for="entry in renderedEntries"
           :key="entry.relativePath"
@@ -789,8 +930,9 @@ onBeforeUnmount(() => {
           :aria-level="entry.depth + 1"
           :aria-expanded="entry.kind === 'directory' ? expanded.has(entry.relativePath) : undefined"
           :aria-selected="entry.kind === 'markdown' && activePath === entry.path"
-          :class="{ directory: entry.kind === 'directory', active: activePath === entry.path, loading: loading.has(entry.relativePath), error: errors[entry.relativePath], cut: isCutEntry(entry) }"
-          :style="{ '--workspace-depth': entry.depth }"
+          class="row gap-1.5 w-full h-7.5 pr-2 text-left border-l-2 transition-colors duration-120 focus-visible:[outline-offset:-2px]"
+          :class="activePath === entry.path ? 'border-l-accent bg-accent-soft' : 'border-l-transparent hover:bg-surface-2'"
+          :style="{ paddingLeft: `${8 + Math.min(entry.depth, 8) * 12}px` }"
           :title="`${entry.relativePath}；右键查看更多操作`"
           aria-haspopup="menu"
           :aria-controls="entry.kind === 'directory' && expanded.has(entry.relativePath) ? 'external-workspace-tree' : undefined"
@@ -798,39 +940,91 @@ onBeforeUnmount(() => {
           @contextmenu.prevent.stop="openMenu($event, entry)"
           @keydown="handleTreeKeydown($event, entry)"
         >
-          <i class="external-workspace__chevron" :class="{ invisible: entry.kind !== 'directory' }"><AppIcon name="chevron" :size="12" /></i>
-          <AppIcon :name="entry.kind === 'directory' && expanded.has(entry.relativePath) ? 'folder-open' : entry.kind === 'directory' ? 'folder' : 'file-text'" :size="14" />
-          <b>{{ entry.name }}</b>
-          <small v-if="isCutEntry(entry)">待移动</small><small v-else-if="loading.has(entry.relativePath)">读取中</small><small v-else-if="errors[entry.relativePath]">重试</small>
+          <i class="center w-3.5 shrink-0 text-fg-3 transition-transform duration-150" :class="[entry.kind === 'directory' ? '' : 'invisible', entry.kind === 'directory' && expanded.has(entry.relativePath) ? 'rotate-90' : '']"><AppIcon name="chevron" :size="12" /></i>
+          <AppIcon
+            :name="entry.kind === 'directory' && expanded.has(entry.relativePath) ? 'folder-open' : entry.kind === 'directory' ? 'folder' : 'file-text'"
+            :size="14"
+            class="shrink-0"
+            :class="entry.kind === 'directory' ? 'text-warn' : activePath === entry.path ? 'text-accent' : 'text-fg-3'"
+          />
+          <!-- Weight is the folder/file signal that survives at 12px: folders
+               are medium and full-strength ink, files are regular and one step
+               back. `<b>` would otherwise inherit the UA's bold and flatten
+               the two together. -->
+          <b
+            class="min-w-0 flex-1 truncate text-[12px]"
+            :class="isCutEntry(entry)
+              ? 'font-normal line-through text-fg-3'
+              : activePath === entry.path
+                ? 'font-medium text-accent'
+                : entry.kind === 'directory'
+                  ? 'font-medium text-fg'
+                  : 'font-normal text-fg-2'"
+          >{{ entry.name }}</b>
+          <small v-if="isCutEntry(entry)" class="shrink-0 text-[11px] font-medium text-accent">待移动</small><small v-else-if="loading.has(entry.relativePath)" class="shrink-0 text-[11px] text-fg-3">读取中</small><small v-else-if="errors[entry.relativePath]" class="shrink-0 text-[11px] font-medium text-danger">重试</small>
         </button>
-        <div class="external-workspace__spacer" :style="{ height: `${treeWindow.after}px` }" aria-hidden="true" />
+        <div :style="{ height: `${treeWindow.after}px` }" aria-hidden="true" />
       </div>
-      <p v-if="hasTruncatedDirectory || treeProjection.limitReached" class="external-workspace__notice" role="status">{{ treeProjection.limitReached ? '已展开的树超过 10,000 项，暂时停止继续渲染；折叠部分资料夹后可继续浏览。' : '当前层级规模过大，仅显示前 500 个 Markdown 或资料夹；可整理为子资料夹后继续浏览。' }}</p>
-      <p v-if="searchQuery.trim() && searchReady && searchTruncated" class="external-workspace__notice" role="status">{{ searchScope === 'content' ? '正文搜索已达到文件数、读取量或结果上限；补充关键词可缩小范围。' : '结果已达到安全上限；继续补充资料夹或文件名可以缩小范围。' }}</p>
-      <footer><span>{{ searchFooterLabel }}</span><button @click="revealWorkspaceRoot">在资源管理器中查看</button></footer>
+
+      <p v-if="hasTruncatedDirectory || treeProjection.limitReached" class="row gap-2 shrink-0 px-2.5 py-2 border-t border-line bg-warn-soft text-[11px] leading-relaxed text-fg-2" role="status">
+        <AppIcon name="warning" :size="13" class="shrink-0 mt-0.5 text-warn" />
+        <span>{{ treeProjection.limitReached ? '已展开的树超过 10,000 项，暂时停止继续渲染；折叠部分资料夹后可继续浏览。' : '当前层级规模过大，仅显示前 500 个 Markdown 或资料夹；可整理为子资料夹后继续浏览。' }}</span>
+      </p>
+      <p v-if="searchQuery.trim() && searchReady && searchTruncated" class="row gap-2 shrink-0 px-2.5 py-2 border-t border-line bg-warn-soft text-[11px] leading-relaxed text-fg-2" role="status">
+        <AppIcon name="warning" :size="13" class="shrink-0 mt-0.5 text-warn" />
+        <span>{{ searchScope === 'content' ? '正文搜索已达到文件数、读取量或结果上限；补充关键词可缩小范围。' : '结果已达到安全上限；继续补充资料夹或文件名可以缩小范围。' }}</span>
+      </p>
+
+      <footer class="row-between gap-1.5 shrink-0 pl-2.5 pr-1.5 h-9 border-t border-line">
+        <span class="min-w-0 truncate text-[11px] text-fg-3" :title="searchFooterLabel">{{ searchFooterLabel }}</span>
+        <button class="btn-ghost btn-sm shrink-0 px-1.5" @click="revealWorkspaceRoot">在资源管理器中查看</button>
+      </footer>
     </template>
-    <div v-if="menu" ref="menuElement" class="external-workspace-menu" role="menu" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }" @pointerdown.stop @click.stop @contextmenu.prevent @keydown.stop="handleMenuKeydown">
-      <p>{{ menu.entry.name }}</p>
-      <button v-if="cutEntry && menu.entry.kind === 'directory'" class="move-target" role="menuitem" :disabled="!canMoveCutTo(menu.entry.relativePath)" @click="moveCutEntry(menu.entry.relativePath)">{{ canMoveCutTo(menu.entry.relativePath) ? `移动“${cutEntry.name}”到此处` : '不能移动到这个资料夹' }}</button>
-      <button role="menuitem" @click="activate(menu.entry); closeMenu()">{{ menu.entry.kind === 'directory' ? expanded.has(menu.entry.relativePath) ? '折叠资料夹' : '展开资料夹' : menu.entry.line ? `打开并定位到第 ${menu.entry.line} 行` : '在 Knitspace 中打开' }}</button>
-      <button v-if="menu.entry.kind === 'markdown'" role="menuitem" @click="duplicateEntry(menu.entry)">创建 Markdown 副本</button>
-      <button v-if="menu.entry.kind === 'directory'" role="menuitem" @click="openCreateDialog('markdown', menu.entry.relativePath)">在此新建 Markdown</button>
-      <button v-if="menu.entry.kind === 'directory'" role="menuitem" @click="openCreateDialog('directory', menu.entry.relativePath)">新建子资料夹</button>
-      <button role="menuitem" @click="isCutEntry(menu.entry) ? cancelMove() : stageMove(menu.entry)">{{ isCutEntry(menu.entry) ? '取消剪切' : '剪切以移动' }}</button>
-      <button role="menuitem" @click="openRenameDialog(menu.entry)">重命名</button>
-      <button role="menuitem" @click="revealEntry(menu.entry)">在资源管理器中显示</button>
-      <button role="menuitem" @click="refreshEntry(menu.entry)">{{ menu.entry.kind === 'directory' ? '刷新此资料夹' : '刷新所在资料夹' }}</button>
-      <button v-if="menu.entry.kind === 'markdown'" role="menuitem" @click="copyEntryPath(menu.entry)">复制文件路径</button>
-      <button class="danger" role="menuitem" @click="trashEntry(menu.entry)">移入 Windows 回收站</button>
-    </div>
-    <div v-if="rootMenu" ref="rootMenuElement" class="external-workspace-menu external-workspace-root-menu" role="menu" aria-label="Markdown 工作区操作" :style="{ left: `${rootMenu.x}px`, top: `${rootMenu.y}px` }" @pointerdown.stop @click.stop @contextmenu.prevent @keydown.stop="handleRootMenuKeydown">
-      <p>{{ rootName }} · {{ workspaceWatchLabel }}</p>
-      <button role="menuitem" :disabled="workspaceSyncing" @click="refreshWorkspace">立即同步已展开层级</button>
-      <button role="menuitem" @click="openCreateDialog('markdown')">在根目录新建 Markdown</button>
-      <button role="menuitem" @click="openCreateDialog('directory')">在根目录新建资料夹</button>
-      <button role="menuitem" @click="revealWorkspaceRoot">在资源管理器中查看</button>
-      <button role="menuitem" @click="chooseWorkspace">更换工作区…</button>
-    </div>
+
+    <!-- Both menus are teleported: this panel scrolls and clips its own
+         overflow, which would cut a fixed menu off at the column edge. -->
+    <Teleport to="body">
+      <div v-if="menu" ref="menuElement" class="menu-panel w-61" role="menu" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }" @pointerdown.stop @click.stop @contextmenu.prevent @keydown.stop="handleMenuKeydown">
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ menu.entry.name }}</span>
+          <small class="shrink-0 font-normal">{{ menu.entry.kind === 'directory' ? '资料夹' : 'Markdown' }}</small>
+        </p>
+        <template v-if="cutEntry && menu.entry.kind === 'directory'">
+          <button class="menu-item" :class="canMoveCutTo(menu.entry.relativePath) ? 'bg-accent-soft text-accent font-medium' : ''" role="menuitem" :disabled="!canMoveCutTo(menu.entry.relativePath)" @click="moveCutEntry(menu.entry.relativePath)">
+            <span class="min-w-0 truncate">{{ canMoveCutTo(menu.entry.relativePath) ? `移动“${cutEntry.name}”到此处` : '不能移动到这个资料夹' }}</span>
+          </button>
+          <i class="menu-sep" aria-hidden="true" />
+        </template>
+        <button class="menu-item" role="menuitem" @click="activate(menu.entry); closeMenu()">
+          <span class="min-w-0 truncate">{{ menu.entry.kind === 'directory' ? expanded.has(menu.entry.relativePath) ? '折叠资料夹' : '展开资料夹' : menu.entry.line ? `打开并定位到第 ${menu.entry.line} 行` : '在 Knitspace 中打开' }}</span>
+        </button>
+        <button v-if="menu.entry.kind === 'markdown'" class="menu-item" role="menuitem" @click="duplicateEntry(menu.entry)">创建 Markdown 副本</button>
+        <button v-if="menu.entry.kind === 'directory'" class="menu-item" role="menuitem" @click="openCreateDialog('markdown', menu.entry.relativePath)">在此新建 Markdown</button>
+        <button v-if="menu.entry.kind === 'directory'" class="menu-item" role="menuitem" @click="openCreateDialog('directory', menu.entry.relativePath)">新建子资料夹</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="isCutEntry(menu.entry) ? cancelMove() : stageMove(menu.entry)">{{ isCutEntry(menu.entry) ? '取消剪切' : '剪切以移动' }}</button>
+        <button class="menu-item" role="menuitem" @click="openRenameDialog(menu.entry)">重命名</button>
+        <button class="menu-item" role="menuitem" @click="revealEntry(menu.entry)">在资源管理器中显示</button>
+        <button class="menu-item" role="menuitem" @click="refreshEntry(menu.entry)">{{ menu.entry.kind === 'directory' ? '刷新此资料夹' : '刷新所在资料夹' }}</button>
+        <button v-if="menu.entry.kind === 'markdown'" class="menu-item" role="menuitem" @click="copyEntryPath(menu.entry)">复制文件路径</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item menu-item-danger" role="menuitem" @click="trashEntry(menu.entry)">移入 Windows 回收站</button>
+      </div>
+
+      <div v-if="rootMenu" ref="rootMenuElement" class="menu-panel w-61" role="menu" aria-label="Markdown 工作区操作" :style="{ left: `${rootMenu.x}px`, top: `${rootMenu.y}px` }" @pointerdown.stop @click.stop @contextmenu.prevent @keydown.stop="handleRootMenuKeydown">
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ rootName }}</span>
+          <small class="shrink-0 font-normal">{{ workspaceWatchLabel }}</small>
+        </p>
+        <button class="menu-item" role="menuitem" :disabled="workspaceSyncing" @click="refreshWorkspace">立即同步已展开层级</button>
+        <button class="menu-item" role="menuitem" @click="openCreateDialog('markdown')">在根目录新建 Markdown</button>
+        <button class="menu-item" role="menuitem" @click="openCreateDialog('directory')">在根目录新建资料夹</button>
+        <button class="menu-item" role="menuitem" @click="revealWorkspaceRoot">在资源管理器中查看</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="chooseWorkspace">更换工作区…</button>
+      </div>
+    </Teleport>
+
     <WorkspaceEntryDialog v-if="entryDialog" :mode="entryDialog.mode" :initial-name="entryDialog.entry?.name" :parent-label="entryDialog.parentRelativePath || rootName" :busy="entryDialogBusy" :server-error="entryDialogError" @change="entryDialogError = ''" @cancel="closeEntryDialog" @submit="submitEntryDialog" />
   </section>
 </template>

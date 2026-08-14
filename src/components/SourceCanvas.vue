@@ -235,25 +235,38 @@ onBeforeUnmount(() => {
 })
 </script>
 
+<!--
+  `canvas-stage` is the one class name here that is not decoration. `App.vue`'s
+  workspace context menu asks `target.closest('…,.canvas-stage,…')` before it
+  claims a right-click, and without the name every right-click over a PDF page
+  would open the workspace menu instead of the preview's own.
+
+  The stage is also the only surface in this file that does NOT follow the UI
+  theme. What is inside it is the user's own PDF page or photograph — pixels
+  that came out of their file — so it gets the fixed slate backdrop the code
+  image studio uses for the same reason, and a white page sits on it identically
+  in dark and light mode instead of flipping ground under the reader. A text
+  source is different: we re-typeset that ourselves, so it keeps `bg-well`.
+-->
 <template>
-  <div class="source-canvas" @click="closeContextMenu()">
-    <div v-if="source.kind === 'pdf'" class="page-toolbar"><button type="button" :disabled="pageIndex === 0" aria-label="上一页" title="上一页（←）" @click.stop="previous"><AppIcon name="arrow-right" :size="15" class="source-canvas__previous-icon" /></button><span>第 {{ pageIndex + 1 }} / {{ pageCount }} 页</span><button type="button" :disabled="pageIndex >= pageCount - 1" aria-label="下一页" title="下一页（→）" @click.stop="next"><AppIcon name="arrow-right" :size="15" /></button><small>← → 翻页 · 右键操作</small></div>
-    <div ref="stage" tabindex="0" role="region" class="canvas-stage" :class="{ selectable: isVisualSource }" :aria-label="canvasLabel" :aria-busy="loading" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="drawing = false" @contextmenu.prevent.stop="openContextMenu($event, $event.currentTarget)" @keydown="handleStageKeydown">
-      <canvas v-if="source.kind === 'pdf'" ref="canvas"></canvas>
-      <img v-else-if="source.kind === 'image' && source.preview" ref="image" :src="source.preview" :alt="source.name" />
-      <pre v-else>{{ source.content }}</pre>
-      <span v-if="selection" class="crop-box" :style="selectionStyle"><i>已框选</i></span>
-      <div v-if="loading" class="canvas-skeleton"><i></i><i></i><i></i><b>正在解析并渲染 PDF 页面…</b></div><span v-if="error" class="canvas-status error">{{ error }}</span>
+  <div class="stack h-full min-w-0" @click="closeContextMenu()">
+    <div v-if="source.kind === 'pdf'" class="row gap-1.5 shrink-0 h-9 px-2 bg-surface border-b border-line text-[12px] font-medium text-fg-2 tabular-nums"><button class="center w-7 h-7 shrink-0 rounded-sm text-fg-3 transition-colors duration-120 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg disabled:opacity-40 disabled:cursor-not-allowed" type="button" :disabled="pageIndex === 0" aria-label="上一页" title="上一页（←）" @click.stop="previous"><AppIcon name="arrow-right" :size="15" class="rotate-180" /></button><span>第 {{ pageIndex + 1 }} / {{ pageCount }} 页</span><button class="center w-7 h-7 shrink-0 rounded-sm text-fg-3 transition-colors duration-120 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg disabled:opacity-40 disabled:cursor-not-allowed" type="button" :disabled="pageIndex >= pageCount - 1" aria-label="下一页" title="下一页（→）" @click.stop="next"><AppIcon name="arrow-right" :size="15" /></button><small class="ml-auto text-[11px] font-normal text-fg-3">← → 翻页 · 右键操作</small></div>
+    <div ref="stage" tabindex="0" role="region" class="canvas-stage relative grid place-items-center flex-1 min-h-75 min-w-0 overflow-auto p-4 focus:outline-none focus-visible:ring-3 focus-visible:ring-[var(--accent-ring)] focus-visible:ring-inset" :class="isVisualSource ? 'bg-slate-400 cursor-crosshair' : 'bg-well'" :aria-label="canvasLabel" :aria-busy="loading" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="drawing = false" @contextmenu.prevent.stop="openContextMenu($event, $event.currentTarget)" @keydown="handleStageKeydown">
+      <canvas v-if="source.kind === 'pdf'" ref="canvas" class="block max-w-full max-h-full w-auto h-auto rounded-[2px] bg-white shadow-lg"></canvas>
+      <img v-else-if="source.kind === 'image' && source.preview" ref="image" :src="source.preview" :alt="source.name" class="block max-w-full max-h-full w-auto h-auto rounded-[2px] bg-white shadow-lg" />
+      <pre v-else class="w-full max-h-full self-stretch overflow-auto p-4 rounded-sm bg-surface border border-line font-mono text-[13px] leading-relaxed text-fg whitespace-pre-wrap [tab-size:2]">{{ source.content }}</pre>
+      <span v-if="selection" class="crop-box absolute z-2 border-2 border-accent bg-accent-soft pointer-events-none" :style="selectionStyle"><i class="absolute top-[-22px] left-[-2px] px-1.5 py-0.5 rounded-t-sm rounded-br-sm bg-accent-solid text-accent-fg text-[11px] font-medium not-italic whitespace-nowrap">已框选</i></span>
+      <div v-if="loading" class="absolute inset-0 z-3 stack items-center justify-center gap-2 bg-surface"><i class="w-12 h-1.5 rounded-full bg-line-strong animate-pulse"></i><i class="w-20 h-1.5 rounded-full bg-line-strong animate-pulse"></i><i class="w-8 h-1.5 rounded-full bg-line-strong animate-pulse"></i><b class="mt-1 text-[12px] font-normal text-fg-3">正在解析并渲染 PDF 页面…</b></div><span v-if="error" class="absolute right-3 bottom-3 z-4 max-w-105 px-2.5 py-2 rounded-sm bg-surface border border-danger text-[12px] leading-snug text-danger">{{ error }}</span>
     </div>
-    <p v-if="source.kind === 'pdf' || source.kind === 'image'" class="crop-tip">拖动框选一道题、公式或一段文字；选区会带着来源进入错题卡。{{ renderLimited ? ' 超大页面已按安全像素上限渲染。' : '' }}</p>
-    <p v-if="copyNotice" class="source-canvas__notice" role="status">{{ copyNotice }}</p>
+    <p v-if="source.kind === 'pdf' || source.kind === 'image'" class="shrink-0 px-3 py-2 bg-surface border-t border-line text-[12px] leading-relaxed text-fg-3">拖动框选一道题、公式或一段文字；选区会带着来源进入错题卡。{{ renderLimited ? ' 超大页面已按安全像素上限渲染。' : '' }}</p>
+    <p v-if="copyNotice" class="shrink-0 px-3 py-2 bg-surface border-t border-line text-[12px] font-medium leading-relaxed text-accent" role="status">{{ copyNotice }}</p>
     <Teleport to="body">
-      <section v-if="contextMenu" ref="contextMenuElement" class="source-canvas__menu" role="menu" :aria-label="`${source.name} 预览操作`" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown">
-        <p>{{ source.kind === 'pdf' ? `PDF · 第 ${pageIndex + 1} 页` : source.kind === 'image' ? '图片预览' : '文本预览' }}</p>
-        <template v-if="source.kind === 'pdf'"><button type="button" role="menuitem" :disabled="pageIndex === 0" @click="previous(); closeContextMenu()"><AppIcon name="arrow-right" :size="14" class="source-canvas__previous-icon" />上一页</button><button type="button" role="menuitem" :disabled="pageIndex >= pageCount - 1" @click="next(); closeContextMenu()"><AppIcon name="arrow-right" :size="14" />下一页</button></template>
-        <button v-if="isVisualSource" type="button" role="menuitem" :disabled="copying" @click="copyVisualPreview"><AppIcon name="duplicate" :size="14" />{{ copying ? '正在复制预览…' : '复制当前预览 PNG' }}</button>
-        <button v-else type="button" role="menuitem" @click="copyTextPreview"><AppIcon name="duplicate" :size="14" />复制资料文本</button>
-        <button v-if="hasSelection" type="button" role="menuitem" @click="clearSelection(); closeContextMenu()"><AppIcon name="close" :size="14" />清除当前选区</button>
+      <section v-if="contextMenu" ref="contextMenuElement" class="menu-panel w-56" role="menu" :aria-label="`${source.name} 预览操作`" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown">
+        <p class="menu-title">{{ source.kind === 'pdf' ? `PDF · 第 ${pageIndex + 1} 页` : source.kind === 'image' ? '图片预览' : '文本预览' }}</p>
+        <template v-if="source.kind === 'pdf'"><button class="menu-item" type="button" role="menuitem" :disabled="pageIndex === 0" @click="previous(); closeContextMenu()"><span class="row gap-2"><AppIcon name="arrow-right" :size="14" class="rotate-180" />上一页</span></button><button class="menu-item" type="button" role="menuitem" :disabled="pageIndex >= pageCount - 1" @click="next(); closeContextMenu()"><span class="row gap-2"><AppIcon name="arrow-right" :size="14" />下一页</span></button></template>
+        <button v-if="isVisualSource" class="menu-item" type="button" role="menuitem" :disabled="copying" @click="copyVisualPreview"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />{{ copying ? '正在复制预览…' : '复制当前预览 PNG' }}</span></button>
+        <button v-else class="menu-item" type="button" role="menuitem" @click="copyTextPreview"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制资料文本</span></button>
+        <button v-if="hasSelection" class="menu-item" type="button" role="menuitem" @click="clearSelection(); closeContextMenu()"><span class="row gap-2"><AppIcon name="close" :size="14" />清除当前选区</span></button>
       </section>
     </Teleport>
   </div>

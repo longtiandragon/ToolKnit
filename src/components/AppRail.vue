@@ -49,7 +49,9 @@ function cycleTheme() {
       class="row gap-2.5 h-14 px-4 shrink-0 border-b border-line"
       title="Knitspace 工具箱"
     >
-      <span class="center w-7 h-7 rounded-md bg-accent text-accent-fg font-bold text-[12px] shrink-0">KS</span>
+      <!-- `bg-accent-solid`, not `bg-accent`: the ink ramp is tuned to be read
+           *on* a dark plane, so white on top of it measures 2.49:1. -->
+      <span class="center w-7 h-7 rounded-md bg-accent-solid text-accent-fg font-bold text-[12px] shrink-0">KS</span>
       <span class="stack min-w-0">
         <strong class="text-[13px] font-semibold leading-tight truncate">Knitspace</strong>
         <small class="text-[11px] text-fg-3 leading-tight">本地工具箱</small>

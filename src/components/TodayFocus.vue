@@ -435,60 +435,164 @@ onBeforeUnmount(() => { clearTimer(); window.removeEventListener('click', closeM
 </script>
 
 <template>
-  <section class="today-focus" aria-label="专注与纪念日" @click="menu = null">
-    <article id="today-focus-timer" class="today-focus__timer">
-      <header><div><p class="eyebrow">专注时段</p><h3>把下一段时间留给一件事</h3></div><span :class="phase"><i></i>{{ timerStatus }}</span></header>
-      <div class="today-focus__timer-body">
-        <div class="today-focus__clock"><strong>{{ timerText }}</strong><small>{{ pomodorosToday }} 次 · {{ focusMinutesToday }} 分钟 · 今日</small><button class="today-focus__history-toggle" :aria-expanded="focusHistoryOpen" @click.stop="toggleFocusHistory">{{ focusHistoryOpen ? '收起时间账本' : `时间账本 · 本周 ${focusLedger.totalMinutes} 分钟` }}</button></div>
-        <label class="today-focus__title"><span>这一段做什么</span><input v-model="focusTitle" maxlength="80" placeholder="例如：完成一道动态规划" :disabled="phase !== 'idle'" /></label>
-        <label class="today-focus__minutes"><span>时长</span><input v-model.number="durationMinutes" type="number" min="1" max="180" :disabled="phase !== 'idle'" /><small>分钟</small></label>
-      </div>
-      <footer>
-        <button class="quiet-button" :disabled="phase === 'idle'" @click.stop="reset()">重置</button>
-        <button v-if="phase === 'running'" class="secondary-action" @click.stop="pause"><AppIcon name="pause" :size="15" />暂停</button>
-        <button v-else class="new-task" @click.stop="begin"><AppIcon name="play" :size="15" />{{ phase === 'paused' ? '继续' : '开始专注' }}</button>
-        <button v-if="phase !== 'idle'" class="today-focus__record" @click.stop="stopAndRecord">结束并记录</button>
-      </footer>
-      <section v-if="focusHistoryOpen" id="today-focus-ledger" class="today-focus__ledger" aria-label="最近七天时间账本">
-        <header><div><b>最近 7 天</b><small>{{ focusLedger.sessionCount }} 段 · {{ focusLedger.totalMinutes }} 分钟</small></div><button type="button" @click.stop="openFocusEntryEditor()"><AppIcon name="plus" :size="13" />补记时间</button></header>
-        <div class="today-focus__ledger-chart" role="list" aria-label="最近七天专注分钟数">
-          <span v-for="day in focusLedger.days" :key="day.key" role="listitem" :class="{ today: day.isToday }" :aria-label="`${day.fullLabel}，${day.minutes} 分钟`"><i><b :style="{ height: `${day.percent}%` }"></b></i><small>{{ day.label }}</small><em>{{ day.minutes || '·' }}</em></span>
+  <!-- Two panels behind one hairline frame: the seams are grid gaps painted
+       over `--line`, so the shorter column still reaches the bottom of the row
+       instead of leaving the divider hanging. -->
+  <section
+    class="mt-4 grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-line bg-line lg:grid-cols-[minmax(0,1.32fr)_minmax(300px,0.68fr)]"
+    aria-label="专注与纪念日"
+    @click="menu = null"
+  >
+    <!-- ── The timer, and everything the timer produces ──────────────────── -->
+    <!-- Four things used to sit in this card at the same visual weight: the
+         countdown, a seven-day chart, the session list and the anniversaries.
+         Only the countdown is needed every time the page opens, so the ledger
+         and its history now live behind one disclosure and the anniversaries
+         keep their own column. -->
+    <article id="today-focus-timer" class="stack min-w-0 bg-surface">
+      <header class="row-between gap-3 px-4 pt-3.5 pb-3">
+        <div class="stack gap-0.5 min-w-0">
+          <p class="eyebrow">专注时段</p>
+          <h3 class="font-display text-[16px] font-semibold tracking-tight text-fg">把下一段时间留给一件事</h3>
         </div>
-        <form v-if="focusEntryOpen" class="today-focus__ledger-form" :class="{ editing: editingFocusId }" @submit.prevent="saveFocusEntry">
-          <label><span>做了什么</span><input ref="focusEntryTitleInput" v-model="focusEntryTitle" maxlength="80" placeholder="例如：整理操作系统笔记" /></label>
-          <label><span>分钟</span><input v-model.number="focusEntryMinutes" type="number" min="1" max="1440" inputmode="numeric" /></label>
-          <label><span>开始时间</span><input v-model="focusEntryAt" type="datetime-local" /></label>
-          <div><button type="button" @click="closeFocusEntryEditor">取消</button><button type="submit">{{ editingFocusId ? '保存修改' : '写入账本' }}</button></div>
+        <!-- The state is carried by the dot, not by tinting the label: at
+             11–12px a coloured word on a coloured pill is the first thing to
+             fall under 4.5:1 in light mode. -->
+        <span class="chip shrink-0 gap-1.5">
+          <i class="block w-1.5 h-1.5 rounded-full" :class="phase === 'running' ? 'bg-success' : phase === 'paused' ? 'bg-warn' : 'bg-fg-3'"></i>{{ timerStatus }}
+        </span>
+      </header>
+
+      <div class="grid gap-x-5 gap-y-3 px-4 pb-4 grid-cols-1 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-end">
+        <div class="stack gap-1 min-w-0">
+          <strong
+            class="text-[46px] font-semibold leading-none tracking-tight tabular-nums"
+            :class="phase === 'running' ? 'text-success' : phase === 'paused' ? 'text-warn' : 'text-fg'"
+          >{{ timerText }}</strong>
+          <small class="text-[12px] text-fg-3 tabular-nums">今日 {{ pomodorosToday }} 次 · {{ focusMinutesToday }} 分钟</small>
+        </div>
+        <!-- The minutes box used to be 72px wide with a spin button inside it,
+             which cropped "25" to "2". The unit moved into the label instead. -->
+        <div class="grid gap-2 grid-cols-[minmax(0,1fr)_96px] items-end">
+          <label class="stack gap-1 min-w-0">
+            <span class="text-[11px] text-fg-3">这一段做什么</span>
+            <input v-model="focusTitle" maxlength="80" placeholder="例如：完成一道动态规划" :disabled="phase !== 'idle'" class="field h-8 w-full min-w-0 text-[12px]" />
+          </label>
+          <label class="stack gap-1 min-w-0">
+            <span class="text-[11px] text-fg-3">时长（分钟）</span>
+            <input v-model.number="durationMinutes" type="number" min="1" max="180" :disabled="phase !== 'idle'" class="field h-8 w-full min-w-0 px-2 text-[12px] tabular-nums" />
+          </label>
+        </div>
+      </div>
+
+      <footer class="row gap-2 flex-wrap px-4 py-3 border-t border-line">
+        <button class="btn-default" :disabled="phase === 'idle'" @click.stop="reset()">重置</button>
+        <button v-if="phase === 'running'" class="btn-default" @click.stop="pause"><AppIcon name="pause" :size="15" />暂停</button>
+        <button v-else class="btn-primary" @click.stop="begin"><AppIcon name="play" :size="15" />{{ phase === 'paused' ? '继续' : '开始专注' }}</button>
+        <button v-if="phase !== 'idle'" class="btn-default ml-auto" @click.stop="stopAndRecord">结束并记录</button>
+      </footer>
+
+      <!-- The ledger toggle was a bare underlined link tucked under the clock.
+           It is a disclosure for everything below it, so it sits on the seam
+           between the two and keeps the week's total visible while closed. -->
+      <button
+        class="row-between gap-3 w-full shrink-0 mt-auto px-4 h-9 border-t border-line text-left transition-colors duration-120 hover:bg-surface-2"
+        :class="focusHistoryOpen ? 'bg-surface-2' : ''"
+        :aria-expanded="focusHistoryOpen"
+        @click.stop="toggleFocusHistory"
+      >
+        <span class="row gap-2 min-w-0">
+          <AppIcon name="clock" :size="14" class="shrink-0 text-fg-3" />
+          <b class="shrink-0 text-[12px] font-medium text-fg-2">时间账本</b>
+          <small class="text-[11px] text-fg-3 tabular-nums truncate">本周 {{ focusLedger.totalMinutes }} 分钟 · {{ focusLedger.sessionCount }} 段</small>
+        </span>
+        <AppIcon name="chevron" :size="13" class="shrink-0 text-fg-3 transition-transform duration-150" :class="focusHistoryOpen ? 'rotate-90' : ''" />
+      </button>
+
+      <section v-if="focusHistoryOpen" id="today-focus-ledger" class="stack gap-3 shrink-0 px-4 py-3 border-t border-line bg-surface-2" aria-label="最近七天时间账本">
+        <header class="row-between gap-3">
+          <div class="flex items-baseline gap-2 min-w-0">
+            <b class="shrink-0 text-[13px] font-medium text-fg">最近 7 天</b>
+            <small class="text-[11px] text-fg-3 tabular-nums truncate">{{ focusLedger.sessionCount }} 段 · {{ focusLedger.totalMinutes }} 分钟</small>
+          </div>
+          <button type="button" class="btn-default btn-sm shrink-0" @click.stop="openFocusEntryEditor()"><AppIcon name="plus" :size="13" />补记时间</button>
+        </header>
+
+        <!-- Each day is a recessed track with the bar drawn inside it, so a
+             zero-minute day still reads as a day rather than as missing data.
+             The height stays on the inline style — it is the datum. -->
+        <div class="grid grid-cols-7 gap-1.5" role="list" aria-label="最近七天专注分钟数">
+          <span v-for="day in focusLedger.days" :key="day.key" role="listitem" class="stack items-center gap-1 min-w-0" :aria-label="`${day.fullLabel}，${day.minutes} 分钟`">
+            <i class="flex items-end w-full max-w-14 h-16 rounded-sm overflow-hidden bg-well border" :class="day.isToday ? 'border-accent' : 'border-line'">
+              <b class="block w-full rounded-sm bg-accent transition-[height] duration-200" :style="{ height: `${day.percent}%` }"></b>
+            </i>
+            <small class="w-full text-[11px] text-center truncate" :class="day.isToday ? 'font-semibold text-accent' : 'text-fg-3'">{{ day.label }}</small>
+            <em class="text-[11px] not-italic tabular-nums" :class="day.minutes ? 'text-fg-2' : 'text-fg-3'">{{ day.minutes || '·' }}</em>
+          </span>
+        </div>
+
+        <form
+          v-if="focusEntryOpen"
+          class="grid gap-2 p-2.5 rounded-md bg-surface border sm:grid-cols-[minmax(120px,1fr)_76px_minmax(176px,0.9fr)_auto] sm:items-end"
+          :class="editingFocusId ? 'border-accent' : 'border-line'"
+          @submit.prevent="saveFocusEntry"
+        >
+          <label class="stack gap-1 min-w-0"><span class="text-[11px] text-fg-3">做了什么</span><input ref="focusEntryTitleInput" v-model="focusEntryTitle" maxlength="80" placeholder="例如：整理操作系统笔记" class="field h-8 w-full min-w-0 text-[12px]" /></label>
+          <label class="stack gap-1 min-w-0"><span class="text-[11px] text-fg-3">分钟</span><input v-model.number="focusEntryMinutes" type="number" min="1" max="1440" inputmode="numeric" class="field h-8 w-full min-w-0 px-2 text-[12px] tabular-nums" /></label>
+          <label class="stack gap-1 min-w-0"><span class="text-[11px] text-fg-3">开始时间</span><input v-model="focusEntryAt" type="datetime-local" class="field h-8 w-full min-w-0 px-2 text-[12px]" /></label>
+          <div class="row gap-1.5"><button type="button" class="btn-default btn-sm" @click="closeFocusEntryEditor">取消</button><button type="submit" class="btn-primary btn-sm">{{ editingFocusId ? '保存修改' : '写入账本' }}</button></div>
         </form>
       </section>
-      <ul v-if="focusHistoryOpen && focusSessions.length" class="today-focus__focus-history" aria-label="最近专注记录">
-        <li v-for="event in visibleFocusSessions" :key="event.id" v-memo="[event.id, event.startsAt, event.updatedAt, event.payload]" tabindex="0" role="button" aria-haspopup="menu" :aria-expanded="menu?.id === event.id" :aria-label="`${titleOf(event)}，${minutesOf(event)} 分钟。按菜单键打开操作。`" @contextmenu.stop="openMenu($event, event.id)" @keydown="handleRecordKeydown($event, event.id)"><span><b>{{ titleOf(event) }}</b><small>{{ timeOf(event.startsAt) }}</small></span><strong>{{ minutesOf(event) }} 分钟</strong></li>
+
+      <ul v-if="focusHistoryOpen && focusSessions.length" class="stack shrink-0 m-0 px-0 max-h-60 overflow-y-auto border-t border-line bg-surface-2" aria-label="最近专注记录">
+        <li v-for="event in visibleFocusSessions" :key="event.id" v-memo="[event.id, event.startsAt, event.updatedAt, event.payload]" tabindex="0" role="button" aria-haspopup="menu" :aria-expanded="menu?.id === event.id" :aria-label="`${titleOf(event)}，${minutesOf(event)} 分钟。按菜单键打开操作。`" class="row-between gap-3 shrink-0 h-8.5 px-4 border-b border-line last:border-b-0 cursor-context-menu transition-colors duration-120 hover:bg-surface-3" @contextmenu.stop="openMenu($event, event.id)" @keydown="handleRecordKeydown($event, event.id)"><span class="flex items-baseline gap-2 min-w-0"><b class="text-[12px] font-medium text-fg-2 truncate">{{ titleOf(event) }}</b><small class="shrink-0 text-[11px] text-fg-3">{{ timeOf(event.startsAt) }}</small></span><strong class="shrink-0 text-[12px] font-medium text-fg tabular-nums">{{ minutesOf(event) }} 分钟</strong></li>
       </ul>
-      <p v-else-if="focusHistoryOpen" class="today-focus__ledger-empty">还没有时间记录。开始一次专注，或补记刚完成的学习。</p>
-      <button v-if="focusHistoryOpen && focusSessions.length > 4" class="today-focus__history-more" :aria-expanded="focusHistoryExpanded" @click.stop="focusHistoryExpanded = !focusHistoryExpanded">{{ focusHistoryExpanded ? '只看最近 4 条' : `查看更早记录 · ${focusSessions.length - 4}${focusSessions.length >= PERSONAL_EVENT_LIMIT ? '+' : ''}` }}</button>
+      <p v-else-if="focusHistoryOpen" class="shrink-0 px-4 py-3 border-t border-line bg-surface-2 text-[12px] leading-relaxed text-fg-3">还没有时间记录。开始一次专注，或补记刚完成的学习。</p>
+      <button v-if="focusHistoryOpen && focusSessions.length > 4" class="center w-full shrink-0 h-8 px-4 border-t border-line bg-surface-2 text-[12px] text-fg-2 transition-colors duration-120 hover:bg-surface-3 hover:text-fg" :aria-expanded="focusHistoryExpanded" @click.stop="focusHistoryExpanded = !focusHistoryExpanded">{{ focusHistoryExpanded ? '只看最近 4 条' : `查看更早记录 · ${focusSessions.length - 4}${focusSessions.length >= PERSONAL_EVENT_LIMIT ? '+' : ''}` }}</button>
     </article>
 
-    <article id="today-anniversaries" class="today-focus__anniversaries">
-      <header><div><h3>纪念日</h3></div><span>{{ loading ? '读取中' : anniversaryCountLabel }}</span></header>
-      <form class="today-focus__anniversary-form" :class="{ editing: editingAnniversaryId }" @submit.prevent="addAnniversary">
-        <input ref="anniversaryTitleInput" v-model="anniversaryTitle" maxlength="80" aria-label="纪念日名称" :placeholder="editingAnniversaryId ? '修改纪念日名称' : '例如：开始学算法'" />
-        <input v-model="anniversaryDate" type="date" aria-label="纪念日日期" />
-        <button v-if="editingAnniversaryId" class="today-focus__anniversary-cancel" type="button" @click="cancelAnniversaryEdit">取消</button>
-        <button :aria-label="editingAnniversaryId ? '保存纪念日修改' : '添加纪念日'" :title="editingAnniversaryId ? '保存修改' : '添加纪念日'"><AppIcon :name="editingAnniversaryId ? 'calendar' : 'plus'" :size="16" /></button>
+    <!-- ── Anniversaries ─────────────────────────────────────────────────── -->
+    <article id="today-anniversaries" class="stack min-w-0 bg-surface">
+      <header class="row-between gap-3 px-4 pt-3.5 pb-3">
+        <div class="stack gap-0.5 min-w-0">
+          <p class="eyebrow">纪念日</p>
+          <h3 class="font-display text-[16px] font-semibold tracking-tight text-fg">每年循环的重要日期</h3>
+        </div>
+        <span class="shrink-0 text-[11px] text-fg-3 tabular-nums">{{ loading ? '读取中' : anniversaryCountLabel }}</span>
+      </header>
+
+      <!-- Name over date rather than three cells in a row: this column can be
+           300px wide, and a 125px date input next to a 34px icon button left
+           the name with barely enough room for four characters. -->
+      <form class="stack gap-2 shrink-0 px-4 pb-3" @submit.prevent="addAnniversary">
+        <input ref="anniversaryTitleInput" v-model="anniversaryTitle" maxlength="80" aria-label="纪念日名称" :placeholder="editingAnniversaryId ? '修改纪念日名称' : '例如：开始学算法'" class="field h-8 w-full min-w-0 text-[12px]" :class="editingAnniversaryId ? 'border-accent' : ''" />
+        <div class="row gap-2">
+          <input v-model="anniversaryDate" type="date" aria-label="纪念日日期" class="field h-8 flex-1 min-w-0 px-2 text-[12px]" :class="editingAnniversaryId ? 'border-accent' : ''" />
+          <button v-if="editingAnniversaryId" class="btn-default btn-sm shrink-0" type="button" @click="cancelAnniversaryEdit">取消</button>
+          <button class="btn-primary btn-sm shrink-0" :aria-label="editingAnniversaryId ? '保存纪念日修改' : '添加纪念日'" :title="editingAnniversaryId ? '保存修改' : '添加纪念日'"><AppIcon :name="editingAnniversaryId ? 'calendar' : 'plus'" :size="14" />{{ editingAnniversaryId ? '保存' : '添加' }}</button>
+        </div>
       </form>
-      <ul v-if="anniversaries.length" class="today-focus__anniversary-list">
-        <li v-for="item in anniversaries" :key="item.event.id" v-memo="[item.event.id, item.event.startsAt, item.event.updatedAt, item.event.payload]" tabindex="0" role="button" aria-haspopup="menu" :aria-expanded="menu?.id === item.event.id" :aria-label="`${item.title}，${item.days === 0 ? '今天' : `${item.days} 天后`}。按菜单键打开操作。`" @contextmenu.stop="openMenu($event, item.event.id)" @keydown="handleRecordKeydown($event, item.event.id)"><div><b>{{ item.title }}</b><small>{{ dateInputValue(item.event.startsAt) }} · 每年</small></div><strong>{{ item.days === 0 ? '今天' : `${item.days} 天后` }}</strong></li>
+
+      <ul v-if="anniversaries.length" class="stack gap-0.5 flex-1 min-h-0 m-0 px-2.5 pb-3 overflow-y-auto">
+        <li v-for="item in anniversaries" :key="item.event.id" v-memo="[item.event.id, item.event.startsAt, item.event.updatedAt, item.event.payload]" tabindex="0" role="button" aria-haspopup="menu" :aria-expanded="menu?.id === item.event.id" :aria-label="`${item.title}，${item.days === 0 ? '今天' : `${item.days} 天后`}。按菜单键打开操作。`" class="row-between gap-2.5 shrink-0 min-h-10 px-1.5 py-1 rounded-sm cursor-context-menu transition-colors duration-120 hover:bg-surface-2" @contextmenu.stop="openMenu($event, item.event.id)" @keydown="handleRecordKeydown($event, item.event.id)"><div class="stack gap-0.5 min-w-0"><b class="text-[13px] font-medium text-fg truncate">{{ item.title }}</b><small class="text-[11px] text-fg-3 tabular-nums">{{ dateInputValue(item.event.startsAt) }} · 每年</small></div><strong class="shrink-0 text-[12px] font-medium tabular-nums" :class="item.days === 0 ? 'text-accent' : 'text-fg-2'">{{ item.days === 0 ? '今天' : `${item.days} 天后` }}</strong></li>
       </ul>
-      <p v-else class="today-focus__empty">在这里记住对你重要的日期。</p>
+      <p v-else class="px-4 pb-4 text-[12px] leading-relaxed text-fg-3">在这里记住对你重要的日期。</p>
     </article>
 
-    <p class="today-focus__notice"><AppIcon name="shield" :size="14" />{{ notice }}</p>
-    <menu v-if="menu && menuEvent" ref="menuElement" class="today-focus__menu" role="menu" :aria-label="`${menuEvent.type === 'pomodoro' ? '专注记录' : '纪念日'}操作`" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleMenuKeydown">
-      <p>{{ menuEvent.type === 'pomodoro' ? '专注记录' : '纪念日' }}</p>
-      <button v-if="menuEvent.type === 'pomodoro'" role="menuitem" @click="repeatFocusSession()">用相同配置再专注一次</button>
-      <button v-if="menuEvent.type === 'pomodoro'" role="menuitem" @click="openFocusEntryEditor(menuEvent)">修改名称、时间和时长</button>
-      <button v-else role="menuitem" @click="editAnniversary()">编辑纪念日</button>
-      <button role="menuitem" class="danger" @click="removeEvent(menuEvent.id)">删除这条记录</button>
-    </menu>
+    <p class="row gap-2 px-4 py-2.5 bg-surface-2 text-[12px] leading-relaxed text-fg-2 lg:col-span-2">
+      <AppIcon name="shield" :size="14" class="shrink-0 text-accent" />{{ notice }}
+    </p>
+
+    <!-- The workspace column clips its overflow, so a menu positioned against
+         the viewport has to leave the card to be seen at all. -->
+    <Teleport to="body">
+      <menu v-if="menu && menuEvent" ref="menuElement" class="menu-panel w-52 m-0 px-0 list-none" role="menu" :aria-label="`${menuEvent.type === 'pomodoro' ? '专注记录' : '纪念日'}操作`" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleMenuKeydown">
+        <p class="menu-title">{{ menuEvent.type === 'pomodoro' ? '专注记录' : '纪念日' }}</p>
+        <button v-if="menuEvent.type === 'pomodoro'" class="menu-item" role="menuitem" @click="repeatFocusSession()">用相同配置再专注一次</button>
+        <button v-if="menuEvent.type === 'pomodoro'" class="menu-item" role="menuitem" @click="openFocusEntryEditor(menuEvent)">修改名称、时间和时长</button>
+        <button v-else class="menu-item" role="menuitem" @click="editAnniversary()">编辑纪念日</button>
+        <button role="menuitem" class="menu-item menu-item-danger" @click="removeEvent(menuEvent.id)">删除这条记录</button>
+      </menu>
+    </Teleport>
   </section>
 </template>

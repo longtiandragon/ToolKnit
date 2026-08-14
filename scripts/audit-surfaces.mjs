@@ -34,11 +34,54 @@ const ROUTES = [
 
 /* Runs in the page. Kept as one function so it can be handed to evaluate(). */
 function collect() {
+  /* Every colour that reaches this page through a token utility computes to
+     `color(srgb …)`, not `rgb()`: presetWind4 emits `color-mix(in oklab, …)`
+     for its opacity handling and Chrome reports the result in that space. An
+     rgb-only parser returned null for all of them, and a null colour makes
+     both checks below `continue` — so this script reported a clean sweep
+     while silently skipping every element the rewrite had touched.
+
+     Three formats, in order of how often they turn up, then a canvas fallback
+     that can resolve anything the browser can paint. */
+  let probe = null
+  const viaCanvas = (value) => {
+    if (!probe) {
+      const canvas = document.createElement('canvas')
+      canvas.width = canvas.height = 1
+      probe = canvas.getContext('2d', { willReadFrequently: true })
+    }
+    // Two passes over known grounds recover the alpha the readback premultiplies.
+    const sample = (ground) => {
+      probe.clearRect(0, 0, 1, 1)
+      probe.fillStyle = ground
+      probe.fillRect(0, 0, 1, 1)
+      probe.fillStyle = '#000'
+      probe.fillStyle = value
+      if (probe.fillStyle === '#000' && !/^#0{3,8}$|black|rgba?\(0[,\s]/i.test(value)) return null
+      probe.fillRect(0, 0, 1, 1)
+      return probe.getImageData(0, 0, 1, 1).data
+    }
+    const onWhite = sample('#fff')
+    const onBlack = sample('#000')
+    if (!onWhite || !onBlack) return null
+    // c_white = c*a + 255*(1-a); c_black = c*a  ⇒  a = 1 - (c_white - c_black)/255
+    const alpha = 1 - (onWhite[0] - onBlack[0]) / 255
+    if (alpha <= 0.002) return { r: 0, g: 0, b: 0, a: 0 }
+    return { r: onBlack[0] / alpha, g: onBlack[1] / alpha, b: onBlack[2] / alpha, a: alpha }
+  }
   const parse = (value) => {
-    const match = value.match(/rgba?\(([^)]+)\)/)
-    if (!match) return null
-    const [r, g, b, a = 1] = match[1].split(/[\s,/]+/).filter(Boolean).map(Number)
-    return { r, g, b, a }
+    if (!value || value === 'transparent' || value === 'none') return null
+    const rgb = value.match(/rgba?\(([^)]+)\)/)
+    if (rgb) {
+      const [r, g, b, a = 1] = rgb[1].split(/[\s,/]+/).filter(Boolean).map(Number)
+      return { r, g, b, a }
+    }
+    const srgb = value.match(/color\(srgb\s+([^)]+)\)/)
+    if (srgb) {
+      const [r, g, b, a = 1] = srgb[1].split(/[\s,/]+/).filter(Boolean).map(Number)
+      return { r: r * 255, g: g * 255, b: b * 255, a }
+    }
+    return viaCanvas(value)
   }
   /* Paint `top` over `base`; both are already flattened to opaque. */
   const over = (top, base) =>
@@ -99,7 +142,13 @@ function collect() {
      the UI's contrast rules would report the feature as a defect. */
   // `crop-selection` is the crop overlay: it sits on the user's own pixels, so
   // it is fixed white-on-scrim in both themes by design, not by omission.
-  const CONTENT = /hljs|theme-|code-export|codesnap|card-preview|swatch|katex|markmap|mermaid|reading-|crop-selection|crop-layer/i
+  //
+  // Every name here must be specific to a content surface. `reading-` used to
+  // be in this list and it silently disabled the entire audit: the shell root
+  // carries `reading-paper--warm` from the appearance settings, `isContent()`
+  // walks to the root, and so every element in the application matched. The
+  // script reported a clean sweep of 24 routes while checking nothing.
+  const CONTENT = /hljs|theme-midnight|theme-forest|theme-paper|code-export|codesnap|card-preview|swatch|katex|markmap|mermaid|markdown-content|markdown-preview|clipboard-image-preview|crop-selection|crop-layer/i
   const isContent = (element) => {
     for (let node = element; node; node = node.parentElement) {
       if (CONTENT.test(String(node.className || ''))) return true

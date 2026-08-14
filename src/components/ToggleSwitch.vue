@@ -24,7 +24,7 @@ defineEmits<{ 'update:modelValue': [value: boolean] }>()
     <span
       class="w-9 h-5 rounded-full transition-colors duration-150 peer-disabled:opacity-45
              peer-focus-visible:ring-3 peer-focus-visible:ring-[var(--accent-ring)]"
-      :class="modelValue ? 'bg-accent' : 'bg-surface-3'"
+      :class="modelValue ? 'bg-accent-solid' : 'bg-surface-3'"
       aria-hidden="true"
     >
       <span

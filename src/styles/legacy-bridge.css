@@ -67,8 +67,8 @@
   --reading-accent: var(--accent);
 
   /* Type */
-  --font-sans: var(--font-ui);
-  --font-serif: var(--font-display);
+  --font-sans: var(--font-family-ui);
+  --font-serif: var(--font-family-display);
 
   /* Shape and depth */
   --radius-sm: 6px;
@@ -124,7 +124,7 @@
   --faint: var(--fg-3);
   --soft-green: var(--accent-soft);
   --danger-bg: var(--danger-soft);
-  --font-reading: var(--font-ui);
+  --font-reading: var(--font-family-ui);
 }
 
 :root[data-theme='dark'] {
@@ -142,7 +142,7 @@
 body {
   background: var(--bg) !important;
   color: var(--fg);
-  font-family: var(--font-ui);
+  font-family: var(--font-family-ui);
 }/* The rail is a component again (`AppRail.vue`, 240px). The legacy layers
    still position the workspace against the old 246px aside, so the offset is
    corrected here until the shell's own CSS is gone. */
@@ -215,7 +215,7 @@ body {
 .tools-space__hero h2 {
   max-width: 46ch;
   color: var(--fg);
-  font: 600 22px/1.35 var(--font-display);
+  font: 600 22px/1.35 var(--font-family-display);
   letter-spacing: -.015em;
 }
 .hero-copy h2 em { color: var(--accent); font-style: normal; }

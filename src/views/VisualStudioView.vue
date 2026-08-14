@@ -2707,7 +2707,7 @@ async function openLocation(path?: string) {
   border-radius: 5px;
   color: #fff;
   background: rgb(0 0 0 / .72);
-  font: 500 12px/1.2 var(--font-ui);
+  font: 500 12px/1.2 var(--font-family-ui);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   transform: translateX(-50%);

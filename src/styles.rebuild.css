@@ -342,7 +342,7 @@ textarea:focus-visible,
 
 .favorite-card kbd {
   color: var(--fg-3);
-  font: 12px/1.2 var(--font-mono);
+  font: 12px/1.2 var(--font-family-mono);
 }
 
 .favorite-card h4 {

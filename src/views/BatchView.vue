@@ -658,7 +658,7 @@ onBeforeUnmount(() => {
               :aria-pressed="operation === item[0]"
               class="h-7 px-2.5 rounded-full text-[12px] transition-colors disabled:opacity-45"
               :class="operation === item[0]
-                ? 'bg-accent text-accent-fg font-medium'
+                ? 'bg-accent-solid text-accent-fg font-medium'
                 : 'text-fg-2 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg'"
               @click="setOperation(item[0])"
             >

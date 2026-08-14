@@ -453,7 +453,7 @@ const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN', { 
               v-if="selectionMode"
               type="button"
               class="center w-5 h-5 shrink-0 rounded-[4px] border transition-colors"
-              :class="selectedIds.has(item.id) ? 'border-accent bg-accent text-white' : 'border-line-strong text-transparent'"
+              :class="selectedIds.has(item.id) ? 'border-accent-solid bg-accent-solid text-accent-fg' : 'border-line-strong text-transparent'"
               :aria-pressed="selectedIds.has(item.id)"
               :aria-label="selectedIds.has(item.id) ? '取消选择这条记录' : '选择这条记录'"
               @click.stop="toggleSelected(item.id)"

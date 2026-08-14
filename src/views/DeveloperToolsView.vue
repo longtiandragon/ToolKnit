@@ -368,7 +368,7 @@ onBeforeUnmount(() => {
             :title="item.description"
             :aria-pressed="tool === item.id"
             class="row gap-1.5 h-7 px-2.5 rounded-full text-[12px] transition-colors"
-            :class="tool === item.id ? 'bg-accent text-accent-fg font-medium' : 'text-fg-2 hover:bg-surface-2 hover:text-fg'"
+            :class="tool === item.id ? 'bg-accent-solid text-accent-fg font-medium' : 'text-fg-2 hover:bg-surface-2 hover:text-fg'"
             @click="selectTool(item.id)"
           >
             <AppIcon :name="item.icon" :size="13" />{{ item.title }}

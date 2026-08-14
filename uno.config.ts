@@ -73,10 +73,15 @@ export default defineConfig({
       // safelist.
       cat: 'var(--cat)',
     },
+    // These must NOT be named the same as the raw tokens in theme.css. UnoCSS
+    // emits `--font-<key>: <value>` for every entry here, so `ui:
+    // 'var(--font-ui)'` became `--font-ui: var(--font-ui)` — a cycle, which
+    // CSS resolves by dropping the property. uno.css loads last, so it won,
+    // and the whole product rendered in Times New Roman.
     font: {
-      ui: 'var(--font-ui)',
-      display: 'var(--font-display)',
-      mono: 'var(--font-mono)',
+      ui: 'var(--font-family-ui)',
+      display: 'var(--font-family-display)',
+      mono: 'var(--font-family-mono)',
     },
     shadow: {
       sm: 'var(--shadow-sm)',
@@ -115,9 +120,13 @@ export default defineConfig({
       'btn-primary',
       'btn bg-accent-solid text-accent-fg hover:not-disabled:bg-accent-solid-hover active:not-disabled:bg-accent-solid-press',
     ],
+    // `border-line-strong`, not `border-line`: a secondary button's whole
+    // identity is its outline, and in light mode `--surface-2` on a `--well`
+    // ground differ by three units — the audit found the 选择文件 button in
+    // the compact drop zone genuinely invisible.
     [
       'btn-default',
-      'btn bg-surface-2 text-fg border border-line hover:not-disabled:bg-surface-3 hover:not-disabled:border-line-strong',
+      'btn bg-surface-2 text-fg border border-line-strong hover:not-disabled:bg-surface-3 hover:not-disabled:border-fg-3',
     ],
     ['btn-ghost', 'btn text-fg-2 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg'],
     ['btn-danger', 'btn bg-danger-soft text-danger hover:not-disabled:bg-danger hover:not-disabled:text-white'],

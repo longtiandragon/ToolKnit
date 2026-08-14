@@ -33,7 +33,7 @@
   align-items: center;
   gap: 6px;
   color: var(--accent);
-  font: 600 12px/1.5 var(--font-ui);
+  font: 600 12px/1.5 var(--font-family-ui);
   letter-spacing: .04em;
   text-transform: none;
 }
@@ -57,7 +57,7 @@
 p, li, dd { line-height: 1.7; }
 small { line-height: 1.6; }
 
-code, pre, kbd, samp { font-family: var(--font-mono); font-variant-ligatures: none; }
+code, pre, kbd, samp { font-family: var(--font-family-mono); font-variant-ligatures: none; }
 
 /* ─────────────────────────────────────────────────────────────────────────
    4. Surfaces
@@ -115,7 +115,7 @@ code, pre, kbd, samp { font-family: var(--font-mono); font-variant-ligatures: no
   gap: 7px;
   padding: 0 14px;
   border-radius: var(--radius-sm);
-  font: 600 13px/1 var(--font-ui);
+  font: 600 13px/1 var(--font-family-ui);
   letter-spacing: .01em;
   white-space: nowrap;
   transition:
@@ -234,7 +234,7 @@ textarea,
   border-radius: var(--radius-sm);
   color: var(--text);
   background: var(--surface);
-  font-family: var(--font-ui);
+  font-family: var(--font-family-ui);
   font-size: 13px;
   transition:
     border-color var(--duration-fast) var(--ease-out),
@@ -281,7 +281,7 @@ textarea { line-height: 1.7; resize: vertical; }
   border-radius: 999px;
   color: var(--green-strong);
   background: var(--green-bg);
-  font: 600 12px/1.5 var(--font-ui);
+  font: 600 12px/1.5 var(--font-family-ui);
 }/* ─────────────────────────────────────────────────────────────────────────
    6. Vertical fill
    ───────────────────────────────────────────────────────────────────────── */
@@ -356,7 +356,7 @@ textarea { line-height: 1.7; resize: vertical; }
 .designed-empty h3 {
   margin: 4px 0 0;
   color: var(--text);
-  font: 650 17px/1.4 var(--font-display);
+  font: 650 17px/1.4 var(--font-family-display);
   letter-spacing: -.01em;
 }
 .designed-empty p {
