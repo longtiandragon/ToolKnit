@@ -1,0 +1,927 @@
+/*
+ * The Markdown reading surface.
+ *
+ * Everything else in the product is interface: the app owns the markup and can
+ * spell it in utilities. This is the one surface that dresses content the app
+ * does not own — a document someone wrote — which is why it is a stylesheet and
+ * intends to stay one. It used to be spread across five legacy layers speaking
+ * the pre-token vocabulary (`--text`, `--muted`, `--green`, `--line-weak`),
+ * which is why a code frame was outlined in near-white ink and a diagram
+ * caption was unreadable in dark mode: those names had been machine-mapped to
+ * whatever token was nearest, one rule at a time, with nothing checking the
+ * result. `scripts/reading-surface-diff.mjs` is what checks it now — computed
+ * styles for every node, on both themes and all four papers.
+ *
+ * Three vocabularies meet here, and which one a rule may use is decided by what
+ * the rule paints on:
+ *
+ *   `--reading-*`   the paper and the ink on it. Follows the reader's paper
+ *                   tone, which is a setting, not the interface theme.
+ *   `--diagram-*`   the content planes — Mermaid figures, the mindmap stage.
+ *                   Fixed in both themes and every tone, because those pixels
+ *                   are also what gets exported and copied to the clipboard.
+ *   theme tokens    the chrome around the document: menus, overlays, the
+ *                   render pill, the image viewer. Interface, so it themes.
+ *
+ * Metrics — sizes, margins, the reading measure — are unchanged from the layers
+ * this file replaces. `src/lib/markdown-export-document.ts` carries its own
+ * copy of the type for the standalone HTML export and shares only the class
+ * names the renderer emits; the two are verified against each other by hand.
+ */
+
+/* ── Papers ───────────────────────────────────────────────────────────────
+   Four papers, each a real value in each theme. 设置 shows four swatches and
+   before this it delivered two: 暖纸 and 清白 were both `var(--surface)`, and
+   夜墨 was `var(--fg)` — which in the dark theme resolved to #e7e9ee, so the
+   darkest-sounding paper turned the page white. The swatches in the picker
+   read these same variables, so a paper cannot drift from its own sample. */
+:root {
+  --paper-warm: #1a1714;
+  --paper-neutral: #14171d;
+  --paper-mist: #181e1a;
+  --paper-night: #0b0f0e;
+  /* The ink for a paper darker than the interface itself. Only the light
+     theme needs it: there, 夜墨 runs opposite to everything around it. */
+  --paper-night-ink: #e8ebe9;
+}
+
+:root[data-theme='light'] {
+  --paper-warm: #fffcf7;
+  --paper-neutral: #ffffff;
+  --paper-mist: #f5f7f3;
+  --paper-night: #17211d;
+}
+
+/* ── Content planes ───────────────────────────────────────────────────────
+   A Mermaid figure and the mindmap stage are pictures, not surfaces. What is
+   on screen is what `serializeVisibleMindmap` writes into the exported SVG and
+   what the diagram export puts on the clipboard, so the ground and the ink are
+   fixed in both themes — the same decision `MarkdownMindmap.vue` documents for
+   the stage, and the reason the ink here can never be a theme token: at 16% on
+   a near-white plane, `--accent` is a 2.6:1 smudge. */
+:root {
+  --diagram-paper: #fffefa;
+  --diagram-ink: #1a2723;
+  --diagram-ink-2: #4d5f58;
+  --diagram-line: rgb(12 101 87 / 0.22);
+  --diagram-line-strong: rgb(12 101 87 / 0.35);
+  --diagram-soft: rgb(12 101 87 / 0.06);
+  --diagram-source-paper: #18251f;
+  --diagram-source-ink: #dfe8e3;
+  --diagram-danger-ink: #91443e;
+  --diagram-danger-line: rgb(187 67 62 / 0.18);
+  --diagram-danger-soft: rgb(187 67 62 / 0.055);
+}
+
+/* ── The reading tokens ───────────────────────────────────────────────────
+   A tone states its paper and, in the one case where the ink has to run the
+   other way, its ink. Everything else is that paper mixed toward that ink, so
+   a recess is always a recess and a hairline is always a hairline, on all
+   eight paper-and-theme combinations, with no per-tone table to keep in sync.
+
+   The paper is declared on `.editor-grid` rather than on the shell that
+   carries the tone class: `markdown-content` also renders outside the document
+   workspace — the AI result panel is one — and there the interface's own ink
+   and surfaces are the correct ones. `:root` therefore keeps a plain,
+   theme-following paper for those, and the two share one derived block, since
+   custom properties resolve per element. */
+:root {
+  --reading-paper: var(--surface);
+  --reading-ink: var(--fg);
+}
+
+.editor-grid { --reading-paper: var(--paper-warm); }
+.reading-paper--neutral .editor-grid { --reading-paper: var(--paper-neutral); }
+.reading-paper--mist .editor-grid { --reading-paper: var(--paper-mist); }
+.reading-paper--night .editor-grid { --reading-paper: var(--paper-night); }
+:root[data-theme='light'] .reading-paper--night .editor-grid { --reading-ink: var(--paper-night-ink); }
+
+:root,
+.editor-grid {
+  --reading-paper-2: color-mix(in srgb, var(--reading-ink) 7%, var(--reading-paper));
+  --reading-code-paper: color-mix(in srgb, var(--reading-ink) 5%, var(--reading-paper));
+  --reading-line: color-mix(in srgb, var(--reading-ink) 15%, var(--reading-paper));
+  --reading-ink-2: color-mix(in srgb, var(--reading-ink) 74%, var(--reading-paper));
+  /* 66%, not the 58% that looks right on screen: the quiet step also carries
+     the code-frame label and the editor placeholder, and on white paper 58%
+     lands at 4.3:1. The theme's own `--fg-3` was darkened for the same
+     reason. */
+  --reading-ink-3: color-mix(in srgb, var(--reading-ink) 66%, var(--reading-paper));
+  --reading-heading: var(--reading-ink);
+  /* The action colour, pulled toward the ink of the page it sits on. That is
+     what keeps a link readable on a dark paper in the light theme, where the
+     interface accent is a 2.6:1 navy — and on the default papers it lands
+     within a shade of the value these links have always had. */
+  --reading-accent: color-mix(in srgb, var(--accent) 60%, var(--reading-ink));
+  --reading-danger: color-mix(in srgb, var(--danger) 62%, var(--reading-ink));
+}
+
+/* ── The document surfaces ───────────────────────────────────────────────── */
+
+.editor-grid {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.editor-grid > .large-text-editor,
+.markdown-editor-source-pane,
+.markdown-preview-wrap {
+  min-width: 0;
+  min-height: 0;
+}
+
+.markdown-editor-source-pane {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  background: var(--reading-paper);
+}
+
+.markdown-editor-source-pane > .large-text-editor,
+.markdown-editor-source-pane > .editor-mode-loading {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.editor-mode-loading {
+  display: grid;
+  min-height: 260px;
+  place-items: center;
+  color: var(--reading-ink-3);
+  background: var(--reading-paper);
+  font: 650 13px var(--font-family-ui);
+}
+
+.markdown-preview-wrap {
+  position: relative;
+  overflow: hidden;
+  background: var(--reading-paper);
+}
+
+.markdown-preview-wrap:focus-visible {
+  outline: 2px solid var(--reading-accent);
+  outline-offset: -3px;
+}
+
+.markdown-preview {
+  min-height: 0;
+  overflow: auto;
+}
+
+.markdown-preview-wrap .markdown-preview {
+  height: 100%;
+  margin-inline: auto;
+  color: var(--reading-ink);
+  background: var(--reading-paper);
+  font-size: var(--reading-font-size, 16px);
+  line-height: var(--reading-line-height, 1.78);
+}
+
+.editor-grid--preview .markdown-preview-wrap .markdown-preview { padding: 36px clamp(34px, 7vw, 92px) 84px; }
+.editor-grid--split .markdown-preview-wrap .markdown-preview { padding: 28px 34px 72px; border-left: 1px solid var(--line); }
+
+/* Reading measure. Focus mode always capped the line length; ordinary preview
+   never did, so on a wide window a paragraph ran the full width of the pane
+   and the eye lost the line it was on. */
+.editor-grid--preview .markdown-preview.markdown-content {
+  width: min(100%, 780px);
+  margin-inline: auto;
+}
+
+/* ── The document ─────────────────────────────────────────────────────────
+   Shared by notes, mistake cards, review and AI output. */
+
+.markdown-content {
+  width: 100%;
+  max-width: var(--reading-max-width, 860px);
+  color: var(--reading-ink);
+  font-size: var(--reading-font-size, 16px);
+  line-height: var(--reading-line-height, 1.78);
+  overflow-wrap: anywhere;
+}
+
+.markdown-content > :first-child { margin-top: 0 !important; }
+.markdown-content > :last-child { margin-bottom: 0 !important; }
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  color: var(--reading-heading);
+  font-family: var(--font-family-display);
+  font-weight: 720;
+  line-height: 1.35;
+  letter-spacing: -0.025em;
+  scroll-margin-top: 22px;
+}
+
+.markdown-content h1 {
+  margin: 0 0 24px;
+  padding-bottom: 13px;
+  border-bottom: 1px solid var(--reading-line);
+  font-size: 30px;
+}
+
+.markdown-content h2 { margin: 32px 0 11px; font-size: 22px; }
+.markdown-content h3 { margin: 26px 0 9px; font-size: 18px; }
+
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 { margin: 22px 0 8px; font-size: 16px; }
+
+/* The renderer repeats the document title as an h1; the editor already shows
+   it in the title field. */
+.markdown-content [data-duplicate-document-title] { display: none; }
+
+/* Every other heading is a right-click target: that is how the outline and the
+   anchor copy are reached. */
+.markdown-preview.markdown-content :is(h1, h2, h3, h4, h5, h6):not([data-duplicate-document-title]) {
+  cursor: context-menu;
+  transition: color .14s ease;
+}
+
+.markdown-preview.markdown-content :is(h1, h2, h3, h4, h5, h6):not([data-duplicate-document-title]):hover {
+  color: var(--reading-accent);
+}
+
+.markdown-content p { margin: 0 0 16px; }
+
+.markdown-content ul,
+.markdown-content ol { margin: 0 0 18px; padding-left: 1.65em; }
+
+.markdown-content li { margin: 5px 0; padding-left: 0.18em; }
+.markdown-content li::marker { color: var(--reading-accent); }
+
+/* A task list is a stack of rows, not a bulleted list: `display: grid` keeps
+   the row margins from collapsing, so checkboxes get more air than bullets.
+   It used to come from a `.task-list` rule left behind by the old task panel,
+   which is to say by accident. */
+.markdown-content .task-list { display: grid; padding-left: 0; list-style: none; }
+
+.markdown-content .task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.markdown-content .task-list-item input {
+  width: 15px;
+  height: 15px;
+  margin: 6px 0 0;
+  accent-color: var(--reading-accent);
+}
+
+.markdown-content blockquote {
+  margin: 20px 0;
+  padding: 12px 17px;
+  border-left: 3px solid var(--reading-accent);
+  color: var(--reading-ink-2);
+  background: var(--reading-paper-2);
+}
+
+.markdown-content blockquote p:last-child { margin-bottom: 0; }
+
+.markdown-content a {
+  color: var(--reading-accent);
+  text-decoration: underline;
+  text-decoration-color: var(--reading-accent);
+  text-underline-offset: 3px;
+}
+
+.markdown-content code:not(pre code) {
+  padding: 0.16em 0.38em;
+  border: 1px solid var(--reading-line);
+  border-radius: 4px;
+  color: var(--reading-danger);
+  background: var(--reading-paper-2);
+  font: 0.88em/1.45 var(--font-family-mono);
+}
+
+/* A fenced block is one object: a label strip and the code, inside one
+   outline. That outline was `var(--fg)` — full ink — so every code block in
+   the product was boxed in near-white. */
+.code-frame {
+  margin: 21px 0;
+  overflow: hidden;
+  border: 1px solid var(--reading-line);
+  border-radius: 7px;
+  background: var(--reading-code-paper);
+}
+
+.code-frame__bar {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--reading-line);
+  color: var(--reading-ink-3);
+  background: var(--reading-code-paper);
+  font: 12px/1 var(--font-family-ui);
+  text-transform: uppercase;
+}
+
+.markdown-content pre,
+.markdown-content .code-frame { background: var(--reading-code-paper); }
+
+.markdown-content pre.code-block {
+  max-width: 100%;
+  margin: 0;
+  padding: 17px 19px 20px;
+  overflow: auto;
+  color: var(--reading-ink);
+  background: transparent;
+  font: 13px/1.72 var(--font-family-mono);
+  tab-size: 2;
+}
+
+.markdown-content table {
+  display: block;
+  width: 100%;
+  margin: 20px 0;
+  overflow-x: auto;
+  border-spacing: 0;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.markdown-content th,
+.markdown-content td {
+  min-width: 110px;
+  padding: 9px 12px;
+  border: 1px solid var(--reading-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-content th {
+  color: var(--reading-ink);
+  background: var(--reading-paper-2);
+  font-weight: 650;
+}
+
+.markdown-content hr {
+  margin: 30px 0;
+  border: 0;
+  border-top: 1px solid var(--reading-line);
+}
+
+.markdown-content img {
+  display: block;
+  max-width: 100%;
+  max-height: 560px;
+  margin: 20px auto;
+  border: 1px solid var(--reading-line);
+  border-radius: 6px;
+  background: var(--reading-paper-2);
+  object-fit: contain;
+}
+
+.markdown-content .math-block {
+  max-width: 100%;
+  margin: 22px 0;
+  padding: 14px;
+  overflow-x: auto;
+  border: 1px solid var(--reading-line);
+  border-radius: 6px;
+  background: var(--reading-paper-2);
+  text-align: center;
+}
+
+.markdown-content--compact { font-size: 14px; line-height: 1.72; }
+.markdown-content--compact h1 { font-size: 23px; }
+.markdown-content--compact h2 { margin-top: 24px; font-size: 19px; }
+
+.markdown-content--pending { opacity: .82; }
+
+/* A manually opened, multi-megabyte reader is still one portable document. Let
+   the browser defer paint and layout for the expensive block types outside the
+   viewport, while paragraphs and headings keep an accurate reading flow and
+   outline targets stay stable. */
+@supports (content-visibility: auto) {
+  .markdown-content--large-reader > :is(.code-frame, .markdown-mermaid, .math-block, table) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 300px;
+  }
+}
+
+/* ── Links and images the reader can act on ──────────────────────────────── */
+
+.markdown-content .markdown-wiki-link {
+  padding: 1px 4px 2px;
+  border: 1px solid color-mix(in srgb, var(--reading-accent) 28%, transparent);
+  border-radius: 5px;
+  color: var(--reading-accent);
+  background: color-mix(in srgb, var(--reading-accent) 10%, transparent);
+  box-decoration-break: clone;
+  font-weight: 650;
+  text-decoration: none;
+  text-underline-offset: 3px;
+  transition: color .16s ease, border-color .16s ease, background .16s ease;
+  cursor: pointer;
+}
+
+.markdown-content .markdown-wiki-link:hover {
+  background: color-mix(in srgb, var(--reading-accent) 18%, transparent);
+  text-decoration: underline;
+}
+
+.markdown-content .markdown-wiki-link:focus-visible {
+  outline: 2px solid var(--reading-accent);
+  outline-offset: 2px;
+}
+
+.markdown-content .markdown-standard-link {
+  cursor: pointer;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: text-decoration-thickness .15s ease;
+}
+
+.markdown-content .markdown-standard-link:hover { text-decoration-thickness: 2px; }
+
+.markdown-content .markdown-standard-link:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--reading-accent);
+  outline-offset: 3px;
+}
+
+.markdown-content img[role='button'] {
+  cursor: zoom-in;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.markdown-content img[role='button']:hover {
+  border-color: var(--reading-accent);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--reading-accent) 18%, transparent);
+}
+
+.markdown-content img[role='button']:focus-visible {
+  outline: 2px solid var(--reading-accent);
+  outline-offset: 4px;
+}
+
+/* The sweep needs something to sweep: this was a flat colour with a
+   `background-position` animation running over it, which is an animation frame
+   spent on nothing. */
+.markdown-preview.markdown-content img[data-external-image-state='loading'] {
+  min-height: 86px;
+  background: linear-gradient(100deg, var(--reading-paper-2) 34%, var(--reading-paper) 50%, var(--reading-paper-2) 66%);
+  background-size: 220% 100%;
+  animation: knitspace-image-loading 1.45s ease-in-out infinite;
+}
+
+.markdown-preview.markdown-content img[data-external-image-state='error'] {
+  outline: 1px dashed var(--reading-danger);
+  outline-offset: 3px;
+}
+
+@keyframes knitspace-image-loading {
+  0% { background-position: 100% 0; }
+  100% { background-position: -120% 0; }
+}
+
+/* Focus mode: the chrome steps back, so the headings can carry more weight. */
+.documents-layout--focus .editor-grid--preview .markdown-preview.markdown-content :is(h1, h2, h3) { letter-spacing: -.026em; }
+.documents-layout--focus .editor-grid--preview .markdown-preview.markdown-content :is(p, li) { max-width: 100%; }
+
+/* ── Mermaid figures ─────────────────────────────────────────────────────
+   A content plane: see `--diagram-*` above. Everything inside the figure,
+   caption and placeholder included, takes its ink from that group — the
+   caption used to be `--green-strong`, which on this near-white ground meant
+   the dark theme captioned every diagram at 2:1. */
+
+.markdown-content .markdown-mermaid {
+  margin: 22px 0;
+  overflow: hidden;
+  border: 1px solid var(--diagram-line);
+  border-radius: 8px;
+  background: var(--diagram-paper);
+  cursor: context-menu;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.markdown-content .markdown-mermaid:hover {
+  border-color: var(--diagram-line-strong);
+  box-shadow: 0 5px 15px rgb(24 68 54 / 0.045);
+}
+
+.markdown-content .markdown-mermaid:focus-visible {
+  outline: 2px solid var(--reading-accent);
+  outline-offset: 3px;
+}
+
+.markdown-mermaid figcaption {
+  min-height: 32px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--diagram-line);
+  color: var(--diagram-ink-2);
+  background: var(--diagram-soft);
+  font: 700 12px/32px var(--font-family-ui);
+  letter-spacing: 0.08em;
+}
+
+.markdown-mermaid__canvas {
+  display: grid;
+  min-height: 92px;
+  place-items: center;
+  padding: 16px;
+  overflow: auto;
+}
+
+.markdown-mermaid__canvas:empty::before {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--diagram-line);
+  border-top-color: var(--diagram-ink);
+  border-radius: 50%;
+  content: '';
+  animation: knit-diagram-spin .8s linear infinite;
+}
+
+@keyframes knit-diagram-spin { to { transform: rotate(360deg); } }
+
+/* A queued figure is deliberately not rendered in parallel with every other
+   diagram in a long note. Say so, instead of looking stalled. */
+.markdown-mermaid[data-mermaid-state="queued"] .markdown-mermaid__canvas:empty,
+.markdown-mermaid[data-mermaid-state="loading"] .markdown-mermaid__canvas:empty {
+  grid-template-columns: 22px max-content;
+  justify-content: center;
+  gap: 8px;
+}
+
+.markdown-mermaid[data-mermaid-state="queued"] .markdown-mermaid__canvas:empty::after,
+.markdown-mermaid[data-mermaid-state="loading"] .markdown-mermaid__canvas:empty::after {
+  color: var(--diagram-ink-2);
+  font: 700 12px/1 var(--font-family-ui);
+  letter-spacing: 0.05em;
+}
+
+.markdown-mermaid[data-mermaid-state="queued"] .markdown-mermaid__canvas:empty::after { content: '图表等待渲染'; }
+.markdown-mermaid[data-mermaid-state="loading"] .markdown-mermaid__canvas:empty::after { content: '正在绘制图表'; }
+
+.markdown-mermaid__canvas svg {
+  display: block;
+  width: max-content;
+  min-width: min(100%, 300px);
+  max-width: none;
+  height: auto;
+  min-height: 62px;
+}
+
+/* Scoped to `.markdown-content` to outrank the `.markdown-content pre` ground
+   above it — otherwise the block that shows a diagram's source until it
+   renders takes the code paper while keeping its own light ink, which in the
+   light theme is 1.2:1. It is the figure's own dark slab, in both themes. */
+.markdown-content .markdown-mermaid__source {
+  margin: 0;
+  padding: 13px 15px;
+  overflow: auto;
+  border-top: 1px solid var(--diagram-line);
+  color: var(--diagram-source-ink);
+  background: var(--diagram-source-paper);
+  font: 12px/1.65 var(--font-family-ui);
+}
+
+.markdown-mermaid[data-mermaid-state="ready"] .markdown-mermaid__source { display: none; }
+.markdown-mermaid[data-mermaid-source-visible="true"] .markdown-mermaid__source { display: block; }
+
+.markdown-mermaid__error {
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--diagram-danger-line);
+  border-radius: 5px;
+  color: var(--diagram-danger-ink);
+  background: var(--diagram-danger-soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* The mindmap stage is `MarkdownMindmap.vue`'s own business — ground, dot grid
+   and link strokes are utilities on the element. Node labels are not: markmap
+   writes them into foreignObjects that inherit `color` from the app, so
+   without this the labels take the interface ink and go white-on-white in the
+   dark theme. */
+.markdown-mindmap__stage .markmap-foreign {
+  color: var(--diagram-ink);
+  font: 13px/1.35 var(--font-family-ui);
+}
+
+/* ── Chrome around the document ─────────────────────────────────────────── */
+
+.markdown-image-drop-overlay {
+  position: absolute;
+  z-index: 8;
+  inset: 12px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 7px;
+  padding: 24px;
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  color: var(--accent);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--surface-2), 0 18px 42px var(--accent-soft);
+  text-align: center;
+  pointer-events: none;
+}
+
+.markdown-image-drop-overlay > span {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid var(--accent-soft);
+  border-radius: 13px;
+  background: var(--accent-soft);
+}
+
+.markdown-image-drop-overlay b { font: 710 15px/1.35 var(--font-family-display); letter-spacing: -.015em; }
+.markdown-image-drop-overlay small { color: var(--fg-2); font: 600 12px/1.55 var(--font-family-ui); }
+
+.markdown-render-status {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 16px;
+  padding: 5px 9px;
+  border: 1px solid var(--accent-soft);
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  font: 700 12px var(--font-family-ui);
+}
+
+.markdown-preview--deferred {
+  display: grid;
+  min-height: 100%;
+  place-content: center;
+  justify-items: start;
+  gap: 17px;
+  box-sizing: border-box;
+  padding: 34px clamp(28px, 6vw, 84px);
+  color: var(--reading-ink-2);
+  background: var(--reading-paper);
+}
+
+.markdown-preview--deferred > div { display: grid; max-width: 430px; gap: 6px; }
+
+.markdown-preview--deferred b {
+  color: var(--reading-heading);
+  font: 690 19px/1.35 var(--font-family-display);
+  letter-spacing: -.02em;
+}
+
+.markdown-preview--deferred p {
+  margin: 0;
+  color: var(--reading-ink-2);
+  font: 12px/1.75 var(--font-family-ui);
+}
+
+.markdown-preview--deferred:focus-visible {
+  outline: 2px solid var(--reading-accent);
+  outline-offset: -5px;
+}
+
+/* The blank page is the one place the reading surface speaks for itself, so it
+   is allowed the accent — but as ink on the paper, never as a fill. */
+.blank-document-preview {
+  position: relative;
+  display: grid;
+  min-height: 100%;
+  align-content: center;
+  justify-items: start;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 42px clamp(34px, 7vw, 92px);
+  overflow: hidden;
+  color: var(--reading-ink-2);
+  background:
+    radial-gradient(circle at 72% 19%, color-mix(in srgb, var(--reading-accent) 11%, transparent), transparent 27%),
+    radial-gradient(circle at 11% 90%, var(--warn-soft), transparent 24%),
+    var(--reading-paper);
+}
+
+.blank-document-preview::after {
+  position: absolute;
+  right: clamp(38px, 8vw, 126px);
+  bottom: clamp(24px, 7vh, 78px);
+  width: min(25vw, 270px);
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in srgb, var(--reading-accent) 16%, transparent);
+  border-radius: 50%;
+  content: '';
+  pointer-events: none;
+}
+
+.blank-document-preview > * { position: relative; z-index: 1; }
+
+.blank-document-preview__mark {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 4px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--reading-accent) 22%, transparent);
+  border-radius: 14px;
+  color: var(--reading-accent);
+  background: color-mix(in srgb, var(--reading-accent) 10%, transparent);
+}
+
+.blank-document-preview .eyebrow {
+  margin: 0;
+  color: var(--reading-accent);
+  font: 700 12px var(--font-family-ui);
+  letter-spacing: .1em;
+}
+
+.blank-document-preview b {
+  max-width: 360px;
+  color: var(--reading-heading);
+  font: 710 clamp(23px, 2vw, 30px)/1.28 var(--font-family-display);
+  letter-spacing: -.04em;
+}
+
+.blank-document-preview p:not(.eyebrow) { max-width: 390px; margin: 0; font: 12px/1.75 var(--font-family-ui); }
+.blank-document-preview small { color: var(--reading-ink-3); font: 12px/1.55 var(--font-family-ui); }
+
+.blank-document-preview__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+/* Both of these pages still use the legacy button classes, which are styled
+   for the interface. On paper they take the paper's own accent, until the
+   document view's buttons become `btn-*`. */
+.markdown-preview--deferred .quiet-button,
+.blank-document-preview .quiet-button {
+  min-height: 34px;
+  border: 1px solid color-mix(in srgb, var(--reading-accent) 30%, transparent);
+  color: var(--reading-accent);
+  background: color-mix(in srgb, var(--reading-accent) 8%, transparent);
+  font-size: 13px;
+}
+
+.markdown-preview--deferred .quiet-button:hover,
+.blank-document-preview .quiet-button:hover,
+.blank-document-preview .quiet-button:focus-visible {
+  border-color: var(--reading-accent);
+  background: color-mix(in srgb, var(--reading-accent) 15%, transparent);
+}
+
+.blank-document-preview .quiet-button:focus-visible {
+  outline: 2px solid var(--reading-accent);
+  outline-offset: 2px;
+}
+
+.blank-document-preview .quiet-button,
+.blank-document-preview .primary-button { min-height: 36px; margin: 0; font-size: 13px; }
+
+/* ── The image viewer ────────────────────────────────────────────────────
+   A full-screen overlay, so it is chrome and it themes. Its header and footer
+   were `background: var(--line-strong)` — a hairline colour used as a plane —
+   and its buttons lit up as `--accent-fg` (white) on `--accent-soft` (a 9%
+   tint), which is white on almost-white: the hover state was invisible. */
+
+.markdown-image-viewer {
+  position: fixed;
+  z-index: 170;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  color: var(--fg);
+  background: var(--bg);
+  animation: knit-image-viewer-in .16s ease-out both;
+}
+
+.markdown-image-viewer > header {
+  display: flex;
+  min-height: 66px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 10px 16px 10px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.markdown-image-viewer > header > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.markdown-image-viewer > header span { color: var(--fg-3); font: 700 11px var(--font-family-ui); letter-spacing: .09em; }
+.markdown-image-viewer > header b { overflow: hidden; color: var(--fg); font: 690 13px var(--font-family-ui); text-overflow: ellipsis; white-space: nowrap; }
+.markdown-image-viewer > header small { color: var(--fg-2); font: 650 12px var(--font-family-ui); white-space: nowrap; }
+
+.markdown-image-viewer nav { display: flex; flex: 0 0 auto; gap: 5px; }
+
+.markdown-image-viewer nav button {
+  display: grid;
+  min-width: 62px;
+  min-height: 34px;
+  place-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--fg-2);
+  background: var(--surface-2);
+  font: 650 12px var(--font-family-ui);
+  transition: color .12s ease, background .12s ease, border-color .12s ease;
+}
+
+.markdown-image-viewer nav button:last-child { min-width: 34px; padding: 0; }
+
+.markdown-image-viewer nav button:hover,
+.markdown-image-viewer nav button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.markdown-image-viewer nav button.active {
+  border-color: var(--accent);
+  color: var(--accent-fg);
+  background: var(--accent-solid);
+}
+
+.markdown-image-viewer nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.markdown-image-viewer__canvas {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  overflow: auto;
+  padding: 24px;
+}
+
+.markdown-image-viewer__canvas img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-lg);
+  object-fit: contain;
+}
+
+.markdown-image-viewer__canvas.is-actual { place-items: start center; }
+.markdown-image-viewer__canvas.is-actual img { max-width: none; max-height: none; }
+
+.markdown-image-viewer > footer {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-top: 1px solid var(--line);
+  color: var(--fg-3);
+  background: var(--surface);
+  font: 600 12px var(--font-family-ui);
+}
+
+.markdown-image-viewer > footer kbd {
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--fg-3);
+  background: var(--surface-2);
+  font: 700 11px var(--font-family-mono);
+}
+
+@keyframes knit-image-viewer-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* A viewer on a narrow window puts its controls on their own row, and drops
+   the keyboard hints it no longer has the width to spell out. */
+@media (max-width: 720px) {
+  .markdown-image-viewer > header { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .markdown-image-viewer > header > div { width: 100%; grid-template-columns: 1fr auto; }
+  .markdown-image-viewer > header > div > span { display: none; }
+  .markdown-image-viewer nav { width: 100%; }
+  .markdown-image-viewer nav button { flex: 1; }
+  .markdown-image-viewer__canvas { padding: 12px; }
+  .markdown-image-viewer > footer { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markdown-image-viewer { animation: none; }
+  .markdown-content img[role='button'],
+  .markdown-content .markdown-standard-link,
+  .markdown-content .markdown-mermaid { transition: none; }
+}

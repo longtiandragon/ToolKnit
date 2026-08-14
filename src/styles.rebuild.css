@@ -359,13 +359,9 @@ textarea:focus-visible,
 
 
 
-.compact-task-list article > span.succeeded i {
-  background: var(--accent-solid);
-}
 
-.compact-task-list article > span.failed i {
-  background: var(--red);
-}
+
+
 
 
 
@@ -493,14 +489,7 @@ textarea:focus-visible,
 
 
 
-.ai-result-text,
-.markdown-preview,
-.editor-grid textarea {
-  color: var(--text);
-  background: var(--surface);
-  font-size: 14px;
-  line-height: 1.75;
-}
+
 
 
 
@@ -698,9 +687,7 @@ textarea:focus-visible,
 
 
 
-.editor-grid textarea {
-  min-height: 410px;
-}
+
 
 /* History and clipboard: filters lead, empty states stay compact. */
 .history-toolbar,

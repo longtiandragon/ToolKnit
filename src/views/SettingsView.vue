@@ -89,11 +89,14 @@ const readingWidthOptions = [
   { id: 'balanced', label: '平衡', detail: '860 px' },
   { id: 'wide', label: '宽屏', detail: '1040 px' },
 ] as const
+// The swatch reads the same variable the reading surface paints with, so a
+// sample cannot drift from its paper. It used to carry the light-theme hex
+// literal, which meant every swatch lied in the dark theme.
 const paperToneOptions = [
-  { id: 'warm', label: '暖纸', color: '#fffcf7' },
-  { id: 'neutral', label: '清白', color: '#ffffff' },
-  { id: 'mist', label: '雾绿', color: '#f5f7f3' },
-  { id: 'night', label: '夜墨', color: '#17211d' },
+  { id: 'warm', label: '暖纸', color: 'var(--paper-warm)' },
+  { id: 'neutral', label: '清白', color: 'var(--paper-neutral)' },
+  { id: 'mist', label: '雾绿', color: 'var(--paper-mist)' },
+  { id: 'night', label: '夜墨', color: 'var(--paper-night)' },
 ] as const
 const vaultStructureHealthy = computed(() => Boolean(vaultHealth.value
   && vaultHealth.value.integrity === 'ok'

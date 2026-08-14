@@ -1042,25 +1042,32 @@ onBeforeUnmount(() => {
   <p class="visually-hidden" aria-live="polite">{{ imageStatus }}</p>
   <p class="visually-hidden" aria-live="polite">{{ linkStatus }}</p>
   <Teleport to="body">
-    <section v-if="diagramContextMenu" ref="diagramMenuElement" class="markdown-diagram-context-menu" role="menu" aria-label="Mermaid 图表操作" :style="{ left: `${diagramContextMenu.x}px`, top: `${diagramContextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleDiagramMenuKeydown">
-      <p>MERMAID · 图表</p>
-      <button role="menuitem" @click="copyDiagramSource">复制 Mermaid 源码</button>
-      <button role="menuitem" :disabled="!diagramContextMenu.hasSvg" @click="copyDiagramSvg">复制当前 SVG</button>
-      <button role="menuitem" @click="toggleDiagramSource">{{ diagramContextMenu.sourceVisible ? '收起 Mermaid 源码' : '显示 Mermaid 源码' }}</button>
-      <button role="menuitem" class="separator" :disabled="['queued', 'loading'].includes(diagramContextMenu.state)" @click="renderDiagramFromMenu">{{ diagramContextMenu.state === 'idle' ? '立即绘制图表' : '重新绘制图表' }}</button>
+    <!-- Three menus that used to carry their own panel, row and hover styling —
+         a fourth design of the same object. They speak the shared menu
+         vocabulary now, which is also what put them back on the ordinary menu
+         layer: the link and image menus had been sitting on the global-modal
+         layer, above dialogs that are supposed to eclipse them. -->
+    <section v-if="diagramContextMenu" ref="diagramMenuElement" class="menu-panel w-[236px]" role="menu" aria-label="Mermaid 图表操作" :style="{ left: `${diagramContextMenu.x}px`, top: `${diagramContextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleDiagramMenuKeydown">
+      <p class="menu-title">MERMAID · 图表</p>
+      <button class="menu-item" role="menuitem" @click="copyDiagramSource">复制 Mermaid 源码</button>
+      <button class="menu-item" role="menuitem" :disabled="!diagramContextMenu.hasSvg" @click="copyDiagramSvg">复制当前 SVG</button>
+      <button class="menu-item" role="menuitem" @click="toggleDiagramSource">{{ diagramContextMenu.sourceVisible ? '收起 Mermaid 源码' : '显示 Mermaid 源码' }}</button>
+      <i class="menu-sep" aria-hidden="true"></i>
+      <button class="menu-item" role="menuitem" :disabled="['queued', 'loading'].includes(diagramContextMenu.state)" @click="renderDiagramFromMenu">{{ diagramContextMenu.state === 'idle' ? '立即绘制图表' : '重新绘制图表' }}</button>
     </section>
-    <section v-if="imageContextMenu" ref="imageMenuElement" class="markdown-image-context-menu" role="menu" aria-label="Markdown 图片操作" :style="{ left: `${imageContextMenu.x}px`, top: `${imageContextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleImageMenuKeydown">
-      <p><span>图片</span><small>{{ imageContextMenu.target.naturalWidth || '—' }} × {{ imageContextMenu.target.naturalHeight || '—' }} px</small></p>
-      <button role="menuitem" :disabled="!imageContextMenu.ready" @click="openImageViewer()"><span><AppIcon name="image" :size="14" />查看大图</span><kbd>Enter</kbd></button>
-      <button role="menuitem" :disabled="!imageContextMenu.ready" @click="copyPreviewImage"><span><AppIcon name="duplicate" :size="14" />复制当前画面</span><kbd>PNG</kbd></button>
-      <button role="menuitem" @click="copyPreviewImageMarkdown"><span><AppIcon name="code" :size="14" />复制 Markdown 引用</span></button>
-      <button class="separator" role="menuitem" :disabled="!imageContextMenu.ready" @click="editPreviewImage"><span><AppIcon name="palette" :size="14" />在图片工作室打开</span><kbd>本地</kbd></button>
+    <section v-if="imageContextMenu" ref="imageMenuElement" class="menu-panel w-[252px]" role="menu" aria-label="Markdown 图片操作" :style="{ left: `${imageContextMenu.x}px`, top: `${imageContextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleImageMenuKeydown">
+      <p class="menu-title"><span>图片</span><small class="font-medium">{{ imageContextMenu.target.naturalWidth || '—' }} × {{ imageContextMenu.target.naturalHeight || '—' }} px</small></p>
+      <button class="menu-item" role="menuitem" :disabled="!imageContextMenu.ready" @click="openImageViewer()"><span class="row gap-2 min-w-0"><AppIcon name="image" :size="14" />查看大图</span><kbd class="kbd">Enter</kbd></button>
+      <button class="menu-item" role="menuitem" :disabled="!imageContextMenu.ready" @click="copyPreviewImage"><span class="row gap-2 min-w-0"><AppIcon name="duplicate" :size="14" />复制当前画面</span><kbd class="kbd">PNG</kbd></button>
+      <button class="menu-item" role="menuitem" @click="copyPreviewImageMarkdown"><span class="row gap-2 min-w-0"><AppIcon name="code" :size="14" />复制 Markdown 引用</span></button>
+      <i class="menu-sep" aria-hidden="true"></i>
+      <button class="menu-item" role="menuitem" :disabled="!imageContextMenu.ready" @click="editPreviewImage"><span class="row gap-2 min-w-0"><AppIcon name="palette" :size="14" />在图片工作室打开</span><kbd class="kbd">本地</kbd></button>
     </section>
-    <section v-if="linkContextMenu" ref="linkMenuElement" class="markdown-link-context-menu" role="menu" :aria-label="`${linkContextMenu.label}链接操作`" :style="{ left: `${linkContextMenu.x}px`, top: `${linkContextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleLinkMenuKeydown">
-      <p><span>{{ linkContextMenu.label }}</span><small>{{ linkContextMenu.href }}</small></p>
-      <button role="menuitem" @click="openStandardMarkdownLink()"><span><AppIcon name="arrow-right" :size="14" />打开链接</span><kbd>Enter</kbd></button>
-      <button role="menuitem" @click="copyStandardMarkdownLink('address')"><span><AppIcon name="duplicate" :size="14" />复制链接地址</span></button>
-      <button role="menuitem" @click="copyStandardMarkdownLink('markdown')"><span><AppIcon name="code" :size="14" />复制 Markdown 引用</span></button>
+    <section v-if="linkContextMenu" ref="linkMenuElement" class="menu-panel w-[min(270px,calc(100vw-24px))]" role="menu" :aria-label="`${linkContextMenu.label}链接操作`" :style="{ left: `${linkContextMenu.x}px`, top: `${linkContextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleLinkMenuKeydown">
+      <p class="stack gap-0.5 min-w-0 px-3 pt-1 pb-1.5"><span class="text-[11px] font-semibold text-fg-3">{{ linkContextMenu.label }}</span><small class="truncate text-[11px] text-fg-3">{{ linkContextMenu.href }}</small></p>
+      <button class="menu-item" role="menuitem" @click="openStandardMarkdownLink()"><span class="row gap-2 min-w-0"><AppIcon name="arrow-right" :size="14" />打开链接</span><kbd class="kbd">Enter</kbd></button>
+      <button class="menu-item" role="menuitem" @click="copyStandardMarkdownLink('address')"><span class="row gap-2 min-w-0"><AppIcon name="duplicate" :size="14" />复制链接地址</span></button>
+      <button class="menu-item" role="menuitem" @click="copyStandardMarkdownLink('markdown')"><span class="row gap-2 min-w-0"><AppIcon name="code" :size="14" />复制 Markdown 引用</span></button>
     </section>
     <section v-if="imageViewer" ref="imageViewerElement" class="markdown-image-viewer" role="dialog" aria-modal="true" :aria-label="`${imageViewer.alt}大图预览`" tabindex="-1" @click.self="closeImageViewer()" @keydown.stop="handleImageViewerKeydown">
       <header>

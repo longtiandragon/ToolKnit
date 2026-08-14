@@ -1,20 +1,18 @@
 /*
  * Token aliases for the legacy stylesheets.
  *
- * Every view, the shell and every component now render in UnoCSS utilities.
- * What is left in the six legacy sheets is the Markdown reading surface and
- * the rules that dress content the app does not own — and those still speak
- * the old token vocabulary (`--text`, `--muted`, `--green`, `--surface-raised`
- * and friends), about 150 references. This file loads after all of them and
- * redefines that vocabulary in terms of the design tokens, so the reading
- * surface follows the theme switch without being rewritten.
+ * Every view, the shell, every component and — as of the reading-surface
+ * rewrite — the document itself render in either UnoCSS utilities or
+ * `styles/reading.css`. What is still in the five legacy sheets is a handful of
+ * controls nothing has claimed yet: `.quiet-button` and `.primary-button`, the
+ * import dialogs, a few filter rows and status dots. Those rules speak the
+ * pre-token vocabulary, so this file loads after them and redefines that
+ * vocabulary in terms of the design tokens.
  *
- * It used to be scaffolding for un-migrated *views*; those are all gone, and
- * with them the hero blocks, the desktop title bar, the focus card and the
- * vocabulary grid this file used to correct. What remains is one alias table.
- * It disappears when the reading surface is rewritten in terms of the new
- * names — a job worth doing on its own, because that surface is also what
- * gets exported to HTML.
+ * It shrinks as those controls are rewritten. `scripts/prune-dead-css.mjs`
+ * finds the rules that no longer match anything; an alias only belongs here
+ * while something still asks for it — the reading surface's own `--reading-*`
+ * names left with it and now live in the sheet that owns them.
  */
 
 :root,
@@ -24,19 +22,14 @@
   --canvas: var(--bg);
   --rail: var(--surface);
   --surface-raised: var(--surface-2);
-  --surface-overlay: var(--surface);
-  --surface-hover: var(--surface-2);
   --surface-sunken: var(--surface-3);
-  --paper-strong: var(--surface-3);
 
   /* Ink */
   --text: var(--fg);
-  --ink: var(--fg);
   --text-secondary: var(--fg-2);
   --muted: var(--fg-3);
   --text-faint: var(--fg-3);
   --text-disabled: var(--fg-3);
-  --text-inverse: var(--accent-fg);
   --white: var(--fg);
 
   /* Rules */
@@ -52,84 +45,33 @@
      empty-state icon chips and accent shadows all went blank at once. */
   --green-bg: var(--accent-soft);
   --green-bg-hover: var(--accent-soft);
-  --accent-ink: var(--accent-press);
 
   /* Status */
   --amber: var(--warn);
   --amber-bg: var(--warn-soft);
-  --amber-bg-hover: var(--warn-soft);
   --red: var(--danger);
   --red-bg: var(--danger-soft);
-  --red-bg-hover: var(--danger-soft);
-
-  /* Markdown reading surface */
-  --reading-paper: var(--surface);
-  --reading-soft-paper: var(--surface-2);
-  --reading-ink: var(--fg);
-  --reading-heading: var(--fg);
-  --reading-muted: var(--fg-2);
-  --reading-border: var(--line);
-  --reading-accent: var(--accent);
+  --danger-bg: var(--danger-soft);
 
   /* Type */
   --font-sans: var(--font-family-ui);
-  --font-serif: var(--font-family-display);
+  --text-base: 13px;
 
   /* Shape and depth */
   --radius-sm: 6px;
-  --radius-md: 10px;
   --radius-lg: 14px;
-  --radius-xl: 18px;
-  --radius-2xl: 20px;
-  --radius-full: 9999px;
   --shadow-xs: var(--shadow-sm);
-  --shadow-xl: var(--shadow-lg);
-  --shadow-accent: var(--shadow-md);
   --shadow-glow-green: 0 0 0 3px var(--accent-ring);
 
   /* Motion */
   --ease-out: cubic-bezier(.22, 1, .36, 1);
-  --ease-in: cubic-bezier(.4, 0, 1, 1);
-  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
   --ease-spring: cubic-bezier(.34, 1.4, .5, 1);
-  --duration-instant: 80ms;
   --duration-fast: 120ms;
   --duration-normal: 200ms;
-  --duration-slow: 260ms;
-  --duration-modal: 200ms;
 
   /* Stacking. Global dialogs must always eclipse page-owned context menus. */
-  --z-base: 0;
-  --z-rail: 10;
-  --z-sticky: 20;
-  --z-drawer: 25;
-  --z-popover: 100;
   --z-context-menu: 120;
-  --z-modal: 150;
   --z-global-modal: 160;
-  --z-toast: 200;
-
-  /* Spacing and type steps still referenced by a handful of legacy rules. */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-base: 13px;
-  --text-md: 14px;
-  --text-lg: 16px;
-
-  /* Remaining one-off aliases. */
-  --ink-2: var(--fg-2);
-  --ink-quiet: var(--fg-3);
-  --faint: var(--fg-3);
-  --soft-green: var(--accent-soft);
-  --danger-bg: var(--danger-soft);
-  --font-reading: var(--font-family-ui);
 }
 
 :root[data-theme='dark'] {
@@ -142,20 +84,9 @@
   --green-strong: var(--accent-press);
 }
 
-/* The legacy layers each painted their own page ground — a warm gradient, a
-   32px engineering grid. The theme owns the ground now. */
-/* The rail is a component again (`AppRail.vue`, 240px). The legacy layers
-   still position the workspace against the old 246px aside, so the offset is
-   corrected here until the shell's own CSS is gone. */
-/* `AppRail.vue` paints itself with tokens, but it still answers to `.rail`
-   for the handful of legacy descendant rules, and the legacy layers give
-   `.rail` a gradient. A gradient is `background-image`; the component's
-   `bg-surface` utility only sets `background-color`, so no amount of load
-   order removes it — the rail kept a blue wash down its top third. */
 /* The desktop title bar is chrome, not a highlight. The automatic recolour
-   turned its dark evergreen ground into the accent, which put a saturated
-   blue band across the top of every window. */
-
+   turned its dark evergreen ground into the accent, which put a saturated blue
+   band across the top of every window. */
 .desktop-titlebar {
   height: var(--titlebar-h);
   color: var(--fg-2);
@@ -163,81 +94,3 @@
   border-bottom: 1px solid var(--line);
   box-shadow: none;
 }
-
-/* Page heroes were dark evergreen slabs designed to be islands inside a light
-   page: light text, decorative rings, gradient grounds. On a dark theme the
-   island is the same value as the page, so the slab has no job left — and the
-   automatic recolour turned its green gradients into a wall of accent. They
-   are flattened into ordinary section headers until each view is rebuilt. */
-.control-hero,
-.capability-hero,
-.intake-hero,
-.ocr-hero,
-.workbench-hero,
-.ai-workbench__hero,
-.create-space__hero,
-.knowledge-space__hero,
-.library-workbench__hero,
-.relation-graph__hero,
-.subtitle-studio__hero,
-.tools-space__hero {
-  /* Flattening the slab also has to drop its two-column grid, or whatever the
-     hero used to hold beside the copy stays wedged next to the new header. */
-  display: block;
-  min-height: 0;
-  padding: 0 0 20px;
-  border: 0;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
-}
-.control-hero::after,
-.capability-hero::after,
-.ocr-hero::after,
-.workbench-hero::after,
-.knowledge-space__hero::after,
-.tools-space__hero::after { display: none; }
-
-.hero-copy h2,
-.control-hero h2,
-.capability-hero h2,
-.intake-hero h2,
-.ocr-hero h2,
-.workbench-hero h2,
-.ai-workbench__hero h2,
-.create-space__hero h2,
-.knowledge-space__hero h2,
-.library-workbench__hero h2,
-.relation-graph__hero h2,
-.subtitle-studio__hero h2,
-.tools-space__hero h2 {
-  max-width: 46ch;
-  color: var(--fg);
-  font: 600 22px/1.35 var(--font-family-display);
-  letter-spacing: -.015em;
-}
-
-/* `.vocabulary` is both the route root and its own two-pane grid. The polish
-   layer turns every route root into a flex column so short pages can fill the
-   window, which collapsed those two panes into a stack. The page owns its
-   layout, so it wins here. */
-.workspace-content > .vocabulary.page-enter {
-  display: grid;
-  grid-template-columns: 286px minmax(0, 1fr);
-}
-
-/* The focus/anniversary pair draws its divider with a 1px grid gap over the
-   container background. That background was recoloured to the accent, so the
-   seam read as a blue line, and the shorter column stopped short of the taller
-   one instead of filling the row. */
-.today-focus {
-  align-items: stretch;
-  border-color: var(--line);
-  background: var(--line);
-}
-
-/* Colour pickers were inheriting the generic `width: 100%` for inputs, so a
-   swatch became a full-width slab that dominated the parameter panel. A colour
-   is a value, not a field. */
-
-

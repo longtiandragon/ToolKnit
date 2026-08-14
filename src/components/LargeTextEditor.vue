@@ -407,16 +407,20 @@ onMounted(() => {
           keydown: (event) => handleEditorKeydown(event),
         }),
         EditorView.theme({
-          '&': { height: '100%', color: 'var(--reading-ink, var(--text))', backgroundColor: 'var(--reading-paper, var(--bg))' },
+          // The reading tokens, because this is the source half of the
+          // Markdown pane and follows the reader's paper tone. Outside the
+          // document workspace — the code-image tool — those variables hold
+          // the interface surface and ink.
+          '&': { height: '100%', color: 'var(--reading-ink)', backgroundColor: 'var(--reading-paper)' },
           '&.cm-focused': { outline: 'none' },
           '.cm-scroller': { overflow: 'auto', fontFamily: "'Cascadia Mono','DM Mono',Consolas,monospace", fontSize: 'var(--editor-font-size, 14px)', lineHeight: 'var(--editor-line-height, 1.72)' },
           '.cm-content': { minHeight: '100%', padding: '14px 18px', caretColor: 'var(--accent)' },
           '.cm-line': { padding: '0' },
           '.cm-activeLine': { backgroundColor: 'color-mix(in srgb,var(--accent) 4%,transparent)' },
-          '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': { backgroundColor: 'rgba(30,142,119,.24)' },
-          '.cm-content ::selection': { backgroundColor: 'rgba(30,142,119,.24)' },
+          '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': { backgroundColor: 'var(--accent-ring)' },
+          '.cm-content ::selection': { backgroundColor: 'var(--accent-ring)' },
           '.cm-cursor': { borderLeftColor: 'var(--accent)' },
-          '.cm-placeholder': { color: 'var(--muted)' },
+          '.cm-placeholder': { color: 'var(--reading-ink-3)' },
         }),
       ],
     }),
@@ -462,21 +466,23 @@ onBeforeUnmount(() => {
 <template><div ref="host" class="large-text-editor"></div></template>
 
 <style scoped>
-.large-text-editor{min-width:0;min-height:0;flex:1;overflow:hidden;border:0;background:var(--bg);color:var(--text)}
+.large-text-editor{min-width:0;min-height:0;flex:1;overflow:hidden;border:0;background:var(--reading-paper);color:var(--reading-ink)}
 .large-text-editor:focus-within{box-shadow:inset 3px 0 0 var(--accent)}
 .large-text-editor :deep(.cm-selectionBackground){background:var(--accent-soft)!important}
 .large-text-editor :deep(.cm-content ::selection){background:var(--accent-soft)!important}
 .large-text-editor :deep(.cm-panels-top){border-bottom:0;background:transparent}
-.large-text-editor :deep(.cm-panel.cm-search){display:flex;min-height:43px;box-sizing:border-box;align-items:center;flex-wrap:wrap;gap:5px;padding:7px 41px 7px 10px;border-bottom:1px solid var(--accent-soft);color:var(--text-secondary);background:linear-gradient(180deg,var(--surface-2),var(--surface-2));box-shadow:0 5px 14px var(--accent-soft);font:600 11px var(--font-family-ui)}
+/* The search bar is interface sitting on the document, so it brings its own
+   opaque strip and takes the theme's tokens, not the paper's. */
+.large-text-editor :deep(.cm-panel.cm-search){display:flex;min-height:43px;box-sizing:border-box;align-items:center;flex-wrap:wrap;gap:5px;padding:7px 41px 7px 10px;border-bottom:1px solid var(--line);color:var(--fg-2);background:var(--surface-2);box-shadow:var(--shadow-sm);font:600 11px var(--font-family-ui)}
 .large-text-editor :deep(.cm-panel.cm-search br){width:100%;height:0;flex-basis:100%}
-.large-text-editor :deep(.cm-panel.cm-search input.cm-textfield){width:min(228px,31vw);min-height:29px;box-sizing:border-box;margin:0;padding:0 9px;border:1px solid var(--accent-soft);border-radius:7px;outline:0;color:var(--text);background:var(--surface);font:11px var(--font-family-ui)}
-.large-text-editor :deep(.cm-panel.cm-search input.cm-textfield:focus){border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-.large-text-editor :deep(.cm-panel.cm-search .cm-button){min-height:29px;margin:0;padding:0 9px;border:1px solid var(--accent-soft);border-radius:7px;color:var(--text-secondary);background:var(--surface);background-image:none;font:650 11px var(--font-family-ui);text-transform:none}
-.large-text-editor :deep(.cm-panel.cm-search .cm-button:hover),.large-text-editor :deep(.cm-panel.cm-search .cm-button:focus-visible){border-color:var(--accent-soft);color:var(--green-strong);background:var(--green-bg)}
-.large-text-editor :deep(.cm-panel.cm-search label){display:inline-flex;min-height:27px;align-items:center;gap:3px;margin:0!important;color:var(--muted);font:600 11px var(--font-family-ui);white-space:nowrap}
-.large-text-editor :deep(.cm-panel.cm-search input[type='checkbox']){margin:0;accent-color:var(--green)}
-.large-text-editor :deep(.cm-panel.cm-search [name='close']){display:grid!important;top:8px!important;right:9px!important;width:27px;height:27px;place-items:center;border:1px solid transparent!important;border-radius:7px;color:var(--muted);background:transparent!important;font-size:17px!important}
-.large-text-editor :deep(.cm-panel.cm-search [name='close']:hover),.large-text-editor :deep(.cm-panel.cm-search [name='close']:focus-visible){border-color:var(--accent-soft)!important;color:var(--green-strong);background:var(--green-bg)!important;outline:2px solid color-mix(in srgb,var(--green) 38%,transparent);outline-offset:1px}
+.large-text-editor :deep(.cm-panel.cm-search input.cm-textfield){width:min(228px,31vw);min-height:29px;box-sizing:border-box;margin:0;padding:0 9px;border:1px solid var(--line);border-radius:7px;outline:0;color:var(--fg);background:var(--well);font:11px var(--font-family-ui)}
+.large-text-editor :deep(.cm-panel.cm-search input.cm-textfield:focus){border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring)}
+.large-text-editor :deep(.cm-panel.cm-search .cm-button){min-height:29px;margin:0;padding:0 9px;border:1px solid var(--line-strong);border-radius:7px;color:var(--fg-2);background:var(--surface);background-image:none;font:650 11px var(--font-family-ui);text-transform:none}
+.large-text-editor :deep(.cm-panel.cm-search .cm-button:hover),.large-text-editor :deep(.cm-panel.cm-search .cm-button:focus-visible){border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.large-text-editor :deep(.cm-panel.cm-search label){display:inline-flex;min-height:27px;align-items:center;gap:3px;margin:0!important;color:var(--fg-3);font:600 11px var(--font-family-ui);white-space:nowrap}
+.large-text-editor :deep(.cm-panel.cm-search input[type='checkbox']){margin:0;accent-color:var(--accent)}
+.large-text-editor :deep(.cm-panel.cm-search [name='close']){display:grid!important;top:8px!important;right:9px!important;width:27px;height:27px;place-items:center;border:1px solid transparent!important;border-radius:7px;color:var(--fg-3);background:transparent!important;font-size:17px!important}
+.large-text-editor :deep(.cm-panel.cm-search [name='close']:hover),.large-text-editor :deep(.cm-panel.cm-search [name='close']:focus-visible){border-color:var(--accent)!important;color:var(--accent);background:var(--accent-soft)!important;outline:2px solid var(--accent);outline-offset:1px}
 .large-text-editor :deep(.cm-searchMatch){border-bottom:1px solid var(--warn);background:var(--warn-soft)!important}
 .large-text-editor :deep(.cm-searchMatch-selected){border-bottom-color:var(--accent);background:var(--accent-soft)!important}
 @media(max-width:900px){.large-text-editor :deep(.cm-panel.cm-search input.cm-textfield){width:min(190px,42vw)}.large-text-editor :deep(.cm-panel.cm-search label){font-size:0}.large-text-editor :deep(.cm-panel.cm-search label input){width:14px;height:14px}}

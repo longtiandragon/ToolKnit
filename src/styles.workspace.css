@@ -133,410 +133,23 @@ a:hover {
 
 
 
-.editor-grid {
-  display: grid;
-  min-height: 0;
-  flex: 1;
-  overflow: hidden;
-}
 
 
 
 
 
-.editor-grid textarea {
-  width: 100%;
-  min-height: 0;
-  padding: 28px 32px;
-  overflow: auto;
-  border: 0;
-  border-right: 1px solid var(--line);
-  border-radius: 0;
-  color: var(--fg);
-  background: var(--surface);
-  font: 14px/1.85 var(--font-family-ui);
-  resize: none;
-}
 
-.markdown-preview {
-  min-height: 0;
-  overflow: auto;
-}
 
-.editor-grid--preview .markdown-preview {
-  padding: 36px clamp(32px, 7vw, 92px) 80px;
-}
 
-/* Reading measure. Focus mode has always capped the line length at 820px;
-   ordinary preview never did, so on a wide window a paragraph ran the full
-   width of the editor and the eye lost the line it was on. */
-.editor-grid--preview .markdown-preview.markdown-content {
-  width: min(100%, 780px);
-  margin-inline: auto;
-}
 
-.editor-grid--split .markdown-preview {
-  padding: 28px 34px 70px;
-}
+
+
+
+
+
+
 @keyframes document-statistics-in { from { opacity: 0; transform: translateY(5px) scale(.985); } to { opacity: 1; transform: none; } }
 
-/* Markdown reading system shared by notes, mistakes, review and AI output. */
-.markdown-content {
-  width: 100%;
-  max-width: 860px;
-  color: var(--fg);
-  font-size: 16px;
-  line-height: 1.82;
-  overflow-wrap: anywhere;
-}
-
-.markdown-content > :first-child {
-  margin-top: 0 !important;
-}
-
-.markdown-content > :last-child {
-  margin-bottom: 0 !important;
-}
-
-.markdown-content h1,
-.markdown-content h2,
-.markdown-content h3,
-.markdown-content h4,
-.markdown-content h5,
-.markdown-content h6 {
-  color: var(--fg);
-  font-family: var(--font-family-display);
-  font-weight: 720;
-  line-height: 1.35;
-  letter-spacing: -0.025em;
-}
-
-.markdown-content h1 {
-  margin: 0 0 24px;
-  padding-bottom: 13px;
-  border-bottom: 1px solid var(--line);
-  font-size: 30px;
-}
-
-.markdown-content h2 {
-  margin: 32px 0 11px;
-  font-size: 22px;
-}
-
-.markdown-content h3 {
-  margin: 26px 0 9px;
-  font-size: 18px;
-}
-
-.markdown-content h4,
-.markdown-content h5,
-.markdown-content h6 {
-  margin: 22px 0 8px;
-  font-size: 16px;
-}
-
-.markdown-content p {
-  margin: 0 0 16px;
-}
-
-.markdown-content ul,
-.markdown-content ol {
-  margin: 0 0 18px;
-  padding-left: 1.65em;
-}
-
-.markdown-content li {
-  margin: 5px 0;
-  padding-left: 0.18em;
-}
-
-.markdown-content li::marker {
-  color: var(--green);
-}
-
-.markdown-content .task-list {
-  padding-left: 0;
-  list-style: none;
-}
-
-.markdown-content .task-list-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-}
-
-.markdown-content .task-list-item input {
-  width: 15px;
-  height: 15px;
-  margin: 6px 0 0;
-  accent-color: var(--green);
-}
-
-.markdown-content blockquote {
-  margin: 20px 0;
-  padding: 12px 17px;
-  border-left: 3px solid var(--green);
-  color: var(--text-secondary);
-  background: var(--surface-2);
-}
-
-.markdown-content blockquote p:last-child {
-  margin-bottom: 0;
-}
-
-.markdown-content a {
-  color: var(--green-strong);
-  text-decoration: underline;
-  text-decoration-color: var(--accent);
-  text-underline-offset: 3px;
-}
-
-.markdown-content code:not(pre code) {
-  padding: 0.16em 0.38em;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  color: var(--danger);
-  background: var(--surface-2);
-  font: 0.88em/1.45 var(--font-family-mono);
-}
-
-.code-frame {
-  margin: 21px 0;
-  overflow: hidden;
-  border: 1px solid var(--fg);
-  border-radius: 7px;
-  background: var(--surface);
-}
-
-.code-frame__bar {
-  display: flex;
-  min-height: 34px;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--surface-2);
-  color: var(--fg);
-  background: var(--surface);
-  font: 12px/1 var(--font-family-ui);
-  text-transform: uppercase;
-}
-
-.markdown-content pre.code-block {
-  max-width: 100%;
-  margin: 0;
-  padding: 17px 19px 20px;
-  overflow: auto;
-  color: var(--fg);
-  background: transparent;
-  font: 13px/1.72 var(--font-family-mono);
-  tab-size: 2;
-}
-
-.markdown-content table {
-  display: block;
-  width: 100%;
-  margin: 20px 0;
-  overflow-x: auto;
-  border-spacing: 0;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-
-.markdown-content th,
-.markdown-content td {
-  min-width: 110px;
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  text-align: left;
-  vertical-align: top;
-}
-
-.markdown-content th {
-  color: var(--text);
-  background: var(--surface-2);
-  font-weight: 650;
-}
-
-.markdown-content hr {
-  margin: 30px 0;
-  border: 0;
-  border-top: 1px solid var(--line);
-}
-
-.markdown-content img {
-  display: block;
-  max-width: 100%;
-  max-height: 560px;
-  margin: 20px auto;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface-2);
-  object-fit: contain;
-}
-
-.markdown-content .math-block {
-  max-width: 100%;
-  margin: 22px 0;
-  padding: 14px;
-  overflow-x: auto;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  text-align: center;
-}
-
-.markdown-content .markdown-mermaid {
-  margin: 22px 0;
-  overflow: hidden;
-  border: 1px solid rgba(19, 128, 110, 0.18);
-  border-radius: 8px;
-  background: #fbfcf9;
-}
-
-.markdown-mermaid figcaption {
-  min-height: 32px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--line-weak);
-  color: var(--green-strong);
-  background: rgba(19, 128, 110, 0.055);
-  font: 700 12px/32px var(--font-family-ui);
-  letter-spacing: 0.08em;
-}
-
-.markdown-mermaid__canvas {
-  display: grid;
-  min-height: 92px;
-  place-items: center;
-  padding: 16px;
-  overflow: auto;
-}
-
-.markdown-mermaid__canvas:empty::before {
-  width: 22px;
-  height: 22px;
-  border: 2px solid rgba(19, 128, 110, 0.16);
-  border-top-color: var(--green);
-  border-radius: 50%;
-  content: '';
-  animation: knit-diagram-spin .8s linear infinite;
-}
-
-/* A queued figure is intentionally not rendered in parallel with every other
-   diagram in a long note. Keep that performance choice explicit instead of
-   making the preview appear stalled. */
-.markdown-mermaid[data-mermaid-state="queued"] .markdown-mermaid__canvas:empty,
-.markdown-mermaid[data-mermaid-state="loading"] .markdown-mermaid__canvas:empty {
-  grid-template-columns: 22px max-content;
-  justify-content: center;
-  gap: 8px;
-}
-
-.markdown-mermaid[data-mermaid-state="queued"] .markdown-mermaid__canvas:empty::after,
-.markdown-mermaid[data-mermaid-state="loading"] .markdown-mermaid__canvas:empty::after {
-  color: var(--text-secondary);
-  font: 700 12px/1 var(--font-family-ui);
-  letter-spacing: 0.05em;
-}
-
-.markdown-mermaid[data-mermaid-state="queued"] .markdown-mermaid__canvas:empty::after { content: '图表等待渲染'; }
-.markdown-mermaid[data-mermaid-state="loading"] .markdown-mermaid__canvas:empty::after { content: '正在绘制图表'; }
-
-.markdown-mermaid__canvas svg {
-  display: block;
-  width: max-content;
-  min-width: min(100%, 300px);
-  max-width: none;
-  height: auto;
-  min-height: 62px;
-}
-
-.markdown-mermaid__source {
-  margin: 0;
-  padding: 13px 15px;
-  overflow: auto;
-  border-top: 1px solid var(--line-weak);
-  color: #dfe8e3;
-  background: #18251f;
-  font: 12px/1.65 var(--font-family-ui);
-}
-
-.markdown-mermaid[data-mermaid-state="ready"] .markdown-mermaid__source { display: none; }
-
-.markdown-mermaid__error {
-  width: 100%;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid rgba(187, 67, 62, 0.18);
-  border-radius: 5px;
-  color: #91443e;
-  background: rgba(187, 67, 62, 0.055);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-@keyframes knit-diagram-spin { to { transform: rotate(360deg); } }
-
-.markdown-content--compact {
-  font-size: 14px;
-  line-height: 1.72;
-}
-
-.markdown-content--compact h1 {
-  font-size: 23px;
-}
-
-.markdown-content--compact h2 {
-  margin-top: 24px;
-  font-size: 19px;
-}
-
-.markdown-mindmap {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
-  background: var(--surface);
-}
-
-.markdown-mindmap > header {
-  display: flex;
-  min-height: 52px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 8px 22px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
-}
-
-.markdown-mindmap > header div { display: grid; gap: 2px; }
-.markdown-mindmap > header span { color: var(--green-strong); font: 700 12px/1.25 var(--font-family-ui); letter-spacing: 0.09em; }
-.markdown-mindmap > header small { color: var(--muted); font-size: 12px; }
-
-
-.markdown-mindmap__stage {
-  position: relative;
-  min-height: 0;
-  overflow: hidden;
-  background-color: var(--accent-fg);
-  background-image: radial-gradient(var(--accent-soft) .8px, transparent .8px);
-  background-size: 16px 16px;
-}
-.markdown-mindmap__stage:focus-visible { outline: 2px solid color-mix(in srgb, var(--green) 50%, transparent); outline-offset: -3px; }
-
-.markdown-mindmap__stage > svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  cursor: grab;
-  touch-action: none;
-}
-
-.markdown-mindmap__stage > svg:active { cursor: grabbing; }
-.markdown-mindmap__stage .markmap-link,
-.markdown-mindmap__stage .markmap-node > line { stroke: rgba(12, 101, 87, 0.48); }
-.markdown-mindmap__stage .markmap-foreign { color: #1a2723; font: 13px/1.35 var(--font-sans); }
 
 
 
@@ -550,7 +163,110 @@ a:hover {
 
 
 
-.markdown-mindmap__menu button:hover, .markdown-mindmap__menu button:focus-visible, .markdown-mindmap__menu button.selected { color: var(--green-strong); background: var(--green-bg); }.markdown-mindmap__menu button.separator { border-top: 1px solid var(--line-weak); }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Other routes inherit the same calm, flat workspace grammar. */
 .tool-center,
