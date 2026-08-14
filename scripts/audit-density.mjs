@@ -1,11 +1,21 @@
 /*
- * How crowded is each route, measured rather than felt.
+ * How crowded is each route — measured, rather than argued about.
  *
- * Reports, at the desktop window's real size:
+ * "Too many features, and if it looks messy nobody wants to use it" is a real
+ * complaint and a useless instruction, because every page's author thinks
+ * their page is the necessary one. This counts, at the size the desktop window
+ * actually opens at (1240×820, not the 1600 a browser test defaults to):
+ *
  *   controls   interactive elements visible without scrolling
- *   panels     top-level boxes competing for attention
- *   words      characters of copy that explain rather than carry content
+ *   panels     boxes big enough to compete for attention
+ *   words      characters of copy that explain the interface rather than
+ *              being the content
  *   firstWork  how far down the page the work surface starts
+ *
+ * It does not say what to cut. It says where to look, and the two worst
+ * offenders both turned out to be showing the same list twice on one screen.
+ *
+ *   node scripts/audit-density.mjs [dark|light] [--shots]
  */
 import { chromium } from 'playwright-core'
 import { mkdirSync } from 'node:fs'

@@ -145,25 +145,6 @@ const filteredItems = computed(() => {
 
 const totalCount = computed(() => store.documents.length + store.vocabulary.length + store.sources.length + visualProjects.value.length)
 
-/* The health panel used to be three hand-written rows with an inline
-   `--value` custom property each. Same three numbers, one loop. */
-const healthMetrics = computed(() => [
-  {
-    label: store.vaultReady ? '资料库就绪' : '正在连接资料库',
-    value: '100%',
-    detail: '桌面数据写入 SQLite 与 Markdown Vault',
-  },
-  {
-    label: `${store.relations.length} 条手动关联`,
-    value: `${Math.min(100, store.relations.length * 8)}%`,
-    detail: '双链与完整关系可在知识关系图谱中浏览',
-  },
-  {
-    label: dueCount.value ? `${dueCount.value} 张卡片到期` : '当前没有到期卡片',
-    value: `${Math.min(100, dueCount.value * 10)}%`,
-    detail: '题目与词义按各自节奏安排复习',
-  },
-])
 const kindLabels: Record<KnowledgeKind, string> = { note: '笔记', question: '题目', word: '单词', source: '资料', diagram: '画布' }
 const kindIcons: Record<KnowledgeKind, string> = { note: 'book', question: 'review', word: 'sort', source: 'inbox', diagram: 'palette' }
 
@@ -398,8 +379,11 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
       </RouterLink>
     </nav>
 
-    <div class="grid gap-4 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(260px,300px)]">
-      <section class="pane min-w-0" aria-label="知识内容">
+    <!-- The list absorbs whatever the header and the action grid leave, so the
+         work surface reaches the bottom of the window instead of stopping in
+         mid-air over a band of bare ground. -->
+    <div class="grid gap-4 grid-cols-1 flex-1 min-h-0">
+      <section class="pane min-w-0 min-h-0" aria-label="知识内容">
         <div class="row flex-wrap gap-x-3 gap-y-2 shrink-0 px-3 py-2 border-b border-line">
           <label class="row gap-1.5 min-w-48 flex-1 max-w-104 h-8 px-2.5 rounded-sm bg-well border border-line focus-within:border-accent">
             <AppIcon name="search" :size="14" class="shrink-0 text-fg-3" />
@@ -518,23 +502,6 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
         </div>
       </section>
 
-      <aside class="pane self-start" aria-label="知识库健康度">
-        <header class="pane-head">
-          <span class="pane-title">知识状态</span>
-          <RouterLink to="/review" class="tap text-[11px] text-accent hover:underline underline-offset-2">去复习</RouterLink>
-        </header>
-        <div class="stack gap-3 p-3">
-          <div v-for="metric in healthMetrics" :key="metric.label" class="stack gap-1.5">
-            <div class="row-between gap-2">
-              <b class="text-[12px] font-medium text-fg">{{ metric.label }}</b>
-            </div>
-            <div class="h-1 rounded-full bg-surface-2 overflow-hidden">
-              <i class="block h-full rounded-full bg-accent-solid" :style="{ width: metric.value }" aria-hidden="true" />
-            </div>
-            <small class="text-[11px] leading-relaxed text-fg-3">{{ metric.detail }}</small>
-          </div>
-        </div>
-      </aside>
     </div>
 
     <Teleport to="body">
