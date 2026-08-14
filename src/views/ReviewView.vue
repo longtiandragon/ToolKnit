@@ -1017,7 +1017,7 @@ onBeforeUnmount(() => {
       </header>
       <div class="grid gap-3 grid-cols-1 lg:grid-cols-2">
         <div v-for="group in materialGroups" :key="group.id" class="stack gap-2 p-3 rounded-md bg-surface-2 border border-line">
-          <RouterLink :to="group.to" class="row-between gap-3 group">
+          <RouterLink :to="group.to" class="row-between gap-3 group min-h-6">
             <span class="row gap-2.5 min-w-0">
               <AppIcon :name="group.icon" :size="17" class="shrink-0 text-accent" />
               <b class="text-[13px] font-medium text-fg truncate">{{ group.label }}</b>

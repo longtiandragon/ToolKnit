@@ -201,7 +201,7 @@ onBeforeUnmount(() => activeRunController?.abort())
             <option v-if="!store.aiProfiles.length" value="">尚未配置</option>
             <option v-for="item in store.aiProfiles" :key="item.id" :value="item.id">{{ item.label }} · {{ item.model }}</option>
           </select>
-          <RouterLink to="/settings?section=ai" class="text-[11px] text-accent hover:underline underline-offset-2">管理 API 与系统凭据</RouterLink>
+          <RouterLink to="/settings?section=ai" class="tap text-[11px] text-accent hover:underline underline-offset-2">管理 API 与系统凭据</RouterLink>
         </footer>
       </aside>
 

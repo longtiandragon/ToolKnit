@@ -331,7 +331,7 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
         <section class="pane">
           <header class="pane-head">
             <span class="pane-title">最近运行</span>
-            <RouterLink to="/history" class="text-[11px] text-accent hover:underline underline-offset-2">全部</RouterLink>
+            <RouterLink to="/history" class="tap text-[11px] text-accent hover:underline underline-offset-2">全部</RouterLink>
           </header>
           <div v-if="recentJobs.length" class="stack gap-0.5 p-1.5">
             <button

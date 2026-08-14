@@ -521,7 +521,7 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
       <aside class="pane self-start" aria-label="知识库健康度">
         <header class="pane-head">
           <span class="pane-title">知识状态</span>
-          <RouterLink to="/review" class="text-[11px] text-accent hover:underline underline-offset-2">去复习</RouterLink>
+          <RouterLink to="/review" class="tap text-[11px] text-accent hover:underline underline-offset-2">去复习</RouterLink>
         </header>
         <div class="stack gap-3 p-3">
           <div v-for="metric in healthMetrics" :key="metric.label" class="stack gap-1.5">

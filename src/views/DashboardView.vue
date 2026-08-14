@@ -493,7 +493,7 @@ const formatBytes = (value: number) => value < 1024
           aria-label="快速记录"
           placeholder="现在想先记住什么？按 Enter 收进收集箱"
           :disabled="quickCaptureSaving"
-          class="flex-1 min-w-0 bg-transparent border-0 outline-none text-[14px]"
+          class="flex-1 self-stretch min-w-0 bg-transparent border-0 outline-none text-[14px]"
           @keydown.enter.prevent="captureQuickThought"
         >
         <kbd class="kbd shrink-0">Enter</kbd>
@@ -837,13 +837,13 @@ const formatBytes = (value: number) => value < 1024
       <span class="row gap-1.5"><i class="w-1.5 h-1.5 rounded-full bg-success" /><b class="font-medium text-fg-2">本机模式</b>文件不上传</span>
       <span class="row gap-1.5"><AppIcon name="file-text" :size="14" />剪贴板历史 <b class="font-medium text-fg-2 tabular-nums">{{ store.clipboardItems.length }} 条</b></span>
       <RouterLink
-        class="row gap-1.5 hover:text-accent"
+        class="tap row gap-1.5 hover:text-accent"
         to="/settings?section=backup"
         :title="latestBackup ? `打开数据与备份；${latestBackupLabel} ${new Date(latestBackup.at).toLocaleString('zh-CN')}` : '打开数据与备份'"
       >
         <AppIcon name="shield" :size="14" />{{ latestBackup ? `${latestBackupLabel} ${formatTime(latestBackup.at)}` : '尚无备份记录' }}
       </RouterLink>
-      <RouterLink class="ml-auto hover:text-accent" to="/settings">打开设置</RouterLink>
+      <RouterLink class="tap ml-auto hover:text-accent" to="/settings">打开设置</RouterLink>
     </footer>
 
     <Teleport to="body">

@@ -215,6 +215,12 @@ export default defineConfig({
     // The label above a heading. Kept quiet: it identifies, it does not shout.
     ['eyebrow', 'text-[12px] font-semibold text-fg-3 tracking-wide'],
     ['divider', 'h-px bg-line'],
+    // A text link's hit area is its line box, and an 11px line box is 16px
+    // tall — two thirds of the 24px pointer minimum. This pads the box and
+    // pulls the margin back by the same amount, so the target grows and the
+    // text does not move. For quiet actions that sit in a header row or a
+    // footer, where the inline-link exemption does not apply.
+    ['tap', 'inline-flex items-center px-1 -mx-1 py-1 -my-1'],
 
     // ── Layout ────────────────────────────────────────────────────────────
     ['row', 'flex items-center'],

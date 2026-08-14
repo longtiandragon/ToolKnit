@@ -905,7 +905,7 @@ async function exportPdf() {
           />
         </div>
 
-        <label class="row gap-1.5 shrink-0 text-[12px] text-fg-2 cursor-pointer">
+        <label class="row gap-1.5 shrink-0 min-h-6 text-[12px] text-fg-2 cursor-pointer">
           <input v-model="showLineNumbers" type="checkbox" class="accent-[var(--accent-solid)]" />显示行号
         </label>
 

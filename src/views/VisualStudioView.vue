@@ -2329,7 +2329,7 @@ async function openLocation(path?: string) {
               <label class="stack gap-1.5" :class="canvasTool === 'select' ? 'opacity-60' : ''">
                 <span class="text-[12px] text-fg-3">标注颜色</span>
                 <span class="row gap-2">
-                  <input v-model="annotationColor" type="color" class="w-9 h-9 shrink-0 p-0.5 rounded-sm bg-well border border-line cursor-pointer" :disabled="canvasTool === 'select'" aria-label="标注颜色" />
+                  <input v-model="annotationColor" type="color" class="w-9 h-9 shrink-0 p-0.5 rounded-sm bg-well border border-line cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed" :disabled="canvasTool === 'select'" aria-label="标注颜色" />
                   <code class="row flex-1 h-9 px-2.5 rounded-sm bg-well border border-line font-mono text-[12px] text-fg-2">{{ annotationColor }}</code>
                 </span>
               </label>

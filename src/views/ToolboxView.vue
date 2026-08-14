@@ -102,7 +102,7 @@ const recentTools = computed<ToolCatalogItem[]>(() => {
         <RouterLink
           v-if="!activeCategory"
           :to="`/c/${section.id}`"
-          class="ml-auto text-[12px] text-fg-3 transition-colors duration-120 hover:text-fg"
+          class="tap ml-auto text-[12px] text-fg-3 transition-colors duration-120 hover:text-fg"
         >只看这一类 →</RouterLink>
       </div>
 

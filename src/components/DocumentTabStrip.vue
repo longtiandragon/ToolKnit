@@ -122,7 +122,7 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
         <span class="min-w-0 flex-1 truncate text-left">{{ displayTitle(item) }}</span>
         <small v-if="item.tab.id === dirtyId" class="shrink-0 text-[11px] font-medium text-warn">未保存</small>
       </button>
-      <button class="absolute right-1 top-1/2 -translate-y-1/2 center w-5 h-5 rounded-sm text-fg-3 transition-opacity hover:bg-surface-3 hover:text-fg" :class="item.tab.id === activeId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'" :aria-label="`关闭“${displayTitle(item)}”`" title="关闭标签（中键也可关闭）" @click="closeFromButton($event, item.tab.id)"><AppIcon name="close" :size="12" /></button>
+      <button class="absolute right-0.5 top-1/2 -translate-y-1/2 center w-6 h-6 rounded-sm text-fg-3 transition-opacity hover:bg-surface-3 hover:text-fg" :class="item.tab.id === activeId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'" :aria-label="`关闭“${displayTitle(item)}”`" title="关闭标签（中键也可关闭）" @click="closeFromButton($event, item.tab.id)"><AppIcon name="close" :size="12" /></button>
     </div>
   </div>
   <Teleport to="body">
