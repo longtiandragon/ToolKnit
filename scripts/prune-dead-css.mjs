@@ -25,7 +25,6 @@ const SHEETS = [
   'src/styles.rebuild.css',
   'src/styles.workspace.css',
   'src/styles.knitspace.css',
-  'src/styles.import-dialog.css',
   'src/styles.polish.css',
 ]
 

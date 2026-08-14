@@ -22,7 +22,6 @@ const FILES = [
   'src/styles.rebuild.css',
   'src/styles.workspace.css',
   'src/styles.knitspace.css',
-  'src/styles.import-dialog.css',
 ]
 
 /** Selectors whose monospace is intentional: code, keycaps, paths, numerals, glyphs. */

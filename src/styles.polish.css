@@ -77,7 +77,7 @@ code, pre, kbd, samp { font-family: var(--font-family-mono); font-variant-ligatu
 .input-card,
 .parameter-card,
 .review-card {
-  border-radius: var(--radius-lg);
+  border-radius: 14px;
   border-color: var(--line);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
@@ -91,10 +91,10 @@ code, pre, kbd, samp { font-family: var(--font-family-mono); font-variant-ligatu
 .source-row,
 .document-row {
   transition:
-    transform var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out),
-    background var(--duration-fast) var(--ease-out);
+    transform var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    background var(--motion-fast) var(--motion-ease);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -114,16 +114,16 @@ code, pre, kbd, samp { font-family: var(--font-family-mono); font-variant-ligatu
   justify-content: center;
   gap: 7px;
   padding: 0 14px;
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   font: 600 13px/1 var(--font-family-ui);
   letter-spacing: .01em;
   white-space: nowrap;
   transition:
-    background var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out),
-    color var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
+    background var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
 }
 
 /* Primary: the one thing the page wants you to do.
@@ -158,8 +158,8 @@ code, pre, kbd, samp { font-family: var(--font-family-mono); font-variant-ligatu
 .new-task:disabled,
 .run-tool:disabled {
   border-color: var(--line);
-  color: var(--text-faint);
-  background: var(--surface-sunken);
+  color: var(--fg-3);
+  background: var(--surface-3);
   box-shadow: none;
   opacity: 1;
 }
@@ -169,16 +169,16 @@ code, pre, kbd, samp { font-family: var(--font-family-mono); font-variant-ligatu
 .quiet-button,
 .command-trigger {
   border: 1px solid var(--line);
-  color: var(--text-secondary);
+  color: var(--fg-2);
   background: var(--surface);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--shadow-sm);
 }
 .secondary-action:hover:not(:disabled),
 .quiet-button:hover:not(:disabled),
 .command-trigger:hover {
   border-color: var(--line-strong);
-  color: var(--text);
-  background: var(--surface-raised);
+  color: var(--fg);
+  background: var(--surface-2);
   box-shadow: var(--shadow-sm);
 }
 .secondary-action:active:not(:disabled),
@@ -189,7 +189,7 @@ code, pre, kbd, samp { font-family: var(--font-family-mono); font-variant-ligatu
 }
 .secondary-action:disabled,
 .quiet-button:disabled {
-  color: var(--text-faint);
+  color: var(--fg-3);
   background: var(--surface-2);
   box-shadow: none;
   opacity: 1;
@@ -199,7 +199,7 @@ code, pre, kbd, samp { font-family: var(--font-family-mono); font-variant-ligatu
 .command-trigger {
   justify-content: flex-start;
   min-width: 268px;
-  color: var(--muted);
+  color: var(--fg-3);
   font-weight: 500;
 }
 
@@ -210,7 +210,7 @@ code, pre, kbd, samp { font-family: var(--font-family-mono); font-variant-ligatu
 .secondary-action.danger {
   border-color: var(--danger-soft);
   color: var(--danger);
-  background: var(--danger-bg);
+  background: var(--danger-soft);
 }
 .danger-button:hover:not(:disabled),
 .quiet-button.danger:hover:not(:disabled),
@@ -231,14 +231,14 @@ select,
 textarea,
 .search-input {
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  color: var(--text);
+  border-radius: 6px;
+  color: var(--fg);
   background: var(--surface);
   font-family: var(--font-family-ui);
   font-size: 13px;
   transition:
-    border-color var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out);
+    border-color var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-fast) var(--motion-ease);
 }
 input:hover:not(:disabled):not(:focus),
 select:hover:not(:disabled):not(:focus),
@@ -248,7 +248,7 @@ textarea:hover:not(:disabled):not(:focus) { border-color: var(--line-strong); }
    views that put `focus-within:border-accent` on a label wrapping a bare
    input — two indicators for one focus. `theme.css` owns `:focus-visible`. */
 
-::placeholder { color: var(--text-faint); opacity: 1; }
+::placeholder { color: var(--fg-3); opacity: 1; }
 textarea { line-height: 1.7; resize: vertical; }
 
 /* Keyboard focus is owned by the token layer (`styles/theme.css`), which draws
@@ -261,8 +261,8 @@ textarea { line-height: 1.7; resize: vertical; }
 .filter-row {
   gap: 3px;
   padding: 3px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
+  border-radius: 6px;
+  background: var(--surface-3);
 }
 
 
@@ -270,15 +270,15 @@ textarea { line-height: 1.7; resize: vertical; }
 .filter-row button.active {
   color: var(--accent);
   background: var(--surface);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--shadow-sm);
 }
 
 .tag-pill {
   padding: 3px 9px;
   border: 1px solid var(--accent-soft);
   border-radius: 999px;
-  color: var(--green-strong);
-  background: var(--green-bg);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
   font: 600 12px/1.5 var(--font-family-ui);
 }/* ─────────────────────────────────────────────────────────────────────────
    6. Vertical fill
@@ -316,7 +316,7 @@ textarea { line-height: 1.7; resize: vertical; }
   justify-items: center;
   gap: 8px;
   padding: 48px 24px;
-  color: var(--muted);
+  color: var(--fg-3);
   text-align: center;
   font-size: 13px;
   line-height: 1.75;
@@ -333,8 +333,8 @@ textarea { line-height: 1.7; resize: vertical; }
   gap: 10px;
   min-height: 260px;
   padding: 40px 24px;
-  border: 1px solid var(--line-weak);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  border-radius: 14px;
   background:
     radial-gradient(70% 100% at 50% 0%, var(--accent-soft), transparent 70%),
     var(--surface);
@@ -352,12 +352,12 @@ textarea { line-height: 1.7; resize: vertical; }
 .modal-backdrop {
   background: var(--scrim);
   backdrop-filter: blur(6px) saturate(.9);
-  animation: polish-fade var(--duration-normal) var(--ease-out);
+  animation: polish-fade var(--motion-normal) var(--motion-ease);
 }
 .modal-backdrop > * {
-  border-radius: var(--radius-lg);
+  border-radius: 14px;
   box-shadow: var(--shadow-lg);
-  animation: polish-rise var(--duration-normal) var(--ease-spring);
+  animation: polish-rise var(--motion-normal) var(--motion-spring);
 }
 
 @keyframes polish-fade { from { opacity: 0 } }

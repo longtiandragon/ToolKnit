@@ -118,8 +118,8 @@ a:hover {
 .document-filter button.active,
 .editor-mode button.active {
   border-color: var(--accent-soft);
-  color: var(--green-strong);
-  background: var(--green-bg);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
   font-weight: 650;
 }
 
@@ -299,8 +299,8 @@ a:hover {
 .developer-nav button.active,
 .ai-action-panel > button.active {
   border-color: var(--accent-soft);
-  color: var(--text);
-  background: var(--green-bg);
+  color: var(--fg);
+  background: var(--accent-soft);
 }
 
 
@@ -344,7 +344,7 @@ a:hover {
 
 .source-row.selected,
 .source-row:hover {
-  background: var(--green-bg);
+  background: var(--accent-soft);
 }
 
 
@@ -389,9 +389,9 @@ a:hover {
 
 
 .settings-index nav a.active {
-  color: var(--green-strong);
+  color: var(--accent-strong);
   background: var(--accent-soft);
-  box-shadow: inset 2px 0 var(--green);
+  box-shadow: inset 2px 0 var(--accent);
 }
 
 
@@ -446,14 +446,14 @@ a:hover {
 
 
 
-.build-profile-card > footer .quiet-button { min-height: 32px; padding: 0 10px; color: var(--green-strong); background: var(--surface-2); font-size: 12px; }
+.build-profile-card > footer .quiet-button { min-height: 32px; padding: 0 10px; color: var(--accent-strong); background: var(--surface-2); font-size: 12px; }
 
 
 .settings-panel .setting-control,
 .settings-panel .setting-toggle {
   min-height: 72px;
   padding: 14px 0;
-  border-top: 1px solid var(--line-weak);
+  border-top: 1px solid var(--line);
 }
 
 .settings-panel > .setting-control:first-child,
@@ -463,7 +463,7 @@ a:hover {
 
 .settings-panel .setting-control b,
 .settings-panel .setting-toggle b {
-  color: var(--text);
+  color: var(--fg);
   font-size: 13px;
   font-weight: 650;
 }
@@ -588,9 +588,9 @@ a:hover {
 .secondary-action:hover:not(:disabled),
 .quiet-button:hover:not(:disabled),
 .hero-actions .secondary-action:hover:not(:disabled) {
-  color: var(--text);
+  color: var(--fg);
   border-color: var(--accent-soft);
-  background: var(--green-bg-hover);
+  background: var(--accent-soft);
 }
 
 .new-task:hover:not(:disabled),
@@ -669,7 +669,7 @@ a:hover {
 }
 
 .document-workspace-tab > button[role="tab"] > small {
-  transition: opacity var(--duration-fast);
+  transition: opacity var(--motion-fast);
 }
 
 .document-workspace-tab:hover > button[role="tab"] > small,
@@ -687,4 +687,4 @@ a:hover {
     transition-duration: 0.01ms !important;
   }
 }
-.local-engine-path span{min-width:0}.local-engine-path small{display:block;max-width:min(620px,55vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,"Cascadia Code",monospace}.local-engine-actions>p.ready{color:var(--green,var(--accent))}.local-engine-actions>p.ready i{background:var(--accent-solid)}@media(max-width:760px){.local-engine-path small{max-width:65vw}}
+.local-engine-path span{min-width:0}.local-engine-path small{display:block;max-width:min(620px,55vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,"Cascadia Code",monospace}.local-engine-actions>p.ready{color:var(--accent)}.local-engine-actions>p.ready i{background:var(--accent-solid)}@media(max-width:760px){.local-engine-path small{max-width:65vw}}

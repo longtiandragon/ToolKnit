@@ -116,6 +116,48 @@
   --reading-danger: color-mix(in srgb, var(--danger) 62%, var(--reading-ink));
 }
 
+/* ── Syntax colours ───────────────────────────────────────────────────────
+   highlight.js has always tagged the code in the preview — nine roles of it —
+   and nothing coloured them, so a fenced block read as one flat slab on screen
+   while the same document exported to HTML came out highlighted. These are the
+   export's own four roles and its own values, so the two agree by
+   construction; the comment grey is the one changed value, because the
+   export's #75827b is 3.9:1 on paper. Roles the export does not colour
+   (titles, built-ins, parameters) stay uncoloured here too.
+
+   Two palettes, because ink on a dark paper cannot be ink on a light one, and
+   the paper is a setting: the light theme's 夜墨 is the one dark paper that
+   needs the light palette. */
+:root {
+  --syntax-keyword-on-dark: #c792ea;
+  --syntax-string-on-dark: #7ee0a8;
+  --syntax-number-on-dark: #f0a978;
+  --syntax-comment-on-dark: #8a968f;
+  --syntax-keyword-on-light: #7b3f91;
+  --syntax-string-on-light: #276e52;
+  --syntax-number-on-light: #9b552d;
+  --syntax-comment-on-light: #5f6d66;
+
+  --syntax-keyword: var(--syntax-keyword-on-dark);
+  --syntax-string: var(--syntax-string-on-dark);
+  --syntax-number: var(--syntax-number-on-dark);
+  --syntax-comment: var(--syntax-comment-on-dark);
+}
+
+:root[data-theme='light'] {
+  --syntax-keyword: var(--syntax-keyword-on-light);
+  --syntax-string: var(--syntax-string-on-light);
+  --syntax-number: var(--syntax-number-on-light);
+  --syntax-comment: var(--syntax-comment-on-light);
+}
+
+:root[data-theme='light'] .reading-paper--night .editor-grid {
+  --syntax-keyword: var(--syntax-keyword-on-dark);
+  --syntax-string: var(--syntax-string-on-dark);
+  --syntax-number: var(--syntax-number-on-dark);
+  --syntax-comment: var(--syntax-comment-on-dark);
+}
+
 /* ── The document surfaces ───────────────────────────────────────────────── */
 
 .editor-grid {
@@ -339,6 +381,15 @@
   font: 13px/1.72 var(--font-family-mono);
   tab-size: 2;
 }
+
+.markdown-content .hljs-keyword,
+.markdown-content .hljs-selector-tag { color: var(--syntax-keyword); }
+.markdown-content .hljs-string,
+.markdown-content .hljs-attr { color: var(--syntax-string); }
+.markdown-content .hljs-number,
+.markdown-content .hljs-literal { color: var(--syntax-number); }
+.markdown-content .hljs-comment,
+.markdown-content .hljs-quote { color: var(--syntax-comment); font-style: italic; }
 
 .markdown-content table {
   display: block;

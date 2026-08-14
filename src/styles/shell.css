@@ -38,6 +38,17 @@
   padding-top: var(--titlebar-h);
 }
 
+/* The bar itself is chrome, not a highlight. The colour migration turned its
+   old dark evergreen ground into the accent, which put a saturated blue band
+   across the top of every window. */
+.desktop-titlebar {
+  height: var(--titlebar-h);
+  color: var(--fg-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  box-shadow: none;
+}
+
 .workspace {
   width: calc(100% - var(--rail-w));
   height: calc(100vh - var(--titlebar-h));

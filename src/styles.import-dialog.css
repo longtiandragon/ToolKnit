@@ -1,5 +1,0 @@
-.word-import-header>ol li.active{color:var(--green-strong);background:var(--surface);box-shadow:0 1px 5px var(--accent-soft)}
-.word-import-preview>header>span.ready{color:var(--green-strong);background:var(--green-bg)}.word-import-preview>header>span.ready i{background:var(--accent)}
-.visually-hidden{position:fixed!important;width:1px!important;height:1px!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important}@keyframes word-import-pulse{to{opacity:.28;transform:translateY(-3px)}}
-.word-import-review__choices>label.active{border-color:color-mix(in srgb,var(--green) 42%,var(--line));color:var(--green-strong);background:var(--green-bg)}
-@media(max-width:900px){}@media(prefers-reduced-motion:reduce){}

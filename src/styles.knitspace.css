@@ -16,9 +16,9 @@ body {
   background:
     radial-gradient(circle at 70% -18%, var(--line-strong), transparent 36rem),
     linear-gradient(90deg, var(--accent-soft) 1px, transparent 1px),
-    var(--canvas);
+    var(--bg);
   background-size: auto, 32px 32px, auto;
-  color: var(--text);
+  color: var(--fg);
   font-size: 15px;
 }
 
@@ -27,7 +27,7 @@ body {
    content origin and are displaced by the desktop titlebar/topbar height. */
 .page-enter { animation-fill-mode: backwards; }
 
-button, input, textarea, select { font-family: var(--font-sans); }
+button, input, textarea, select { font-family: var(--font-family-ui); }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
@@ -71,7 +71,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 
-.vault-bootstrap .eyebrow { color: var(--green-strong); font: 700 12px var(--font-family-ui); letter-spacing: .12em; }
+.vault-bootstrap .eyebrow { color: var(--accent-strong); font: 700 12px var(--font-family-ui); letter-spacing: .12em; }
 
 
 
@@ -97,16 +97,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 
-.workspace-context-menu button .app-icon { flex: 0 0 auto; margin-top: 2px; color: var(--green-strong); }
+.workspace-context-menu button .app-icon { flex: 0 0 auto; margin-top: 2px; color: var(--accent-strong); }
 
 
 
 
 
 
-.workspace-context-menu__feature > .app-icon:last-child { margin: 0 0 0 auto; color: var(--muted); }
-.workspace-context-menu button.workspace-context-menu__more-toggle { position: sticky; bottom: 0; z-index: 1; align-items: center; min-height: 42px; padding-top: 6px; padding-bottom: 6px; border-top: 1px solid var(--line-weak); border-bottom: 1px solid var(--line-weak); background: var(--surface); }
-.workspace-context-menu button.workspace-context-menu__more-toggle:hover,.workspace-context-menu button.workspace-context-menu__more-toggle:focus-visible { background: var(--green-bg); }
+.workspace-context-menu__feature > .app-icon:last-child { margin: 0 0 0 auto; color: var(--fg-3); }
+.workspace-context-menu button.workspace-context-menu__more-toggle { position: sticky; bottom: 0; z-index: 1; align-items: center; min-height: 42px; padding-top: 6px; padding-bottom: 6px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface); }
+.workspace-context-menu button.workspace-context-menu__more-toggle:hover,.workspace-context-menu button.workspace-context-menu__more-toggle:focus-visible { background: var(--accent-soft); }
 
 
 
@@ -119,7 +119,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .command-palette--browse { width: min(780px, calc(100vw - 40px)); }
 
 
-.command-browse-toggle:hover, .command-browse-toggle:focus-visible, .command-browse-toggle.active { border-color: var(--accent-soft); background: var(--green-bg); }
+.command-browse-toggle:hover, .command-browse-toggle:focus-visible, .command-browse-toggle.active { border-color: var(--accent-soft); background: var(--accent-soft); }
 
 
 
@@ -139,7 +139,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 
-.command-feature-group nav a .app-icon { flex: 0 0 auto; color: var(--muted); }
+.command-feature-group nav a .app-icon { flex: 0 0 auto; color: var(--fg-3); }
 
 .command-feature-group nav a:hover .app-icon, .command-feature-group nav a:focus-visible .app-icon { color: currentColor; }
 
@@ -187,7 +187,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .favorite-card { border-radius: 14px; background: var(--surface); }
 .favorite-card:hover { box-shadow: var(--shadow-sm); }
 .favorite-card menu { background: var(--surface); box-shadow: var(--shadow-lg); }
-.favorite-card menu button:focus-visible { position: relative; z-index: 1; outline: 2px solid color-mix(in srgb, var(--green) 48%, transparent); outline-offset: -2px; }
+.favorite-card menu button:focus-visible { position: relative; z-index: 1; outline: 2px solid color-mix(in srgb, var(--accent) 48%, transparent); outline-offset: -2px; }
 
 
 
@@ -243,11 +243,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 
-.appearance-segments button.active { border-color: var(--accent); color: var(--green-strong); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-soft); }
+.appearance-segments button.active { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-soft); }
 
 
 
-.paper-tone-picker button.active { border-color: var(--accent); color: var(--green-strong); background: var(--green-bg); }
+.paper-tone-picker button.active { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
 
 
 
@@ -351,9 +351,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 
-.ai-drawer .eyebrow { color: var(--green-strong); font-size: 12px; }
+.ai-drawer .eyebrow { color: var(--accent-strong); font-size: 12px; }
 
-.ai-actions > button:hover, .ai-actions > button.active { border-color: color-mix(in srgb, var(--green) 26%, var(--line)); color: var(--green-strong); background: var(--green-bg); }
+.ai-actions > button:hover, .ai-actions > button.active { border-color: color-mix(in srgb, var(--accent) 26%, var(--line)); color: var(--accent-strong); background: var(--accent-soft); }
 
 
 .ai-drawer .primary-button.wide { width: 100%; min-height: 37px; }
@@ -361,21 +361,21 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Vocabulary belongs to the knowledge space, so it uses the same quiet
    reading surface while making the sense/card relationship immediately clear. */
 .vocabulary { display: grid; grid-template-columns: 286px minmax(0, 1fr); gap: 15px; height: 100%; padding: 20px 30px 28px; }
-.review-card:focus-visible { outline: 2px solid color-mix(in srgb, var(--green) 52%, transparent); outline-offset: 3px; }
+.review-card:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 52%, transparent); outline-offset: 3px; }
 .review { width: min(920px, calc(100% - 48px)); max-width: 920px; margin: 0 auto; padding: 22px 0 52px; }
 .review-card { width: 100%; max-width: 920px; margin: 0 auto; }
 
 
 
 
-.review-card--word .answer-reveal > p:not(.eyebrow) { color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
+.review-card--word .answer-reveal > p:not(.eyebrow) { color: var(--fg-2); font-size: 13px; line-height: 1.7; }
 
 
 /* Review session: turn FSRS into an understandable, interruptible daily flow. */
-.review{width:min(1040px,calc(100% - 48px));max-width:1040px;padding:24px 0 56px}.review-head>div:first-child>.eyebrow,.review-head h2{display:block}.review-head>div:first-child>.eyebrow{color:var(--green-strong)}.review-session{display:grid;flex:0 0 min(310px,36%);gap:9px;padding:12px 13px 11px;border:1px solid var(--accent-soft);border-radius:12px;background:linear-gradient(135deg,var(--accent-soft),var(--surface-2));box-shadow:0 9px 24px var(--accent-soft)}.review-card{display:flex;min-height:410px;flex-direction:column;overflow:hidden;border-color:var(--accent-soft);border-radius:16px;background:var(--surface-raised);box-shadow:0 18px 42px var(--accent-soft)}.review-card>header{display:flex;min-height:112px;align-items:flex-start;justify-content:space-between;gap:28px;padding:23px 26px 19px;border-bottom:1px solid var(--line-weak);background:linear-gradient(125deg,var(--accent-soft),var(--surface) 58%)}.review-card>header>div{min-width:0}.review-card>header p{color:var(--green-strong);font:700 12px/1.4 var(--font-family-ui);letter-spacing:.045em}.review-card>header h3{margin:6px 0 7px;color:var(--text);font:720 clamp(20px,2vw,27px)/1.26 var(--font-family-display);letter-spacing:-.035em}.review-card>.review-content{min-height:175px;flex:1;padding:25px 28px;font-size:14px;line-height:1.8}.review-card>footer{padding:18px 26px 17px;border-top:1px solid var(--line-weak);background:var(--surface-2)}.review-card>footer>.primary-button.wide{display:flex;width:100%;min-height:46px;align-items:center;justify-content:space-between;padding:0 17px;font-size:12px;text-align:left}.review-card>footer>.primary-button.wide span{font:700 16px var(--font-family-ui)}.review-finished>div .quiet-button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;font-size:13px}
+.review{width:min(1040px,calc(100% - 48px));max-width:1040px;padding:24px 0 56px}.review-head>div:first-child>.eyebrow,.review-head h2{display:block}.review-head>div:first-child>.eyebrow{color:var(--accent-strong)}.review-session{display:grid;flex:0 0 min(310px,36%);gap:9px;padding:12px 13px 11px;border:1px solid var(--accent-soft);border-radius:12px;background:linear-gradient(135deg,var(--accent-soft),var(--surface-2));box-shadow:0 9px 24px var(--accent-soft)}.review-card{display:flex;min-height:410px;flex-direction:column;overflow:hidden;border-color:var(--accent-soft);border-radius:16px;background:var(--surface-2);box-shadow:0 18px 42px var(--accent-soft)}.review-card>header{display:flex;min-height:112px;align-items:flex-start;justify-content:space-between;gap:28px;padding:23px 26px 19px;border-bottom:1px solid var(--line);background:linear-gradient(125deg,var(--accent-soft),var(--surface) 58%)}.review-card>header>div{min-width:0}.review-card>header p{color:var(--accent-strong);font:700 12px/1.4 var(--font-family-ui);letter-spacing:.045em}.review-card>header h3{margin:6px 0 7px;color:var(--fg);font:720 clamp(20px,2vw,27px)/1.26 var(--font-family-display);letter-spacing:-.035em}.review-card>.review-content{min-height:175px;flex:1;padding:25px 28px;font-size:14px;line-height:1.8}.review-card>footer{padding:18px 26px 17px;border-top:1px solid var(--line);background:var(--surface-2)}.review-card>footer>.primary-button.wide{display:flex;width:100%;min-height:46px;align-items:center;justify-content:space-between;padding:0 17px;font-size:12px;text-align:left}.review-card>footer>.primary-button.wide span{font:700 16px var(--font-family-ui)}.review-finished>div .quiet-button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;font-size:13px}
 .review-front-surface>.review-content{min-height:0;padding:0;border:0;font-size:14px;line-height:1.8}
-.review-front-empty .quiet-button{min-height:34px;color:var(--green-strong);background:var(--surface-2)}
-.review-materials>header p:not(.eyebrow){max-width:640px;margin:0;color:var(--muted);font-size:12px;line-height:1.5}
+.review-front-empty .quiet-button{min-height:34px;color:var(--accent-strong);background:var(--surface-2)}
+.review-materials>header p:not(.eyebrow){max-width:640px;margin:0;color:var(--fg-3);font-size:12px;line-height:1.5}
 @media(max-width:900px){.review-session{width:100%;flex-basis:auto}}
 @media(max-width:720px){.review{width:min(100% - 28px,1040px)}.review-card>header{padding:19px 20px}.review-front-empty .quiet-button{grid-column:2;justify-self:start}.review-card>footer{padding:16px 20px}.review-finished>div>*{width:100%}}
 
@@ -384,7 +384,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 
-.annotation-canvas .konvajs-content { width: 100% !important; height: 100% !important; }.annotation-canvas[data-tool="box"] .konvajs-content, .annotation-canvas[data-tool="arrow"] .konvajs-content, .annotation-canvas[data-tool="text"] .konvajs-content { cursor: crosshair; }.annotation-canvas[data-tool="select"] .konvajs-content { cursor: default; }.annotation-canvas:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--green) 70%, transparent); }
+.annotation-canvas .konvajs-content { width: 100% !important; height: 100% !important; }.annotation-canvas[data-tool="box"] .konvajs-content, .annotation-canvas[data-tool="arrow"] .konvajs-content, .annotation-canvas[data-tool="text"] .konvajs-content { cursor: crosshair; }.annotation-canvas[data-tool="select"] .konvajs-content { cursor: default; }.annotation-canvas:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent); }
 
 
 @media (max-width: 1180px) {
@@ -398,22 +398,22 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Private pack: a single manifest-driven desktop workbench. Only the selected
    operation mounts its form and result surface, keeping large tool packs calm. */
 .private-tools{display:grid;min-height:100%;grid-template-rows:auto minmax(0,1fr);gap:16px;padding:22px 30px 28px}@keyframes private-tools-progress{to{transform:translateX(390%)}}
-.source-preview__loading .app-icon{color:var(--green)}
+.source-preview__loading .app-icon{color:var(--accent)}
 /* A material library can grow for years. Keep its reading surface calm while
    a fixed-height, buffered list prevents hundreds of file rows from joining
    the desktop DOM at once. */
-.source-list{display:flex;min-height:0;flex-direction:column;overflow:hidden}.source-list>.filter-row{flex:0 0 auto}.source-search .app-icon{flex:0 0 auto;color:var(--green-strong)}.source-list__summary .quiet-button{min-height:25px;padding:0 7px;font-size:12px}.source-list__rows .library-list-empty .quiet-button{margin-top:5px}
-.source-context-menu .app-icon{color:var(--green-strong)}
-.source-tag:focus-visible,.source-tag-input button:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 45%,transparent);outline-offset:1px}.source-tag-input{display:grid;height:28px;grid-template-columns:minmax(72px,112px) 28px;overflow:hidden;border:1px solid var(--accent-soft);border-radius:999px;background:var(--surface-2)}.source-tag-input:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}.source-tag-input input{min-width:0;padding:0 4px 0 9px;border:0;outline:0;color:var(--text);background:transparent;font:600 12px var(--font-family-ui)}.source-tag-input input::placeholder{color:var(--text-disabled)}.source-tag-input button{display:grid;width:28px;height:28px;place-items:center;border:0;color:var(--green-strong);background:transparent}.source-tag-input button:hover:not(:disabled){background:var(--green-bg)}.source-tag-input button:disabled{cursor:not-allowed;opacity:.38}
+.source-list{display:flex;min-height:0;flex-direction:column;overflow:hidden}.source-list>.filter-row{flex:0 0 auto}.source-search .app-icon{flex:0 0 auto;color:var(--accent-strong)}.source-list__summary .quiet-button{min-height:25px;padding:0 7px;font-size:12px}.source-list__rows .library-list-empty .quiet-button{margin-top:5px}
+.source-context-menu .app-icon{color:var(--accent-strong)}
+.source-tag:focus-visible,.source-tag-input button:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:1px}.source-tag-input{display:grid;height:28px;grid-template-columns:minmax(72px,112px) 28px;overflow:hidden;border:1px solid var(--accent-soft);border-radius:999px;background:var(--surface-2)}.source-tag-input:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}.source-tag-input input{min-width:0;padding:0 4px 0 9px;border:0;outline:0;color:var(--fg);background:transparent;font:600 12px var(--font-family-ui)}.source-tag-input input::placeholder{color:var(--fg-3)}.source-tag-input button{display:grid;width:28px;height:28px;place-items:center;border:0;color:var(--accent-strong);background:transparent}.source-tag-input button:hover:not(:disabled){background:var(--accent-soft)}.source-tag-input button:disabled{cursor:not-allowed;opacity:.38}
 
 /* Source preview is a reading surface, not a bare browser canvas. It keeps
    the original material visually quiet while making desktop operations
    discoverable through keyboard focus and the contextual menu. */
-.source-preview{overflow:hidden;border:1px solid var(--accent-soft);border-radius:12px;background:linear-gradient(145deg,var(--surface-2),var(--surface-3))}.canvas-stage{position:relative;display:grid;min-height:300px;max-height:min(62vh,720px);place-items:center;overflow:auto;padding:18px;background:radial-gradient(circle at 50% 26%,var(--accent-soft),transparent 46%),repeating-linear-gradient(0deg,var(--accent-soft) 0,var(--accent-soft) 1px,transparent 1px,transparent 23px),var(--surface-2);outline:none}.canvas-stage.selectable{cursor:crosshair}.canvas-stage:focus-visible{box-shadow:inset 0 0 0 3px color-mix(in srgb,var(--green) 42%,transparent)}.canvas-stage canvas,.canvas-stage img{display:block;max-width:100%;max-height:calc(min(62vh,720px) - 36px);height:auto;border:1px solid var(--accent-soft);border-radius:5px;background:var(--surface);box-shadow:0 12px 28px var(--accent-soft)}.canvas-stage pre{width:100%;min-height:264px;max-height:calc(min(62vh,720px) - 36px);overflow:auto;margin:0;padding:16px;color:var(--accent);background:var(--surface);font:13px/1.7 var(--font-family-mono);white-space:pre-wrap;tab-size:2}.crop-box{position:absolute;z-index:2;border:2px solid var(--accent);background:var(--accent-soft);box-shadow:0 0 0 1px var(--surface-2),0 0 0 4px var(--accent-soft);pointer-events:none}.crop-box i{position:absolute;top:-22px;left:-2px;padding:3px 6px;border-radius:5px 5px 5px 0;color:var(--accent-fg);background:var(--accent-solid);font:700 11px var(--font-family-ui);font-style:normal;white-space:nowrap}.source-canvas__menu .app-icon{color:var(--green-strong)}@keyframes source-canvas-loading{to{background-position:-200% 0}}@media(max-width:760px){.canvas-stage{min-height:250px;padding:12px}.canvas-stage canvas,.canvas-stage img{max-height:calc(min(62vh,720px) - 24px)}}
+.source-preview{overflow:hidden;border:1px solid var(--accent-soft);border-radius:12px;background:linear-gradient(145deg,var(--surface-2),var(--surface-3))}.canvas-stage{position:relative;display:grid;min-height:300px;max-height:min(62vh,720px);place-items:center;overflow:auto;padding:18px;background:radial-gradient(circle at 50% 26%,var(--accent-soft),transparent 46%),repeating-linear-gradient(0deg,var(--accent-soft) 0,var(--accent-soft) 1px,transparent 1px,transparent 23px),var(--surface-2);outline:none}.canvas-stage.selectable{cursor:crosshair}.canvas-stage:focus-visible{box-shadow:inset 0 0 0 3px color-mix(in srgb,var(--accent) 42%,transparent)}.canvas-stage canvas,.canvas-stage img{display:block;max-width:100%;max-height:calc(min(62vh,720px) - 36px);height:auto;border:1px solid var(--accent-soft);border-radius:5px;background:var(--surface);box-shadow:0 12px 28px var(--accent-soft)}.canvas-stage pre{width:100%;min-height:264px;max-height:calc(min(62vh,720px) - 36px);overflow:auto;margin:0;padding:16px;color:var(--accent);background:var(--surface);font:13px/1.7 var(--font-family-mono);white-space:pre-wrap;tab-size:2}.crop-box{position:absolute;z-index:2;border:2px solid var(--accent);background:var(--accent-soft);box-shadow:0 0 0 1px var(--surface-2),0 0 0 4px var(--accent-soft);pointer-events:none}.crop-box i{position:absolute;top:-22px;left:-2px;padding:3px 6px;border-radius:5px 5px 5px 0;color:var(--accent-fg);background:var(--accent-solid);font:700 11px var(--font-family-ui);font-style:normal;white-space:nowrap}.source-canvas__menu .app-icon{color:var(--accent-strong)}@keyframes source-canvas-loading{to{background-position:-200% 0}}@media(max-width:760px){.canvas-stage{min-height:250px;padding:12px}.canvas-stage canvas,.canvas-stage img{max-height:calc(min(62vh,720px) - 24px)}}
 /* Clipboard is intentionally progressive: a history may keep hundreds of
    local entries, but opening the workspace should never instantiate all card
    bodies or image fallbacks at once. */
-.clipboard-toolbar{align-items:center}.clipboard-card>header>button:hover,.clipboard-card>header>button:focus-visible,.clipboard-card>header>button.pinned{border-color:var(--accent-soft);color:var(--green-strong);background:var(--green-bg)}.clipboard-card>footer .danger{color:var(--danger)!important}.clipboard-context-menu button.danger{color:var(--danger)}.clipboard-context-menu button.danger:hover:not(:disabled),.clipboard-context-menu button.danger:focus-visible:not(:disabled){background:var(--danger-soft)}.clipboard-context-menu .app-icon{color:currentColor}
+.clipboard-toolbar{align-items:center}.clipboard-card>header>button:hover,.clipboard-card>header>button:focus-visible,.clipboard-card>header>button.pinned{border-color:var(--accent-soft);color:var(--accent-strong);background:var(--accent-soft)}.clipboard-card>footer .danger{color:var(--danger)!important}.clipboard-context-menu button.danger{color:var(--danger)}.clipboard-context-menu button.danger:hover:not(:disabled),.clipboard-context-menu button.danger:focus-visible:not(:disabled){background:var(--danger-soft)}.clipboard-context-menu .app-icon{color:currentColor}
 
 /* Developer results behave like a small desktop scratchpad: the visual cue
    makes the contextual actions discoverable without adding another toolbar. */
@@ -425,13 +425,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* The task ledger can grow for years. A fixed desktop row keeps it calm and
    lets Vue maintain only the visible window instead of hundreds of panels. */
-.history-toolbar{position:relative}.history-list{max-height:min(62vh,720px);overflow:auto;padding-right:3px;scroll-behavior:smooth;scrollbar-gutter:stable}.history-list__window>.history-card[aria-expanded='true']{border-color:var(--accent);background:var(--green-bg)}.history-context-menu button.danger{color:var(--danger)}.history-context-menu button.danger:hover,.history-context-menu button.danger:focus-visible{background:var(--danger-soft)}.history-context-menu button.danger:focus-visible{outline-color:var(--danger-soft)}@media(max-width:900px){.history-list{max-height:min(66vh,720px)}}@media(max-width:620px){.history-card .history-actions .quiet-button{padding:0 7px}}
+.history-toolbar{position:relative}.history-list{max-height:min(62vh,720px);overflow:auto;padding-right:3px;scroll-behavior:smooth;scrollbar-gutter:stable}.history-list__window>.history-card[aria-expanded='true']{border-color:var(--accent);background:var(--accent-soft)}.history-context-menu button.danger{color:var(--danger)}.history-context-menu button.danger:hover,.history-context-menu button.danger:focus-visible{background:var(--danger-soft)}.history-context-menu button.danger:focus-visible{outline-color:var(--danger-soft)}@media(max-width:900px){.history-list{max-height:min(66vh,720px)}}@media(max-width:620px){.history-card .history-actions .quiet-button{padding:0 7px}}
 
 /* Processing jobs and ordinary app activity share one ledger without sharing
  * destructive semantics. Compact tabs keep both discoverable on desktop. */
-.history-view-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:min(100%,500px);margin:-8px 0 13px}.history-view-switch button.active{border-color:var(--accent-soft);color:var(--green-strong);background:linear-gradient(135deg,var(--accent-soft),var(--surface));box-shadow:inset 3px 0 var(--green)}
+.history-view-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:min(100%,500px);margin:-8px 0 13px}.history-view-switch button.active{border-color:var(--accent-soft);color:var(--accent-strong);background:linear-gradient(135deg,var(--accent-soft),var(--surface));box-shadow:inset 3px 0 var(--accent)}
 .history-batch-bar.active{border-color:var(--accent-soft);background:var(--accent-soft)}.history-batch-bar .quiet-button{min-height:28px;padding:0 9px;font-size:12px}.history-batch-bar .quiet-button.danger{margin-left:auto;color:var(--danger);border-color:var(--danger-soft);background:var(--danger-soft)}.history-card.selected{border-color:var(--accent)!important;background:linear-gradient(120deg,var(--accent-soft),var(--surface))!important}.history-card.selected .history-select{color:var(--accent-fg);background:var(--accent-solid-hover)}
-.activity-ledger article.actionable{cursor:pointer;transition:background .15s ease,color .15s ease}.activity-ledger article.actionable:hover,.activity-ledger article.actionable:focus-visible{border-radius:7px;background:var(--green-bg);outline:0;box-shadow:inset 3px 0 var(--green)}.activity-ledger article.actionable:hover>svg{color:var(--green-strong)}
+.activity-ledger article.actionable{cursor:pointer;transition:background .15s ease,color .15s ease}.activity-ledger article.actionable:hover,.activity-ledger article.actionable:focus-visible{border-radius:7px;background:var(--accent-soft);outline:0;box-shadow:inset 3px 0 var(--accent)}.activity-ledger article.actionable:hover>svg{color:var(--accent-strong)}
 
 
 
@@ -452,7 +452,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* The process canvas has a compact control dock, while its less frequent
    desktop actions remain under the pointer. This keeps the visual hierarchy
    calm for image work without hiding keyboard access. */
-.visual-process-canvas:focus-visible{box-shadow:inset 0 0 0 3px color-mix(in srgb,var(--green) 44%,transparent)}
+.visual-process-canvas:focus-visible{box-shadow:inset 0 0 0 3px color-mix(in srgb,var(--accent) 44%,transparent)}
 
 /* Outputs live beside the task, not behind a toast. Their card holds only
    metadata, so a long batch never attaches generated PDF/image bytes to Vue. */
@@ -482,45 +482,45 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 
-.titlebar-context-menu button.danger { border-top: 1px solid var(--line-weak); color: var(--danger); }
+.titlebar-context-menu button.danger { border-top: 1px solid var(--line); color: var(--danger); }
 .titlebar-context-menu button.danger:hover, .titlebar-context-menu button.danger:focus-visible { color: var(--danger); background: var(--danger-soft); }
 
 /* Backup is two deliberately distinct recovery paths: a portable workspace
    snapshot, and a complete desktop Vault archive with the original files. */
-.backup-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line-weak)}.backup-option__actions .quiet-button,.backup-option__actions .primary-button{flex:1;min-width:0;min-height:32px;padding:0 8px;font-size:12px}.backup-option__actions--vault .primary-button{flex:1.3}.backup-retention .app-icon{flex:0 0 auto;margin-top:1px;color:var(--green-strong)}.backup-panel .notice{word-break:break-word}@media(max-width:760px){.backup-option__actions .quiet-button,.backup-option__actions .primary-button{width:100%}}
+.backup-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}.backup-option__actions .quiet-button,.backup-option__actions .primary-button{flex:1;min-width:0;min-height:32px;padding:0 8px;font-size:12px}.backup-option__actions--vault .primary-button{flex:1.3}.backup-retention .app-icon{flex:0 0 auto;margin-top:1px;color:var(--accent-strong)}.backup-panel .notice{word-break:break-word}@media(max-width:760px){.backup-option__actions .quiet-button,.backup-option__actions .primary-button{width:100%}}
 
-.vault-health-card>footer .quiet-button{font-size:12px}.vault-restore-progress li.done>i{border-color:var(--green);background:var(--accent-solid)}.vault-restore-progress li.active{border-color:var(--accent-soft);background:var(--accent-soft)}.vault-restore-progress li.active>i{border:2px solid var(--green);background:var(--surface);box-shadow:0 0 0 3px var(--accent-soft)}@keyframes vault-restore-pulse{0%,100%{opacity:.55}50%{opacity:1}}
+.vault-health-card>footer .quiet-button{font-size:12px}.vault-restore-progress li.done>i{border-color:var(--accent);background:var(--accent-solid)}.vault-restore-progress li.active{border-color:var(--accent-soft);background:var(--accent-soft)}.vault-restore-progress li.active>i{border:2px solid var(--accent);background:var(--surface);box-shadow:0 0 0 3px var(--accent-soft)}@keyframes vault-restore-pulse{0%,100%{opacity:.55}50%{opacity:1}}
 
 /* External Markdown workspace: two clear sidebar sources, a lazily rendered
    tree and a desktop-sized context menu. */
-.document-source-switch{display:grid;grid-template-columns:1fr 1fr;gap:3px;margin:0 14px 11px;padding:3px;border:1px solid var(--line-weak);border-radius:8px;background:var(--accent-soft)}
-.external-workspace{display:flex;min-height:0;flex:1;flex-direction:column;border-top:1px solid var(--line-weak);background:linear-gradient(180deg,var(--surface-2),var(--surface-2))}
+.document-source-switch{display:grid;grid-template-columns:1fr 1fr;gap:3px;margin:0 14px 11px;padding:3px;border:1px solid var(--line);border-radius:8px;background:var(--accent-soft)}
+.external-workspace{display:flex;min-height:0;flex:1;flex-direction:column;border-top:1px solid var(--line);background:linear-gradient(180deg,var(--surface-2),var(--surface-2))}
 
 
 
 .external-workspace__empty .primary-button{min-height:34px;margin-top:4px;font-size:12px}
 
 
-.external-workspace__header .quiet-button{min-height:27px;flex:0 0 auto;padding:0 7px;color:var(--green-strong);background:var(--surface-2);font-size:12px}
-.external-workspace__header-actions>button:not(.quiet-button){display:grid;width:27px;height:27px;place-items:center;border:1px solid var(--line-weak);border-radius:6px;color:var(--muted);background:var(--surface-2)}.external-workspace__header-actions>button:not(.quiet-button):hover,.external-workspace__header-actions>button:not(.quiet-button):focus-visible{border-color:var(--accent-soft);color:var(--green-strong);background:var(--green-bg)}
+.external-workspace__header .quiet-button{min-height:27px;flex:0 0 auto;padding:0 7px;color:var(--accent-strong);background:var(--surface-2);font-size:12px}
+.external-workspace__header-actions>button:not(.quiet-button){display:grid;width:27px;height:27px;place-items:center;border:1px solid var(--line);border-radius:6px;color:var(--fg-3);background:var(--surface-2)}.external-workspace__header-actions>button:not(.quiet-button):hover,.external-workspace__header-actions>button:not(.quiet-button):focus-visible{border-color:var(--accent-soft);color:var(--accent-strong);background:var(--accent-soft)}
 
 
-.external-workspace__watch.native{color:var(--green-strong)}.external-workspace__watch.native>i{background:var(--accent-solid);box-shadow:0 0 0 3px var(--accent-soft)}.external-workspace__watch.starting>i{background:var(--warn)}@keyframes external-workspace-sync{50%{opacity:.32}}
+.external-workspace__watch.native{color:var(--accent-strong)}.external-workspace__watch.native>i{background:var(--accent-solid);box-shadow:0 0 0 3px var(--accent-soft)}.external-workspace__watch.starting>i{background:var(--warn)}@keyframes external-workspace-sync{50%{opacity:.32}}
 
 
 
 
 
-.external-workspace__tree [role=treeitem]{display:grid;width:100%;height:30px;grid-template-columns:13px 16px minmax(0,1fr) auto;align-items:center;gap:5px;padding:0 10px 0 calc(8px + var(--workspace-depth,0)*14px);border:0;border-bottom:1px solid var(--accent-soft);color:var(--text-secondary);background:transparent;text-align:left}
-.external-workspace__tree [role=treeitem]:hover{color:var(--green-strong);background:var(--accent-soft)}.external-workspace__tree [role=treeitem].active{color:var(--green-strong);background:var(--green-bg);box-shadow:inset 3px 0 var(--green)}
-.external-workspace__tree [role=treeitem].cut{color:var(--muted);background:var(--accent-soft)}.external-workspace__tree [role=treeitem].cut>b{text-decoration:line-through;text-decoration-color:var(--accent)}
-.external-workspace__tree [role=treeitem]:focus-visible{position:relative;z-index:1;outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:-2px}.external-workspace__tree [role=treeitem]>.app-icon{color:var(--fg-3)}.external-workspace__tree [role=treeitem].directory>.app-icon{color:var(--warn)}
+.external-workspace__tree [role=treeitem]{display:grid;width:100%;height:30px;grid-template-columns:13px 16px minmax(0,1fr) auto;align-items:center;gap:5px;padding:0 10px 0 calc(8px + var(--workspace-depth,0)*14px);border:0;border-bottom:1px solid var(--accent-soft);color:var(--fg-2);background:transparent;text-align:left}
+.external-workspace__tree [role=treeitem]:hover{color:var(--accent-strong);background:var(--accent-soft)}.external-workspace__tree [role=treeitem].active{color:var(--accent-strong);background:var(--accent-soft);box-shadow:inset 3px 0 var(--accent)}
+.external-workspace__tree [role=treeitem].cut{color:var(--fg-3);background:var(--accent-soft)}.external-workspace__tree [role=treeitem].cut>b{text-decoration:line-through;text-decoration-color:var(--accent)}
+.external-workspace__tree [role=treeitem]:focus-visible{position:relative;z-index:1;outline:2px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:-2px}.external-workspace__tree [role=treeitem]>.app-icon{color:var(--fg-3)}.external-workspace__tree [role=treeitem].directory>.app-icon{color:var(--warn)}
 .external-workspace__tree [role=treeitem] b{overflow:hidden;font:600 12px var(--font-family-ui);text-overflow:ellipsis;white-space:nowrap}.external-workspace__tree [role=treeitem] small{color:var(--warn);font:11px var(--font-family-ui)}
 .external-workspace__chevron.invisible{visibility:hidden}.external-workspace__tree [aria-expanded=true] .external-workspace__chevron{transform:rotate(90deg)}
-.external-workspace__search-results>button.active{box-shadow:inset 3px 0 var(--green);background:var(--accent-soft)}
+.external-workspace__search-results>button.active{box-shadow:inset 3px 0 var(--accent);background:var(--accent-soft)}
 
 
-.external-workspace>footer{display:flex;min-height:42px;align-items:center;justify-content:space-between;gap:9px;padding:7px 12px;border-top:1px solid var(--line-weak);color:var(--muted);background:var(--surface-2);font:11px var(--font-family-ui)}.external-workspace>footer button{padding:0;border:0;color:var(--green-strong);background:transparent;font:650 12px var(--font-family-ui)}
+.external-workspace>footer{display:flex;min-height:42px;align-items:center;justify-content:space-between;gap:9px;padding:7px 12px;border-top:1px solid var(--line);color:var(--fg-3);background:var(--surface-2);font:11px var(--font-family-ui)}.external-workspace>footer button{padding:0;border:0;color:var(--accent-strong);background:transparent;font:650 12px var(--font-family-ui)}
 
 
 
@@ -543,7 +543,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
    color alone. */
 .save-state.is-dirty{color:var(--warn);font-weight:700}
 .editor-recovery-banner__actions .primary-button{box-shadow:none}
-.document-workspace-tab.active{z-index:1;color:var(--text);border-color:var(--line);background:var(--surface-raised);box-shadow:0 -2px 8px var(--accent-soft)}.document-workspace-tab>button[role=tab]{display:flex;align-items:center;gap:7px;min-width:0;flex:1;padding:0 27px 0 9px;border:0;color:inherit;background:transparent;font:650 12px/1 var(--font-family-ui);cursor:pointer}.document-workspace-tab>button[role=tab]>i{flex:0 0 6px;width:6px;height:6px;border-radius:50%;background:var(--accent-soft)}.document-workspace-tab.active>button[role=tab]>i{background:var(--accent-solid)}.document-workspace-tab.dirty>button[role=tab]>i{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}.document-workspace-tab>button[role=tab]>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.document-workspace-tab>button[role=tab]>small{position:absolute;right:7px;top:-4px;padding:1px 4px;border-radius:4px;color:var(--warn);background:var(--surface-2);font:700 11px var(--font-family-ui);pointer-events:none}.document-workspace-tab:hover .document-workspace-tab__close,.document-workspace-tab.active .document-workspace-tab__close,.document-workspace-tab__close:focus-visible{opacity:1}.document-workspace-tab.dirty .document-workspace-tab__close{top:8px}.document-workspace-tab :focus-visible{outline:2px solid var(--accent-soft);outline-offset:-2px}.document-tab-context-menu button.separator{margin-top:4px;border-top:1px solid var(--line-weak);border-radius:0 0 6px 6px}
+.document-workspace-tab.active{z-index:1;color:var(--fg);border-color:var(--line);background:var(--surface-2);box-shadow:0 -2px 8px var(--accent-soft)}.document-workspace-tab>button[role=tab]{display:flex;align-items:center;gap:7px;min-width:0;flex:1;padding:0 27px 0 9px;border:0;color:inherit;background:transparent;font:650 12px/1 var(--font-family-ui);cursor:pointer}.document-workspace-tab>button[role=tab]>i{flex:0 0 6px;width:6px;height:6px;border-radius:50%;background:var(--accent-soft)}.document-workspace-tab.active>button[role=tab]>i{background:var(--accent-solid)}.document-workspace-tab.dirty>button[role=tab]>i{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}.document-workspace-tab>button[role=tab]>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.document-workspace-tab>button[role=tab]>small{position:absolute;right:7px;top:-4px;padding:1px 4px;border-radius:4px;color:var(--warn);background:var(--surface-2);font:700 11px var(--font-family-ui);pointer-events:none}.document-workspace-tab:hover .document-workspace-tab__close,.document-workspace-tab.active .document-workspace-tab__close,.document-workspace-tab__close:focus-visible{opacity:1}.document-workspace-tab.dirty .document-workspace-tab__close{top:8px}.document-workspace-tab :focus-visible{outline:2px solid var(--accent-soft);outline-offset:-2px}.document-tab-context-menu button.separator{margin-top:4px;border-top:1px solid var(--line);border-radius:0 0 6px 6px}
 /* The tab strip lives in the final-loaded desktop chrome: transient menus stay
    above inspectors, while the close target never overlaps the dirty label. */
 .document-tab-context-menu{z-index:var(--z-context-menu)}
@@ -554,13 +554,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .document-unsaved-dialog .eyebrow{color:var(--warn)}
 
 /* External workspace search exposes its I/O cost before the query runs. */
-.external-workspace__search-scope { display: grid; min-height: 28px; grid-template-columns: auto auto minmax(0,1fr); align-items: center; gap: 7px; margin: 0 11px 6px; color: var(--muted); }
+.external-workspace__search-scope { display: grid; min-height: 28px; grid-template-columns: auto auto minmax(0,1fr); align-items: center; gap: 7px; margin: 0 11px 6px; color: var(--fg-3); }
 
 
 
 
 
-.external-workspace__search-scope button.active { color: var(--green-strong); background: var(--surface); box-shadow: 0 1px 4px var(--accent-soft); }
+.external-workspace__search-scope button.active { color: var(--accent-strong); background: var(--surface); box-shadow: 0 1px 4px var(--accent-soft); }
 
 
 
@@ -573,4 +573,4 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* Vault diagnostics are fetched only when Settings is opened. This keeps the
    integrity check out of startup while making the data layer verifiable. */
-.vault-health-card{overflow:hidden;margin-bottom:17px;border:1px solid var(--accent-soft);border-radius:14px;background:linear-gradient(135deg,var(--accent-soft),var(--surface) 56%,var(--surface-2));box-shadow:0 10px 28px var(--accent-soft);cursor:context-menu}.vault-health-card>header>p.ready{color:var(--green-strong)}.vault-health-card>header>p.ready i{background:var(--accent-solid);box-shadow:0 0 0 4px var(--accent-soft)}.vault-health-card>footer .quiet-button{min-height:30px;padding:0 9px;font-size:12px}@keyframes vault-menu-in{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:none}}@keyframes vault-health-pulse{0%{background-position:100% 0}100%{background-position:-100% 0}}
+.vault-health-card{overflow:hidden;margin-bottom:17px;border:1px solid var(--accent-soft);border-radius:14px;background:linear-gradient(135deg,var(--accent-soft),var(--surface) 56%,var(--surface-2));box-shadow:0 10px 28px var(--accent-soft);cursor:context-menu}.vault-health-card>header>p.ready{color:var(--accent-strong)}.vault-health-card>header>p.ready i{background:var(--accent-solid);box-shadow:0 0 0 4px var(--accent-soft)}.vault-health-card>footer .quiet-button{min-height:30px;padding:0 9px;font-size:12px}@keyframes vault-menu-in{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:none}}@keyframes vault-health-pulse{0%{background-position:100% 0}100%{background-position:-100% 0}}

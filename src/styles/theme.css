@@ -44,6 +44,12 @@
   --accent: #7aa2ff;
   --accent-hover: #9dbaff;
   --accent-press: #5b8cff;
+  /* Emphasis, not interaction: the accent one step louder, for a label or an
+     icon that has to carry a little more weight than `--accent` while staying
+     ink. "Louder" is brighter against a dark ground and darker against a light
+     one, which is why it is a token per theme and not a function of
+     `--accent`. */
+  --accent-strong: #9dbaff;
   --accent-solid: #3768d8;
   --accent-solid-hover: #3f72e2;
   --accent-solid-press: #2f5fc8;
@@ -111,6 +117,7 @@
   --accent: #2f5fc8;
   --accent-hover: #274fa8;
   --accent-press: #1f4390;
+  --accent-strong: #1f4390;
   --accent-solid: #3b6fe0;
   --accent-solid-hover: #2f5fc8;
   --accent-solid-press: #274fa8;
@@ -192,6 +199,30 @@ body {
     "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
   --font-family-mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Segoe UI Symbol",
     "Microsoft YaHei UI", monospace;
+}
+
+/* Motion and stacking. Neither varies by theme, and both were living in the
+   alias layer that the legacy sheets used to resolve through — which meant the
+   product's transition curve and its z-order were defined in a file whose
+   stated job was to be deleted. `duration-120` in the UnoCSS shortcuts is the
+   same 120ms; the two are kept equal by hand.
+
+   `--motion-*`, not `--ease-out`: presetWind4 publishes its own `--ease-out`
+   from the utility theme, and UnoCSS is imported last. The alias layer used to
+   survive that collision only because it declared its tokens on
+   `:root[data-theme='dark']`, whose extra attribute outweighed Uno's plain
+   `:root` — an accident, not a defence. A name of our own is the defence.
+
+   Stacking has exactly one rule worth stating: a global dialog must always
+   eclipse a page-owned context menu. */
+:root {
+  --motion-ease: cubic-bezier(.22, 1, .36, 1);
+  --motion-spring: cubic-bezier(.34, 1.4, .5, 1);
+  --motion-fast: 120ms;
+  --motion-normal: 200ms;
+
+  --z-context-menu: 120;
+  --z-global-modal: 160;
 }
 
 h1, h2, h3, h4, h5, h6, p, figure { margin: 0; }
