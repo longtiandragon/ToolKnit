@@ -71,8 +71,10 @@ describe('workspace navigation', () => {
     expect(searchWorkspaceCommands('ocr')[0]).toMatchObject({ label: '离线 OCR 识别', to: '/ocr' })
     expect(searchWorkspaceCommands('latex')[0]).toMatchObject({ label: 'LaTeX 公式编辑', to: '/documents?kind=note&create=note&mode=split&insert=formula' })
     expect(searchWorkspaceCommands('打开本机 markdown')[0]).toMatchObject({ label: '打开本机 Markdown', to: '/documents?kind=note&action=open-file' })
-    expect(searchWorkspaceCommands('番茄').some(item => item.to === '/')).toBe(true)
-    expect(searchWorkspaceCommands('补记时间')[0]).toMatchObject({ label: '补记时间', to: '/?action=log-time#today-focus-ledger' })
+    // The 今天 space is `/today`; `/` is the toolbox. These four entries used
+    // to point at `/`, where the elements they scroll to do not exist.
+    expect(searchWorkspaceCommands('番茄').some(item => item.to === '/today#today-focus-timer')).toBe(true)
+    expect(searchWorkspaceCommands('补记时间')[0]).toMatchObject({ label: '补记时间', to: '/today?action=log-time#today-focus-ledger' })
     expect(searchWorkspaceCommands('codesnap').map(item => item.to)).toEqual(['/code-image', '/create'])
     expect(searchWorkspaceCommands('设置')[0]).toMatchObject({ label: '设置', to: '/settings' })
     expect(searchWorkspaceCommands('备份')[0]).toMatchObject({ label: '数据与备份', to: '/settings?section=backup' })
@@ -98,13 +100,13 @@ describe('workspace navigation', () => {
     const spaces = workspaceNavGroups.flatMap(group => group.items)
     const knowledge = spaces.find(item => item.to === '/knowledge')!
     const create = spaces.find(item => item.to === '/create')!
-    const today = spaces.find(item => item.to === '/')!
+    const today = spaces.find(item => item.to === '/today')!
 
     expect(activeWorkspaceChildTarget(knowledge.children, { path: '/documents', query: { kind: 'note', document: 'note-1' } })).toBe('/documents?kind=note')
     expect(activeWorkspaceChildTarget(knowledge.children, { path: '/documents', query: { document: 'note-1' } })).toBe('/documents')
     expect(activeWorkspaceChildTarget(knowledge.children, { path: '/knowledge', query: { filter: 'favorites' } })).toBe('/knowledge?filter=favorites')
     expect(activeWorkspaceChildTarget(knowledge.children, { path: '/documents', query: { kind: 'note', action: 'open-file' } })).toBe('/documents?kind=note&action=open-file')
     expect(activeWorkspaceChildTarget(create.children, { path: '/documents', query: { kind: 'note', create: 'note', mode: 'split', insert: 'formula', recognize: 'formula' } })).toBe('/documents?kind=note&create=note&mode=split&insert=formula&recognize=formula')
-    expect(activeWorkspaceChildTarget(today.children, { path: '/', hash: '#today-focus-ledger' })).toBe('/#today-focus-ledger')
+    expect(activeWorkspaceChildTarget(today.children, { path: '/today', hash: '#today-focus-ledger' })).toBe('/today#today-focus-ledger')
   })
 })

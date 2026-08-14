@@ -212,31 +212,13 @@ textarea:focus-visible,
 
 
 
-.hero-actions .new-task {
-  min-height: 44px;
-  border-color: var(--accent);
-  color: var(--accent-fg);
-  background: var(--accent-solid);
-  box-shadow: 0 8px 20px var(--line-strong);
-}
 
-.hero-actions .new-task:hover {
-  background: var(--accent-solid);
-}
 
-.hero-actions .secondary-action {
-  min-height: 44px;
-  color: var(--fg);
-  border-color: var(--fg);
-  background: var(--surface-2);
-  backdrop-filter: blur(10px);
-}
 
-.hero-actions .secondary-action:hover {
-  color: var(--fg);
-  border-color: var(--fg);
-  background: var(--surface-2);
-}
+
+
+
+
 
 
 
@@ -627,30 +609,13 @@ textarea:focus-visible,
 
 
 
-.designed-empty {
-  min-height: 170px;
-  padding: 24px;
-  border: 1px dashed var(--accent-soft);
-  border-radius: 12px;
-  background: var(--surface-2);
-}
 
-.designed-empty > b {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: var(--green-bg);
-}
 
-.designed-empty h3 {
-  margin-top: 10px;
-  font-size: 14px;
-}
 
-.designed-empty p {
-  margin: 4px 0 10px;
-  font-size: 12px;
-}
+
+
+
+
 
 /* Dashboard: brand moment, not a full-screen billboard. */
 .workbench-dashboard {

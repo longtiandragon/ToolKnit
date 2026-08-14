@@ -243,13 +243,11 @@ textarea,
 input:hover:not(:disabled):not(:focus),
 select:hover:not(:disabled):not(:focus),
 textarea:hover:not(:disabled):not(:focus) { border-color: var(--line-strong); }
-input:focus,
-select:focus,
-textarea:focus {
-  border-color: var(--accent);
-  outline: none;
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
+/* The focus ring used to live here as `input:focus { box-shadow: 0 0 0 3px }`.
+   It now doubles up with the `field` shortcut's own ring and with the nine
+   views that put `focus-within:border-accent` on a label wrapping a bare
+   input — two indicators for one focus. `theme.css` owns `:focus-visible`. */
+
 ::placeholder { color: var(--text-faint); opacity: 1; }
 textarea { line-height: 1.7; resize: vertical; }
 
@@ -342,29 +340,9 @@ textarea { line-height: 1.7; resize: vertical; }
     var(--surface);
   text-align: center;
 }
-.designed-empty > b {
-  display: grid;
-  width: 52px;
-  height: 52px;
-  place-items: center;
-  border: 1px solid var(--accent-soft);
-  border-radius: var(--radius-md);
-  color: var(--accent);
-  background: var(--green-bg);
-  box-shadow: var(--shadow-xs);
-}
-.designed-empty h3 {
-  margin: 4px 0 0;
-  color: var(--text);
-  font: 650 17px/1.4 var(--font-family-display);
-  letter-spacing: -.01em;
-}
-.designed-empty p {
-  max-width: 32em;
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-}
+
+
+
 .designed-empty .quiet-button { margin-top: 6px; }
 
 /* ─────────────────────────────────────────────────────────────────────────

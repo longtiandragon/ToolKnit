@@ -111,17 +111,7 @@ a:hover {
   min-height: 0;
 }
 
-.icon-button,
-.more-button {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  color: var(--text-secondary);
-  background: transparent;
-}
+
 
 
 
@@ -523,7 +513,7 @@ a:hover {
 .markdown-mindmap > header div { display: grid; gap: 2px; }
 .markdown-mindmap > header span { color: var(--green-strong); font: 700 12px/1.25 var(--font-family-ui); letter-spacing: 0.09em; }
 .markdown-mindmap > header small { color: var(--muted); font-size: 12px; }
-.markdown-mindmap__actions { display: flex; align-items: center; gap: 7px; }.markdown-mindmap__actions .more-button { min-width: 32px; min-height: 30px; padding: 0 7px; letter-spacing: .08em; }.markdown-mindmap__actions .markdown-mindmap__copy{border-color:var(--green);color:var(--accent-fg);background:var(--accent-solid);box-shadow:0 4px 12px var(--accent-soft)}.markdown-mindmap__actions .markdown-mindmap__copy:hover:not(:disabled),.markdown-mindmap__actions .markdown-mindmap__copy:focus-visible:not(:disabled){border-color:var(--green-strong);background:var(--accent-solid-hover);box-shadow:0 6px 16px var(--accent-soft)}.markdown-mindmap__actions .markdown-mindmap__export{border-color:color-mix(in srgb,var(--green) 28%,var(--line));color:var(--green-strong);background:var(--green-bg)}.markdown-mindmap__actions .markdown-mindmap__export:hover:not(:disabled),.markdown-mindmap__actions .markdown-mindmap__export:focus-visible:not(:disabled){border-color:var(--green);color:var(--accent-fg);background:var(--accent-solid)}
+
 
 .markdown-mindmap__stage {
   position: relative;
@@ -548,33 +538,19 @@ a:hover {
 .markdown-mindmap__stage .markmap-node > line { stroke: rgba(12, 101, 87, 0.48); }
 .markdown-mindmap__stage .markmap-foreign { color: #1a2723; font: 13px/1.35 var(--font-sans); }
 
-.markdown-mindmap__empty,
-.markdown-mindmap__loading,
-.markdown-mindmap__error {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: min(390px, calc(100% - 48px));
-  transform: translate(-50%, -50%);
-}
 
-.markdown-mindmap__empty {
-  padding: 20px 22px;
-  border: 1px solid var(--accent-soft);
-  border-radius: 9px;
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-}
 
-.markdown-mindmap__empty b { color: var(--text); font-size: 14px; }
-.markdown-mindmap__empty p { margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
-.markdown-mindmap__empty code { color: var(--green-strong); font: 12px var(--font-family-mono); }
 
-.markdown-mindmap__loading { display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--green-strong); font: 600 13px var(--font-family-ui); }
-.markdown-mindmap__loading i { width: 16px; height: 16px; border: 2px solid var(--accent-soft); border-top-color: var(--green); border-radius: 50%; animation: knit-diagram-spin .8s linear infinite; }
-.markdown-mindmap__error { padding: 16px 18px; border: 1px solid var(--danger-soft); border-radius: 8px; color: var(--danger); background: var(--surface); }
-.markdown-mindmap__error b { font-size: 13px; }.markdown-mindmap__error p { margin: 5px 0 0; font: 12px/1.6 var(--font-family-ui); }
-.markdown-mindmap__menu { position: fixed; z-index: 122; width: 218px; overflow: hidden; border: 1px solid var(--accent-soft); border-radius: 12px; color: var(--text-secondary); background: var(--surface); box-shadow: var(--shadow-lg); animation: knit-menu-in .14s ease-out both; }.markdown-mindmap__menu p { margin: 0; padding: 11px 12px 8px; border-bottom: 1px solid var(--line-weak); color: var(--muted); font: 12px var(--font-family-ui); letter-spacing: .06em; }.markdown-mindmap__menu button { display: block; width: 100%; min-height: 35px; padding: 0 12px; border: 0; color: inherit; background: transparent; font-size: 12px; text-align: left; }.markdown-mindmap__menu button:hover, .markdown-mindmap__menu button:focus-visible, .markdown-mindmap__menu button.selected { color: var(--green-strong); background: var(--green-bg); }.markdown-mindmap__menu button:focus-visible { outline: 2px solid color-mix(in srgb, var(--green) 46%, transparent); outline-offset: -2px; }.markdown-mindmap__menu button.separator { border-top: 1px solid var(--line-weak); }.markdown-mindmap__menu button:disabled{cursor:not-allowed;color:var(--muted);background:transparent;opacity:.56}
+
+
+
+
+
+
+
+
+
+.markdown-mindmap__menu button:hover, .markdown-mindmap__menu button:focus-visible, .markdown-mindmap__menu button.selected { color: var(--green-strong); background: var(--green-bg); }.markdown-mindmap__menu button.separator { border-top: 1px solid var(--line-weak); }
 
 /* Other routes inherit the same calm, flat workspace grammar. */
 .tool-center,
@@ -964,11 +940,7 @@ a:hover {
 
 
 
-.hero-actions .secondary-action {
-  color: var(--text-secondary);
-  border-color: var(--line);
-  background: var(--surface);
-}
+
 
 
 
@@ -1025,9 +997,7 @@ a:hover {
   opacity: 0;
 }
 
-.document-tab-context-menu {
-  z-index: var(--z-context-menu);
-}
+
 
 @media (prefers-reduced-motion: reduce) {
   *,

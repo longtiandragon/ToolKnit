@@ -36,10 +36,15 @@ export function activeWorkspaceChildTarget(children: readonly WorkspaceNavAction
 export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] = [{
   label: '五个空间',
   items: [
-    navItem('/', 'dashboard', '今天', [
-      { label: '专注计时', to: '/#today-focus-timer', icon: 'clock' },
-      { label: '时间账本', to: '/#today-focus-ledger', icon: 'clock' },
-      { label: '纪念日', to: '/#today-anniversaries', icon: 'calendar' },
+    // `/today`, not `/`. `/` is the toolbox (`routes.ts` gives it the title
+    // 工具箱); the focus timer, the ledger and the anniversaries all live on
+    // `/today`. Under hash history `/#today-focus-ledger` resolved to path
+    // `/`, so every one of these entries — and the 补记时间 command below —
+    // landed on a page that does not contain the element it scrolls to.
+    navItem('/today', 'dashboard', '今天', [
+      { label: '专注计时', to: '/today#today-focus-timer', icon: 'clock' },
+      { label: '时间账本', to: '/today#today-focus-ledger', icon: 'clock' },
+      { label: '纪念日', to: '/today#today-anniversaries', icon: 'calendar' },
       { label: '快速捕获', to: '/quick', icon: 'plus' },
     ]),
     navItem('/knowledge', 'book', '知识库', [
@@ -117,9 +122,9 @@ const spaceAliases: Record<string, string> = {
 }
 
 const actionAliases: Record<string, string> = {
-  '/#today-focus-timer': '番茄 时间记录 timer',
-  '/#today-focus-ledger': '补记时间 专注统计 一周 本周 focus ledger time tracking',
-  '/#today-anniversaries': '倒数日 重要日期 live marker',
+  '/today#today-focus-timer': '番茄 时间记录 timer',
+  '/today#today-focus-ledger': '补记时间 专注统计 一周 本周 focus ledger time tracking',
+  '/today#today-anniversaries': '倒数日 重要日期 live marker',
   '/quick': '收件箱 inbox 快记',
   '/documents?kind=note': 'typora obsidian markdown 编辑器',
   '/documents?kind=note&action=open-file': '打开本机 markdown md typora 外部文件 保持兼容 local file',
@@ -165,7 +170,7 @@ const actionAliases: Record<string, string> = {
 }
 
 const utilityCommands: WorkspaceCommandItem[] = [
-  { id: 'action:/?action=log-time#today-focus-ledger', label: '补记时间', to: '/?action=log-time#today-focus-ledger', icon: 'clock', detail: '今天 · 把刚完成的一段学习写入本地时间账本', kind: 'action', keywords: '时间记录 手动记录 专注统计 学习时长 focus ledger' },
+  { id: 'action:/today?action=log-time#today-focus-ledger', label: '补记时间', to: '/today?action=log-time#today-focus-ledger', icon: 'clock', detail: '今天 · 把刚完成的一段学习写入本地时间账本', kind: 'action', keywords: '时间记录 手动记录 专注统计 学习时长 focus ledger' },
   { id: 'action:/settings', label: '设置', to: '/settings', icon: 'settings', detail: '全局 · 桌面偏好与本地数据', kind: 'action', keywords: '配置 偏好 数据 备份 更新 主题 vault' },
   { id: 'action:/settings?section=config', label: '常规设置', to: '/settings?section=config', icon: 'settings', detail: '设置 · 输出目录、关闭行为与系统通知', kind: 'action', keywords: '输出目录 托盘 关闭窗口 彻底退出 通知 desktop preferences' },
   { id: 'action:/settings?section=appearance', label: '阅读与外观', to: '/settings?section=appearance', icon: 'palette', detail: '设置 · 字号、行距、阅读宽度、纸张与动态效果', kind: 'action', keywords: '阅读外观 字体 字号 行距 背景 纸张 暖纸 大字 阅读宽度 减少动画 appearance typography motion' },
@@ -233,7 +238,7 @@ export function workspaceFeatureGroups(): WorkspaceFeatureGroup[] {
 }
 
 const workspaceContextTargets: Record<string, readonly string[]> = {
-  '/': ['/#today-focus-timer', '/#today-focus-ledger', '/#today-anniversaries', '/quick'],
+  '/today': ['/today#today-focus-timer', '/today#today-focus-ledger', '/today#today-anniversaries', '/quick'],
   '/knowledge': ['/documents?kind=note', '/documents?kind=question', '/words', '/relations', '/library'],
   '/create': ['/documents?kind=note&create=note', '/documents?kind=note&template=mindmap&mode=mindmap', '/documents?kind=note&template=diagram&mode=split', '/visual', '/code-image'],
   '/review': ['/review', '/words', '/documents?kind=question', '/documents?kind=question&create=question', '/documents?kind=question&import=1'],
