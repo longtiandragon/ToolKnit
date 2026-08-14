@@ -17,9 +17,11 @@
  *   void         a large painted panel with nothing in it — the band of bare
  *                ground an empty state was supposed to fill
  *
- * Needs the dev server up.
+ * Needs the dev server up. The width matters: the rail collapses twice on the
+ * way down (1180px, then 1050px), and a hit area that clears 24px on a wide
+ * window is not the same hit area once its row has been squeezed.
  *
- *   node scripts/audit-interaction.mjs [dark|light]
+ *   node scripts/audit-interaction.mjs [dark|light] [--width=1050]
  */
 import { chromium } from 'playwright-core'
 import { writeFileSync } from 'node:fs'
@@ -154,9 +156,10 @@ function collect() {
   return { findings, checked }
 }
 
-const theme = process.argv[2] === 'light' ? 'light' : 'dark'
+const theme = process.argv.includes('light') ? 'light' : 'dark'
+const width = Number(process.argv.find((arg) => arg.startsWith('--width='))?.slice(8)) || 1600
 const browser = await chromium.launch({ executablePath: CHROME, headless: true })
-const context = await browser.newContext({ viewport: { width: 1600, height: 950 } })
+const context = await browser.newContext({ viewport: { width, height: 950 } })
 await context.addInitScript((value) => window.localStorage.setItem('knitspace:theme', value), theme)
 const page = await context.newPage()
 
@@ -184,8 +187,8 @@ for (const route of ROUTES) {
 
 await browser.close()
 
-const file = join(process.env.TEMP || '.', `audit-interaction-${theme}.json`)
+const file = join(process.env.TEMP || '.', `audit-interaction-${theme}-${width}.json`)
 writeFileSync(file, JSON.stringify(report, null, 2))
-console.log(`\n${theme}: ${total} 处,分布在 ${Object.keys(report).length} 个路由(检查了 ${elements} 个元素)`)
+console.log(`\n${theme} @ ${width}px: ${total} 处,分布在 ${Object.keys(report).length} 个路由(检查了 ${elements} 个元素)`)
 console.log(`明细 → ${file}`)
 if (!elements) { console.error('检查了 0 个元素——页面根本没渲染'); process.exitCode = 1 }
