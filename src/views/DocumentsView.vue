@@ -2067,7 +2067,11 @@ function handleDocumentBeforeUnload(event: BeforeUnloadEvent) {
   event.returnValue = ''
 }
 
-async function switchToDocument(document: StudyDocument, targetLabel = `“${document.title}”`) {
+/* The default has to be a verb phrase: the dialog renders `{targetLabel}前，
+   请选择…`, so a bare quoted title produced 「“未命名笔记”前，请选择…」 —
+   an unfinished sentence on the one modal whose job is to be understood
+   before the user discards work. Five of six call sites take this default. */
+async function switchToDocument(document: StudyDocument, targetLabel = `切换到“${document.title}”`) {
   if (selectedId.value === document.id) return true
   if (!await confirmDocumentTransition(targetLabel)) return false
   selectedId.value = document.id
