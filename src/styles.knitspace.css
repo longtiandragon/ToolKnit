@@ -494,37 +494,36 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* External Markdown workspace: two clear sidebar sources, a lazily rendered
    tree and a desktop-sized context menu. */
 .document-source-switch{display:grid;grid-template-columns:1fr 1fr;gap:3px;margin:0 14px 11px;padding:3px;border:1px solid var(--line);border-radius:8px;background:var(--accent-soft)}
-.external-workspace{display:flex;min-height:0;flex:1;flex-direction:column;border-top:1px solid var(--line);background:linear-gradient(180deg,var(--surface-2),var(--surface-2))}
-
-
-
-.external-workspace__empty .primary-button{min-height:34px;margin-top:4px;font-size:12px}
-
-
-.external-workspace__header .quiet-button{min-height:27px;flex:0 0 auto;padding:0 7px;color:var(--accent-strong);background:var(--surface-2);font-size:12px}
-.external-workspace__header-actions>button:not(.quiet-button){display:grid;width:27px;height:27px;place-items:center;border:1px solid var(--line);border-radius:6px;color:var(--fg-3);background:var(--surface-2)}.external-workspace__header-actions>button:not(.quiet-button):hover,.external-workspace__header-actions>button:not(.quiet-button):focus-visible{border-color:var(--accent-soft);color:var(--accent-strong);background:var(--accent-soft)}
-
-
-.external-workspace__watch.native{color:var(--accent-strong)}.external-workspace__watch.native>i{background:var(--accent-solid);box-shadow:0 0 0 3px var(--accent-soft)}.external-workspace__watch.starting>i{background:var(--warn)}@keyframes external-workspace-sync{50%{opacity:.32}}
 
 
 
 
 
-.external-workspace__tree [role=treeitem]{display:grid;width:100%;height:30px;grid-template-columns:13px 16px minmax(0,1fr) auto;align-items:center;gap:5px;padding:0 10px 0 calc(8px + var(--workspace-depth,0)*14px);border:0;border-bottom:1px solid var(--accent-soft);color:var(--fg-2);background:transparent;text-align:left}
-.external-workspace__tree [role=treeitem]:hover{color:var(--accent-strong);background:var(--accent-soft)}.external-workspace__tree [role=treeitem].active{color:var(--accent-strong);background:var(--accent-soft);box-shadow:inset 3px 0 var(--accent)}
-.external-workspace__tree [role=treeitem].cut{color:var(--fg-3);background:var(--accent-soft)}.external-workspace__tree [role=treeitem].cut>b{text-decoration:line-through;text-decoration-color:var(--accent)}
-.external-workspace__tree [role=treeitem]:focus-visible{position:relative;z-index:1;outline:2px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:-2px}.external-workspace__tree [role=treeitem]>.app-icon{color:var(--fg-3)}.external-workspace__tree [role=treeitem].directory>.app-icon{color:var(--warn)}
-.external-workspace__tree [role=treeitem] b{overflow:hidden;font:600 12px var(--font-family-ui);text-overflow:ellipsis;white-space:nowrap}.external-workspace__tree [role=treeitem] small{color:var(--warn);font:11px var(--font-family-ui)}
-.external-workspace__chevron.invisible{visibility:hidden}.external-workspace__tree [aria-expanded=true] .external-workspace__chevron{transform:rotate(90deg)}
-.external-workspace__search-results>button.active{box-shadow:inset 3px 0 var(--accent);background:var(--accent-soft)}
-
-
-.external-workspace>footer{display:flex;min-height:42px;align-items:center;justify-content:space-between;gap:9px;padding:7px 12px;border-top:1px solid var(--line);color:var(--fg-3);background:var(--surface-2);font:11px var(--font-family-ui)}.external-workspace>footer button{padding:0;border:0;color:var(--accent-strong);background:transparent;font:650 12px var(--font-family-ui)}
 
 
 
-.external-workspace-menu button.danger{color:var(--danger)}.external-workspace-menu button.danger:hover,.external-workspace-menu button.danger:focus-visible{color:var(--danger);background:var(--danger-soft)}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -553,14 +552,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .document-unsaved-dialog .eyebrow{color:var(--warn)}
 
-/* External workspace search exposes its I/O cost before the query runs. */
-.external-workspace__search-scope { display: grid; min-height: 28px; grid-template-columns: auto auto minmax(0,1fr); align-items: center; gap: 7px; margin: 0 11px 6px; color: var(--fg-3); }
 
 
 
 
 
-.external-workspace__search-scope button.active { color: var(--accent-strong); background: var(--surface); box-shadow: 0 1px 4px var(--accent-soft); }
+
+
 
 
 
