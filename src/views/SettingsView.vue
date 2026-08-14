@@ -405,7 +405,7 @@ function handleBuildMenuKeydown(event: KeyboardEvent) {
 }
 function openBuildPrimaryAction() {
   closeBuildMenu()
-  void router.push(personalPackEnabled ? '/private-tools' : '/tool-space')
+  void router.push(personalPackEnabled ? '/private-tools' : '/')
 }
 async function copyBuildDetails() {
   closeBuildMenu()

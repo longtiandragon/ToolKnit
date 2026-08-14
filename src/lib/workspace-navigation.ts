@@ -84,8 +84,8 @@ export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] 
       { label: '录入新单词', to: '/words?action=create', icon: 'plus' },
       { label: '批量导入单词', to: '/words?import=1', icon: 'inbox' },
     ]),
-    navItem('/tool-space', 'toolbox', '工具', [
-      { label: '工具空间总览', to: '/tool-space', icon: 'toolbox' },
+    navItem('/', 'toolbox', '工具', [
+      { label: '全部工具', to: '/', icon: 'toolbox' },
       { label: '文件处理中心', to: '/tools', icon: 'toolbox' },
       { label: '音视频转换', to: '/media', icon: 'play' },
       { label: '字幕校对台', to: '/subtitles', icon: 'file-text' },
@@ -114,11 +114,13 @@ export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] 
 }]
 
 const spaceAliases: Record<string, string> = {
-  '/': '首页 dashboard 番茄 时间记录 纪念日 快速捕获 最近文档',
+  // These are 今天's words — 番茄, 纪念日, 快速捕获 — and they were filed under
+  // '/' from back when '/' was the dashboard. The toolbox lives there now.
+  '/today': '首页 dashboard 番茄 时间记录 纪念日 快速捕获 最近文档',
   '/knowledge': '知识 markdown 笔记 单词 题目 错题 资料 摘录 全文搜索 obsidian typora',
   '/create': '写作 脑图 思维导图 流程图 图片 标注 代码截图 长图 AI xmind visio codesnap',
   '/review': '背单词 背题 错题 fsrs anki 卡片 今日待复习',
-  '/tool-space': 'pdf 图片转换 音频 视频 文件 开发 脚本 剪贴板 工具箱',
+  '/': 'pdf 图片转换 音频 视频 文件 开发 脚本 剪贴板 工具箱',
 }
 
 const actionAliases: Record<string, string> = {
@@ -242,7 +244,7 @@ const workspaceContextTargets: Record<string, readonly string[]> = {
   '/knowledge': ['/documents?kind=note', '/documents?kind=question', '/words', '/relations', '/library'],
   '/create': ['/documents?kind=note&create=note', '/documents?kind=note&template=mindmap&mode=mindmap', '/documents?kind=note&template=diagram&mode=split', '/visual', '/code-image'],
   '/review': ['/review', '/words', '/documents?kind=question', '/documents?kind=question&create=question', '/documents?kind=question&import=1'],
-  '/tool-space': ['/tools', '/media', '/subtitles', '/ocr', '/developer-tools'],
+  '/': ['/tools', '/media', '/subtitles', '/ocr', '/developer-tools'],
 }
 
 /** High-frequency actions shown when the user right-clicks otherwise empty

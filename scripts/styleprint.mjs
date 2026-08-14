@@ -33,7 +33,7 @@ mkdirSync(OUT, { recursive: true })
 
 const ROUTES = [
   '/', '/today', '/quick', '/knowledge', '/relations', '/library', '/tools',
-  '/tool-space', '/media', '/subtitles', '/ocr', '/private-tools', '/history',
+  '/media', '/subtitles', '/ocr', '/private-tools', '/history',
   '/clipboard', '/developer-tools', '/code-image', '/visual', '/create', '/ai',
   '/documents', '/words', '/review', '/lab', '/settings',
 ]

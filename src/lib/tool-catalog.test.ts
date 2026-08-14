@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { browseCommandTools, searchTools, toolCatalog, toolCatalogOwnerLocation } from './tool-catalog'
+import { toolCategories } from './toolbox-nav'
 
 describe('tool catalog', () => {
   it('keeps every tool id and route usable', () => {
@@ -43,18 +44,23 @@ describe('tool catalog', () => {
     const library = toolCatalog.find((tool) => tool.id === 'library')!
     const qrCode = toolCatalog.find((tool) => tool.id === 'utility-qrcode')!
 
-    expect(toolCatalogOwnerLocation(developer)).toEqual({ path: '/tool-space', query: { filter: 'developer', focus: 'developer-json' } })
-    expect(toolCatalogOwnerLocation(qrCode)).toEqual({ path: '/tool-space', query: { filter: 'developer', focus: 'utility-qrcode' } })
+    expect(toolCatalogOwnerLocation(developer)).toEqual({ path: '/c/dev' })
+    expect(toolCatalogOwnerLocation(qrCode)).toEqual({ path: '/c/express' })
     expect(toolCatalogOwnerLocation(codeImage)).toEqual({ path: '/create' })
     expect(toolCatalogOwnerLocation(library)).toEqual({ path: '/knowledge' })
   })
 
-  it('assigns every tool-space utility to one visible category', () => {
-    const categoryIds = new Set(['pdf', 'image-media', 'text-organize', 'developer'])
-    const toolSpaceTools = toolCatalog.filter((tool) => toolCatalogOwnerLocation(tool).path === '/tool-space')
-    const categorized = toolSpaceTools.filter((tool) => categoryIds.has(toolCatalogOwnerLocation(tool).query?.filter ?? ''))
+  /* `toolCatalogOwnerLocation` carries its own copy of the group-to-category
+     map, because `toolbox-nav` reads this module and the cycle would cost more
+     than the duplication. This is what keeps the copy honest: every category
+     it can name has to be a category the toolbox actually renders. */
+  it('sends every utility tool to a category page the toolbox really has', () => {
+    const known = new Set(toolCategories.map((category) => category.id))
+    const utilities = toolCatalog.filter((tool) => toolCatalogOwnerLocation(tool).path.startsWith('/c/'))
 
-    expect(categorized).toHaveLength(toolSpaceTools.length)
-    expect(categorized.find((tool) => tool.id === 'utility-qrcode')).toBeDefined()
+    expect(utilities.length).toBeGreaterThan(20)
+    for (const tool of utilities) {
+      expect(known).toContain(toolCatalogOwnerLocation(tool).path.slice(3))
+    }
   })
 })

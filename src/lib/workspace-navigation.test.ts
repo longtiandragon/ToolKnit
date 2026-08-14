@@ -8,9 +8,15 @@ describe('workspace navigation', () => {
   // legacy five-space model, so they are excluded rather than left orphaned.
   const railOwnedPaths = new Set(['/', '/c/:category', '/today'])
 
+  /* A redirect is an old link kept working, not a page. `/tool-space` is one:
+     it used to be a second tool browser and now lands on the toolbox. Asking
+     navigation to expose it would be asking the product to advertise a
+     forwarding address. */
+  const renderedRoutes = appRoutes.filter(route => 'component' in route)
+
   it('keeps every implemented user-facing route visible in navigation or Ctrl+K', () => {
     const paths = workspaceDiscoverablePaths()
-    const implementedPaths = appRoutes.map(route => route.path).filter(path => !railOwnedPaths.has(path))
+    const implementedPaths = renderedRoutes.map(route => route.path).filter(path => !railOwnedPaths.has(path))
     expect(implementedPaths.filter(path => !paths.has(path))).toEqual([])
   })
 
@@ -23,8 +29,8 @@ describe('workspace navigation', () => {
   it('keeps every feature route owned by a primary space', () => {
     const owners = workspaceRouteOwners()
     const utilityPaths = new Set(['/settings', ...railOwnedPaths])
-    expect(appRoutes.map(route => route.path).filter(path => !utilityPaths.has(path) && !owners.has(path))).toEqual([])
-    expect(owners.get('/lab')).toEqual(['/tool-space'])
+    expect(renderedRoutes.map(route => route.path).filter(path => !utilityPaths.has(path) && !owners.has(path))).toEqual([])
+    expect(owners.get('/lab')).toEqual(['/'])
   })
 
   it('puts all five spaces in the empty Ctrl+K state', () => {
@@ -62,7 +68,7 @@ describe('workspace navigation', () => {
       expect(groups.primary.every(action => !groups.more.some(item => item.to === action.to))).toBe(true)
     }
     expect(workspaceContextActionGroups('/create').more.map(action => action.label)).toEqual(expect.arrayContaining(['LaTeX 公式编辑', '公式图片识别', 'AI 内容工作台']))
-    expect(workspaceContextActionGroups('/tool-space').more.map(action => action.label)).toEqual(expect.arrayContaining(['剪贴板历史', '处理历史', '本机能力与实验']))
+    expect(workspaceContextActionGroups('/').more.map(action => action.label)).toEqual(expect.arrayContaining(['剪贴板历史', '处理历史', '本机能力与实验']))
     expect(workspaceContextActionGroups('/unknown')).toEqual({ primary: [], more: [] })
   })
 

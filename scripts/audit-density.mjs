@@ -27,7 +27,7 @@ const OUT = join(process.env.TEMP || '.', 'density')
 mkdirSync(OUT, { recursive: true })
 
 const ROUTES = ['/', '/today', '/quick', '/knowledge', '/relations', '/library', '/tools',
-  '/tool-space', '/history', '/clipboard', '/developer-tools', '/code-image', '/visual',
+  '/history', '/clipboard', '/developer-tools', '/code-image', '/visual',
   '/create', '/ai', '/documents', '/words', '/review', '/lab', '/settings']
 
 const COLLECT = `() => {

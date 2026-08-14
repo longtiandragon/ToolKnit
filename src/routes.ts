@@ -15,7 +15,11 @@ export const appRoutes: RouteRecordRaw[] = [
 // to do. Titling the route with the operation as well left both lines
 // claiming to be the same thing.
 meta: { title: '文件工具' } },
-  { path: '/tool-space', name: 'tool-space', component: () => import('@/views/ToolsSpaceView.vue'), meta: { title: '工具空间' } },
+  // There is one tool browser, and it is the home route. This path used to
+  // answer "where are the tools?" a second time, with its own search, its own
+  // filters and the same 45 cards; it stays as a redirect so old links and
+  // saved deep links keep working.
+  { path: '/tool-space', redirect: '/' },
   { path: '/media', name: 'media', component: () => import('@/views/MediaDeskView.vue'), meta: { title: '媒体转换台' } },
   { path: '/subtitles', name: 'subtitles', component: () => import('@/views/SubtitleView.vue'), meta: { title: '字幕校对台' } },
   { path: '/ocr', name: 'ocr', component: () => import('@/views/OcrView.vue'), meta: { title: '离线文字识别' } },

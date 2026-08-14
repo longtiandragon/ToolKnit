@@ -120,7 +120,7 @@ const quickActions: QuickAction[] = [
   { id: 'question', icon: 'review', label: '记录错题', to: '/documents?kind=question&create=question', secondary: { label: '浏览错题与题目', to: '/documents?kind=question' } },
   { id: 'markdown', icon: 'book', label: '打开 Markdown', to: '/documents?kind=note', secondary: { label: '新建笔记', create: 'note' } },
   { id: 'code', icon: 'terminal', label: '制作代码长图', to: '/code-image', secondary: { label: '查看最近处理任务', to: '/history' }, catalogId: 'code-image' },
-  { id: 'pdf', icon: 'toolbox', label: '文件处理中心', to: '/tools', secondary: { label: '浏览全部工具', to: '/tool-space' } },
+  { id: 'pdf', icon: 'toolbox', label: '文件处理中心', to: '/tools', secondary: { label: '浏览全部工具', to: '/' } },
 ]
 
 const quickActionMenuItems = computed<QuickActionMenuItem[]>(() => {

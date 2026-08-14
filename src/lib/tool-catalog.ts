@@ -19,33 +19,29 @@ export interface CommandToolGroup {
   tools: ToolCatalogItem[]
 }
 
-export type ToolSpaceFilterId = 'all' | 'favorite' | 'pdf' | 'image-media' | 'text-organize' | 'developer'
-
-const toolSpaceFilterByGroup: Partial<Record<CatalogGroup, ToolSpaceFilterId>> = {
+/* The toolbox's own category ids, by catalogue group. Kept here rather than
+   imported from `toolbox-nav`, which reads this module — and short enough that
+   the duplication is cheaper than the cycle. `buildToolCategories` is the
+   other half; the two are checked against each other in the tests. */
+const toolboxCategoryByGroup: Record<CatalogGroup, string> = {
   PDF: 'pdf',
-  图片: 'image-media',
-  媒体: 'image-media',
-  文本: 'text-organize',
-  整理: 'text-organize',
-  开发: 'developer',
-  // QR is the only small “表达” utility intentionally owned by Tools;
-  // creative canvases and code sharing still return from the branch below.
-  表达: 'developer',
+  图片: 'image',
+  文本: 'text',
+  开发: 'dev',
+  媒体: 'media',
+  整理: 'organize',
+  表达: 'express',
+  AI: 'ai',
+  资料: 'source',
 }
 
-/** Keep “show me where this belongs” aligned with the five-space model.
- * Utility tools open the searchable directory with enough context to reveal
- * the selected card; creation and source workflows stay in their own space. */
+/** Where "show me where this belongs" goes. Creation and source workflows have
+ * their own spaces; every other tool lives in the toolbox, on its category
+ * page — which is the same grid as the home route, already filtered. */
 export function toolCatalogOwnerLocation(tool: ToolCatalogItem) {
   if (tool.group === '资料') return { path: '/knowledge' }
   if ((tool.group === '表达' && tool.id !== 'utility-qrcode') || tool.group === 'AI') return { path: '/create' }
-  return {
-    path: '/tool-space',
-    query: {
-      filter: toolSpaceFilterByGroup[tool.group] ?? 'all',
-      focus: tool.id,
-    },
-  }
+  return { path: `/c/${toolboxCategoryByGroup[tool.group]}` }
 }
 
 function fileTool(id: string, title: string, description: string, group: 'pdf' | 'image' | 'text' | 'organize', icon: string, keywords: string[], query: Record<string, string> = {}): ToolCatalogItem {

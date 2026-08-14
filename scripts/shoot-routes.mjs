@@ -18,7 +18,7 @@ const ROUTES = [
   ['relations', '/relations'],
   ['library', '/library'],
   ['tools', '/tools'],
-  ['tool-space', '/tool-space'],
+
   ['media', '/media'],
   ['subtitles', '/subtitles'],
   ['ocr', '/ocr'],

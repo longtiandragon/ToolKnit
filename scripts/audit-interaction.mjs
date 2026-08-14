@@ -32,7 +32,7 @@ const BASE = 'http://127.0.0.1:1421/#'
 
 const ROUTES = [
   '/', '/today', '/quick', '/knowledge', '/relations', '/library', '/tools',
-  '/tool-space', '/media', '/subtitles', '/ocr', '/private-tools', '/history',
+  '/media', '/subtitles', '/ocr', '/private-tools', '/history',
   '/clipboard', '/developer-tools', '/code-image', '/visual', '/create', '/ai',
   '/documents', '/words', '/review', '/lab', '/settings',
 ]
