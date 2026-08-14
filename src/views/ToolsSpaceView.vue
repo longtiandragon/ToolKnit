@@ -7,7 +7,7 @@ import { personalPackEnabled } from '@/lib/build-profile'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { historyOutputPaths, historyReplayLocation } from '@/lib/history-list'
 import { revealDesktopFile } from '@/lib/native'
-import { toolCatalog, toolCatalogOwnerLocation, toolSpaceQuickTools, type ToolCatalogItem, type ToolSpaceFilterId } from '@/lib/tool-catalog'
+import { toolCatalog, toolCatalogOwnerLocation, type ToolCatalogItem, type ToolSpaceFilterId } from '@/lib/tool-catalog'
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useUiStore } from '@/stores/ui'
 import type { Job } from '@/types'
@@ -41,7 +41,6 @@ const filters: { id: ToolSpaceFilterId; label: string; icon: string }[] = [
 // while disappearing from every category card.
 const workspaceTools = toolCatalog.filter((tool) => toolCatalogOwnerLocation(tool).path === '/tool-space')
 function catalogFilter(tool: ToolCatalogItem) { return toolCatalogOwnerLocation(tool).query?.filter as ToolSpaceFilterId | undefined }
-const quickTools = toolSpaceQuickTools()
 const favoriteIds = computed(() => new Set(store.favorites.map((favorite) => favorite.toolId)))
 const categoryStats = computed(() => filters.slice(2).map((filter) => ({
   ...filter,
@@ -211,7 +210,6 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
       title="工具空间"
       subtitle="按类别浏览全部工具，或直接搜索文件格式与操作名"
       :stats="[
-        { label: '可用工具', value: workspaceTools.length },
         { label: '已收藏', value: favoriteIds.size },
         { label: '已完成', value: completedCount },
         { label: '运行中', value: runningCount, tone: runningCount ? 'accent' : undefined },
@@ -225,29 +223,12 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
 
     <div class="grid gap-4 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(280px,320px)]">
       <div class="stack gap-4 min-w-0">
-        <nav class="grid gap-2 grid-cols-2 md:grid-cols-3 2xl:grid-cols-4" aria-label="常用工具直达">
-          <RouterLink
-            v-for="tool in quickTools"
-            :key="tool.id"
-            v-memo="[tool.id, isFavorite(tool)]"
-            :to="tool.to"
-            class="row gap-2.5 px-3 py-2.5 rounded-md panel transition-colors duration-120 hover:border-accent hover:bg-accent-soft"
-            aria-haspopup="menu"
-            :aria-expanded="toolMenu?.tool.id === tool.id"
-            :aria-label="`${tool.title}；右键可收藏或打开菜单`"
-            @click="store.recordToolUsage(tool.id, router.resolve(tool.to).fullPath)"
-            @contextmenu="openToolMenu($event, tool)"
-            @keydown="openToolMenuFromKeyboard($event, tool)"
-          >
-            <span class="center w-8 h-8 shrink-0 rounded-sm bg-surface-2 text-accent"><AppIcon :name="tool.icon" :size="15" /></span>
-            <span class="stack gap-0.5 min-w-0 flex-1">
-              <b class="text-[12px] font-medium truncate text-fg">{{ tool.title }}</b>
-              <small class="text-[11px] truncate text-fg-3">{{ tool.description }}</small>
-            </span>
-            <AppIcon v-if="isFavorite(tool)" name="star" :size="12" class="shrink-0 text-warn" />
-          </RouterLink>
-        </nav>
-
+        <!-- One list, once. A hard-coded strip of eight picks used to sit
+             here, directly above a searchable list of all 45 tools that
+             contains the same eight — 合并 PDF and 离线文字识别 were both on
+             screen twice, 380px apart, and the strip had no heading to say why
+             those eight. The list below is searchable, filterable and personal
+             (favourites, recents); the strip was none of those. -->
         <section class="pane" aria-label="工具列表">
           <div class="row flex-wrap gap-x-3 gap-y-2 shrink-0 px-3 py-2 border-b border-line">
             <label class="row gap-1.5 min-w-48 flex-1 max-w-96 h-8 px-2.5 rounded-sm bg-well border border-line focus-within:border-accent">

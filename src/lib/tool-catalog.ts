@@ -114,22 +114,6 @@ export const toolCatalog: ToolCatalogItem[] = [
 /** High-frequency desktop jobs exposed before the complete catalog. IDs are
  * kept here, beside the canonical metadata, so the tool space never grows a
  * second set of titles, routes or keywords that can drift out of sync. */
-export const toolSpaceQuickToolIds = [
-  'pdf-merge',
-  'image-convert',
-  'local-ocr',
-  'media-clip',
-  'local-transcription',
-  'text-transform-json',
-  'developer-json',
-  'clipboard-history',
-] as const
-
-export function toolSpaceQuickTools(catalog: readonly ToolCatalogItem[] = toolCatalog) {
-  const byId = new Map(catalog.map((tool) => [tool.id, tool]))
-  return toolSpaceQuickToolIds.flatMap((id) => byId.get(id) ?? [])
-}
-
 function searchableText(item: ToolCatalogItem) {
   return [item.title, item.description, item.group, ...item.keywords].join(' ').toLocaleLowerCase('zh-CN')
 }

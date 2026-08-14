@@ -88,6 +88,17 @@ const completedToday = computed(() => {
 const localItemCount = computed(() => store.sources.length + store.documents.length)
 const noteCount = computed(() => store.documents.reduce((count, document) => count + (document.kind === 'note' ? 1 : 0), 0))
 const learningPulse = computed(() => calculateLearningPulse(store.documents, store.vocabulary))
+
+/* The day's counters, minus the ones that read zero. On a quiet morning this
+   strip was 「进行中 0 · 今日完成 0」 taking half the row to say nothing had
+   happened yet — which is the one thing the user already knows. It fills in as
+   the day does. */
+const todayStats = computed(() => [
+  { label: '进行中', value: activeJobs.value, tone: 'text-accent' },
+  { label: '今日完成', value: completedToday.value },
+  { label: '本地条目', value: localItemCount.value },
+  { label: '待复习', value: learningPulse.value.dueCount, tone: 'text-warn', to: '/review' },
+].filter((stat) => stat.value !== 0))
 const latestBackup = computed(() => latestBackupRecord(store.settings))
 const latestBackupLabel = computed(() => latestBackup.value?.kind === 'automatic'
   ? '每日归档'
@@ -502,23 +513,23 @@ const formatBytes = (value: number) => value < 1024
         </button>
       </form>
 
-      <dl class="grid grid-cols-4 gap-px rounded-md bg-line border border-line overflow-hidden" aria-label="今日工作状态">
-        <div class="stack gap-0.5 px-4 py-3 bg-surface">
-          <dt class="text-[12px] text-fg-3">进行中</dt>
-          <dd class="text-[20px] font-semibold tabular-nums" :class="activeJobs ? 'text-accent' : 'text-fg'">{{ activeJobs }}</dd>
-        </div>
-        <div class="stack gap-0.5 px-4 py-3 bg-surface">
-          <dt class="text-[12px] text-fg-3">今日完成</dt>
-          <dd class="text-[20px] font-semibold tabular-nums">{{ completedToday }}</dd>
-        </div>
-        <div class="stack gap-0.5 px-4 py-3 bg-surface">
-          <dt class="text-[12px] text-fg-3">本地条目</dt>
-          <dd class="text-[20px] font-semibold tabular-nums">{{ localItemCount }}</dd>
-        </div>
-        <RouterLink to="/review" class="stack gap-0.5 px-4 py-3 bg-surface transition-colors duration-120 hover:bg-surface-2">
-          <dt class="text-[12px] text-fg-3">待复习</dt>
-          <dd class="text-[20px] font-semibold tabular-nums" :class="learningPulse.dueCount ? 'text-warn' : 'text-fg'">{{ learningPulse.dueCount }}</dd>
-        </RouterLink>
+      <dl
+        v-if="todayStats.length"
+        class="grid gap-px rounded-md bg-line border border-line overflow-hidden"
+        :style="{ gridTemplateColumns: `repeat(${todayStats.length}, minmax(0, 1fr))` }"
+        aria-label="今日工作状态"
+      >
+        <component
+          :is="stat.to ? 'RouterLink' : 'div'"
+          v-for="stat in todayStats"
+          :key="stat.label"
+          :to="stat.to"
+          class="stack gap-0.5 px-4 py-3 bg-surface"
+          :class="stat.to && 'transition-colors duration-120 hover:bg-surface-2'"
+        >
+          <dt class="text-[12px] text-fg-3">{{ stat.label }}</dt>
+          <dd class="text-[20px] font-semibold tabular-nums" :class="stat.tone">{{ stat.value }}</dd>
+        </component>
       </dl>
     </header>
 

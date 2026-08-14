@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { browseCommandTools, searchTools, toolCatalog, toolCatalogOwnerLocation, toolSpaceQuickToolIds, toolSpaceQuickTools } from './tool-catalog'
+import { browseCommandTools, searchTools, toolCatalog, toolCatalogOwnerLocation } from './tool-catalog'
 
 describe('tool catalog', () => {
   it('keeps every tool id and route usable', () => {
@@ -26,14 +26,6 @@ describe('tool catalog', () => {
   it('returns curated popular tools for an empty query', () => {
     expect(searchTools('')).toHaveLength(5)
     expect(searchTools('').every((tool) => tool.popular)).toBe(true)
-  })
-
-  it('keeps every tool-space quick action backed by canonical catalog metadata', () => {
-    const quickTools = toolSpaceQuickTools()
-    expect(quickTools).toHaveLength(8)
-    expect(quickTools.map((tool) => tool.id)).toEqual(toolSpaceQuickToolIds)
-    expect(new Set(quickTools.map((tool) => tool.group))).toEqual(new Set(['PDF', '图片', '文本', '媒体', '开发', '整理']))
-    expect(quickTools.every((tool) => tool.title && tool.description && tool.to.path.startsWith('/'))).toBe(true)
   })
 
   it('prioritizes favorites and recent tools without duplicate command entries', () => {

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 
 import { RouterLink, useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
-import { createQuickStarts, recentCreateMenuHeight } from '@/lib/create-quick-starts'
+import { recentCreateMenuHeight } from '@/lib/create-recent-menu'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { isDesktop, listDesktopVisualProjects, type DesktopVisualProjectSummary } from '@/lib/native'
 import { discoverVisualProjects, visualProjectRoute } from '@/lib/visual-project'
@@ -265,24 +265,12 @@ async function runRecentAction(action: 'open' | 'edit' | 'read' | 'mindmap' | 'f
 
     <div class="grid gap-4 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(300px,340px)]">
       <div class="stack gap-4 min-w-0">
-        <!-- The eight high-frequency starts, as one strip rather than a nav
-             that repeats the workflow grid below it. -->
-        <nav class="grid gap-2 grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4" aria-label="常用创作动作">
-          <RouterLink
-            v-for="item in createQuickStarts"
-            :key="item.id"
-            v-memo="[item.id]"
-            :to="item.to"
-            class="row gap-2.5 px-3 py-2.5 rounded-md panel transition-colors duration-120 hover:border-accent hover:bg-accent-soft"
-          >
-            <span class="center w-8 h-8 shrink-0 rounded-sm bg-surface-2 text-accent"><AppIcon :name="item.icon" :size="16" /></span>
-            <span class="stack gap-0.5 min-w-0 flex-1">
-              <b class="text-[12px] font-medium truncate text-fg">{{ item.label }}</b>
-              <small class="text-[11px] truncate text-fg-3">{{ item.detail }}</small>
-            </span>
-          </RouterLink>
-        </nav>
-
+        <!-- One list, once. This strip used to sit above the workflow grid
+             showing the same seven things in a shorter form — 思维图谱,
+             Mermaid, LaTeX and 代码长图 each appeared twice within one screen,
+             and the eighth entry (拼接滚动长图) is the CANVAS workflow's own
+             right-click action. The grid keeps the descriptions, so what was
+             lost is the duplicate, not a route. -->
         <section class="stack gap-2" aria-label="创作工作流">
           <div class="row-between gap-3">
             <h3 class="text-[12px] font-semibold text-fg-3">工作流</h3>

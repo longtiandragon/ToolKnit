@@ -8,13 +8,28 @@
  * a title, one line of orientation, actions on the right, and an optional row
  * of counts that are worth glancing at.
  */
-defineProps<{
+import { computed } from 'vue'
+
+const props = defineProps<{
   title: string
   /** One line. If the page's purpose needs a paragraph, the page is unclear. */
   subtitle?: string
   /** Small counts shown as a single strip under the title. */
   stats?: { label: string; value: string | number; tone?: 'accent' | 'warn' | 'danger' }[]
 }>()
+
+/**
+ * A counter reading zero is not news. On a fresh workspace these strips were
+ * four numbers of which three were 0 — 90px of nothing, above everything, on
+ * exactly the pages a new user opens first. Whatever a zero would have said
+ * ("no sources yet") the page's own empty state says better and in words.
+ *
+ * So the strip carries only the counts that have something to report, and
+ * disappears entirely when none do. It grows back as the workspace fills.
+ * A value that is a string — "6 / 6", a date — is never a zero and always
+ * shows.
+ */
+const visibleStats = computed(() => (props.stats ?? []).filter((stat) => stat.value !== 0 && stat.value !== '0'))
 
 const toneClass = {
   accent: 'text-accent',
@@ -38,11 +53,11 @@ const toneClass = {
     <slot name="lead" />
 
     <dl
-      v-if="stats?.length"
+      v-if="visibleStats.length"
       class="grid gap-px rounded-md bg-line border border-line overflow-hidden"
-      :style="{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }"
+      :style="{ gridTemplateColumns: `repeat(${visibleStats.length}, minmax(0, 1fr))` }"
     >
-      <div v-for="stat in stats" :key="stat.label" class="stack gap-0.5 px-4 py-3 bg-surface">
+      <div v-for="stat in visibleStats" :key="stat.label" class="stack gap-0.5 px-4 py-3 bg-surface">
         <dt class="text-[12px] text-fg-3">{{ stat.label }}</dt>
         <dd class="text-[20px] font-semibold tabular-nums" :class="stat.tone && toneClass[stat.tone]">{{ stat.value }}</dd>
       </div>
