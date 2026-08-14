@@ -205,6 +205,21 @@ a { color: inherit; text-decoration: none; }
 code, pre, kbd, samp { font-family: var(--font-family-mono); }
 
 ::placeholder { color: var(--fg-3); opacity: 1; }
+
+/* The colour swatch is the one input Chrome will not let a utility size: the
+   control has its own intrinsic box. It is a base element style, not a
+   legacy alias, so it lives here rather than in the bridge. */
+input[type='color'] {
+  width: 44px;
+  min-width: 44px;
+  height: 32px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--well);
+  cursor: pointer;
+}
+input[type='color']:hover { border-color: var(--line-strong); }
 /* A 14% tint does not read as "selected". The ring value is the weakest one
    that still marks a run of text at a glance. */
 ::selection { background: var(--accent-ring); color: var(--fg); }

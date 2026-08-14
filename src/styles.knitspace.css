@@ -144,9 +144,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .command-feature-group nav a:hover .app-icon, .command-feature-group nav a:focus-visible .app-icon { color: currentColor; }
 
-
-@media (max-width: 760px) {    }
-
 /* The command center is a daily desktop surface, so even its secondary labels
    stay readable against warm paper instead of collapsing into 8px metadata. */
 .command-space-tile strong { font-size: 12px; }
@@ -167,14 +164,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* Today: a quiet command surface, not another busy dashboard. */
 .workbench-dashboard { max-width: 1540px; padding: 24px 30px 30px; }
-
-
-
-
-.hero-copy > .eyebrow { display: block; color: var(--accent); font: 700 12px var(--font-family-ui); letter-spacing: .12em; }
-
-
-.hero-copy > p:not(.eyebrow) { display: block; max-width: 620px; margin: 14px 0 21px; color: var(--fg); font-size: 14px; line-height: 1.78; }
 
 
 
@@ -285,7 +274,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .reading-paper--night .markdown-preview :is(img, .math-block) { background: var(--reading-soft-paper); }
 .reading-paper--night .markdown-preview .markdown-mermaid { color: #17211d; background: #dce8e1; }
 .reading-paper--night .markdown-editor-source-pane .cm-placeholder { color: var(--reading-muted) !important; }
-@media (max-width: 1160px) {   }
 
 
 
@@ -366,7 +354,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 .markdown-frontmatter__details .quiet-button { min-height: 27px; margin: 0; padding: 0 8px; font-size: 11px; }
-@media (max-width: 980px) {  }
 
 /* AI stays a deliberate, local draft action instead of permanently taking
    width away from the Markdown reader. The component is asynchronously
@@ -383,9 +370,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 .ai-drawer .primary-button.wide { width: 100%; min-height: 37px; }
-
-@media (prefers-reduced-motion: reduce) {  }
-@media (max-width: 760px) {  }
 
 /* Vocabulary belongs to the knowledge space, so it uses the same quiet
    reading surface while making the sense/card relationship immediately clear. */
@@ -421,15 +405,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .workbench-dashboard { padding-right: 22px; padding-left: 22px; }
 }
 
-/* Tauri can be resized down to 900 px. Keep this after the 1180 px Knitspace
-   override so the compact rail from the desktop-responsive layer is not
-   accidentally widened again and forced outside the native viewport. */
-@media (max-width: 1050px) {
-  
-  
-  
-}
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
@@ -437,19 +412,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Private pack: a single manifest-driven desktop workbench. Only the selected
    operation mounts its form and result surface, keeping large tool packs calm. */
 .private-tools{display:grid;min-height:100%;grid-template-rows:auto minmax(0,1fr);gap:16px;padding:22px 30px 28px}@keyframes private-tools-progress{to{transform:translateX(390%)}}
-/* Today stays compact so the next focused action remains obvious. */
-.today-focus{display:grid;grid-template-columns:minmax(0,1.26fr) minmax(340px,.74fr);gap:1px;margin-top:22px;overflow:hidden;border:1px solid var(--accent-soft);border-radius:17px;background:var(--accent-soft);box-shadow:var(--shadow-sm)}.today-focus__timer>header>span.running{color:var(--green-strong);background:var(--green-bg)}.today-focus__timer>header>span.running i{background:var(--accent-solid);box-shadow:0 0 0 4px color-mix(in srgb,var(--green) 13%,transparent)}.today-focus__timer>header>span.paused i{background:var(--warn)}
-
-.today-focus__notice .app-icon{color:var(--green)}
-.today-focus__anniversary-list li[role='button']:focus-visible,.today-focus__focus-history li[role='button']:focus-visible{position:relative;z-index:1;outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:2px;border-radius:5px}
-@media(max-width:980px){}@media(max-width:620px){}
 .source-preview__loading .app-icon{color:var(--green)}
 /* A material library can grow for years. Keep its reading surface calm while
    a fixed-height, buffered list prevents hundreds of file rows from joining
    the desktop DOM at once. */
 .source-list{display:flex;min-height:0;flex-direction:column;overflow:hidden}.source-list>.filter-row{flex:0 0 auto}.source-search .app-icon{flex:0 0 auto;color:var(--green-strong)}.source-list__summary .quiet-button{min-height:25px;padding:0 7px;font-size:12px}.source-list__rows .library-list-empty .quiet-button{margin-top:5px}
 .source-context-menu .app-icon{color:var(--green-strong)}
-.source-tag:focus-visible,.source-tag-input button:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 45%,transparent);outline-offset:1px}.source-tag-input{display:grid;height:28px;grid-template-columns:minmax(72px,112px) 28px;overflow:hidden;border:1px solid var(--accent-soft);border-radius:999px;background:var(--surface-2)}.source-tag-input:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}.source-tag-input input{min-width:0;padding:0 4px 0 9px;border:0;outline:0;color:var(--text);background:transparent;font:600 12px var(--font-family-ui)}.source-tag-input input::placeholder{color:var(--text-disabled)}.source-tag-input button{display:grid;width:28px;height:28px;place-items:center;border:0;color:var(--green-strong);background:transparent}.source-tag-input button:hover:not(:disabled){background:var(--green-bg)}.source-tag-input button:disabled{cursor:not-allowed;opacity:.38}@media(max-width:760px){}
+.source-tag:focus-visible,.source-tag-input button:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 45%,transparent);outline-offset:1px}.source-tag-input{display:grid;height:28px;grid-template-columns:minmax(72px,112px) 28px;overflow:hidden;border:1px solid var(--accent-soft);border-radius:999px;background:var(--surface-2)}.source-tag-input:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}.source-tag-input input{min-width:0;padding:0 4px 0 9px;border:0;outline:0;color:var(--text);background:transparent;font:600 12px var(--font-family-ui)}.source-tag-input input::placeholder{color:var(--text-disabled)}.source-tag-input button{display:grid;width:28px;height:28px;place-items:center;border:0;color:var(--green-strong);background:transparent}.source-tag-input button:hover:not(:disabled){background:var(--green-bg)}.source-tag-input button:disabled{cursor:not-allowed;opacity:.38}
 
 /* Source preview is a reading surface, not a bare browser canvas. It keeps
    the original material visually quiet while making desktop operations
@@ -458,11 +427,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Clipboard is intentionally progressive: a history may keep hundreds of
    local entries, but opening the workspace should never instantiate all card
    bodies or image fallbacks at once. */
-.clipboard-toolbar{align-items:center}.clipboard-card>header>button:hover,.clipboard-card>header>button:focus-visible,.clipboard-card>header>button.pinned{border-color:var(--accent-soft);color:var(--green-strong);background:var(--green-bg)}.clipboard-card>footer .danger{color:var(--danger)!important}.clipboard-context-menu button.danger{color:var(--danger)}.clipboard-context-menu button.danger:hover:not(:disabled),.clipboard-context-menu button.danger:focus-visible:not(:disabled){background:var(--danger-soft)}.clipboard-context-menu .app-icon{color:currentColor}@media(max-width:760px){}
-
-
-.today-focus__ledger-chart>span.today{color:var(--green-strong)}.today-focus__ledger-chart>span.today small{font-weight:800}.today-focus__ledger-form.editing{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--green)}
-@media(max-width:760px){}@media(max-width:520px){}
+.clipboard-toolbar{align-items:center}.clipboard-card>header>button:hover,.clipboard-card>header>button:focus-visible,.clipboard-card>header>button.pinned{border-color:var(--accent-soft);color:var(--green-strong);background:var(--green-bg)}.clipboard-card>footer .danger{color:var(--danger)!important}.clipboard-context-menu button.danger{color:var(--danger)}.clipboard-context-menu button.danger:hover:not(:disabled),.clipboard-context-menu button.danger:focus-visible:not(:disabled){background:var(--danger-soft)}.clipboard-context-menu .app-icon{color:currentColor}
 
 /* Developer results behave like a small desktop scratchpad: the visual cue
    makes the contextual actions discoverable without adding another toolbar. */
@@ -471,11 +436,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Desktop context actions turn history into the next focused action, instead
    of relegating it to a destructive-only menu. */
 .today-focus__anniversary-form.editing{grid-template-columns:minmax(0,1fr) 125px auto 34px;padding-top:10px;background:linear-gradient(90deg,var(--accent-soft),transparent 72%)}
-.today-focus__anniversary-form.editing input{border-color:color-mix(in srgb,var(--green) 38%,var(--line));background:var(--surface)}
-
-
-.today-focus__menu button:not(.danger):hover,.today-focus__menu button:not(.danger):focus-visible{color:var(--green-strong);background:var(--green-bg)}.today-focus__menu button.danger{color:var(--danger)}.today-focus__menu button.danger:hover,.today-focus__menu button.danger:focus-visible{background:var(--danger-soft)}.today-focus__menu button.danger:focus-visible{outline-color:var(--danger-soft)}
-@media(max-width:620px){.today-focus__anniversary-form.editing{grid-template-columns:minmax(0,1fr) 108px auto 34px}}
 
 /* The task ledger can grow for years. A fixed desktop row keeps it calm and
    lets Vue maintain only the visible window instead of hundreds of panels. */
@@ -486,7 +446,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .history-view-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:min(100%,500px);margin:-8px 0 13px}.history-view-switch button.active{border-color:var(--accent-soft);color:var(--green-strong);background:linear-gradient(135deg,var(--accent-soft),var(--surface));box-shadow:inset 3px 0 var(--green)}
 .history-batch-bar.active{border-color:var(--accent-soft);background:var(--accent-soft)}.history-batch-bar .quiet-button{min-height:28px;padding:0 9px;font-size:12px}.history-batch-bar .quiet-button.danger{margin-left:auto;color:var(--danger);border-color:var(--danger-soft);background:var(--danger-soft)}.history-card.selected{border-color:var(--accent)!important;background:linear-gradient(120deg,var(--accent-soft),var(--surface))!important}.history-card.selected .history-select{color:var(--accent-fg);background:var(--accent-solid-hover)}
 .activity-ledger article.actionable{cursor:pointer;transition:background .15s ease,color .15s ease}.activity-ledger article.actionable:hover,.activity-ledger article.actionable:focus-visible{border-radius:7px;background:var(--green-bg);outline:0;box-shadow:inset 3px 0 var(--green)}.activity-ledger article.actionable:hover>svg{color:var(--green-strong)}
-@media(max-width:900px){}
 
 
 /* Mermaid stays a quiet reading surface until it becomes an intentional
@@ -518,7 +477,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* Outputs live beside the task, not behind a toast. Their card holds only
    metadata, so a long batch never attaches generated PDF/image bytes to Vue. */
-.tool-output-result{margin-top:14px;overflow:hidden;border-color:var(--accent-soft);background:linear-gradient(135deg,var(--surface),var(--surface-2))}.tool-output-result>header .quiet-button{display:inline-flex;min-height:30px;flex:0 0 auto;align-items:center;justify-content:center;padding:0 9px;font-size:12px}.tool-output-context-menu button.danger{color:var(--danger)}.tool-output-context-menu button.danger:hover,.tool-output-context-menu button.danger:focus-visible{background:var(--danger-soft)}@media(max-width:700px){}
+.tool-output-result{margin-top:14px;overflow:hidden;border-color:var(--accent-soft);background:linear-gradient(135deg,var(--surface),var(--surface-2))}.tool-output-result>header .quiet-button{display:inline-flex;min-height:30px;flex:0 0 auto;align-items:center;justify-content:center;padding:0 9px;font-size:12px}.tool-output-context-menu button.danger{color:var(--danger)}.tool-output-context-menu button.danger:hover,.tool-output-context-menu button.danger:focus-visible{background:var(--danger-soft)}
 
 /* Tauri owns the window; Knitspace owns the chrome. The titlebar is compact,
    keyboard-visible and independent from page scrolling. Resize notifications
@@ -547,18 +506,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .titlebar-context-menu button.danger { border-top: 1px solid var(--line-weak); color: var(--danger); }
 .titlebar-context-menu button.danger:hover, .titlebar-context-menu button.danger:focus-visible { color: var(--danger); background: var(--danger-soft); }
 
-
-
-@media (max-width: 1080px) {
-  
-  
-}
-
 /* Backup is two deliberately distinct recovery paths: a portable workspace
    snapshot, and a complete desktop Vault archive with the original files. */
 .backup-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line-weak)}.backup-option__actions .quiet-button,.backup-option__actions .primary-button{flex:1;min-width:0;min-height:32px;padding:0 8px;font-size:12px}.backup-option__actions--vault .primary-button{flex:1.3}.backup-retention .app-icon{flex:0 0 auto;margin-top:1px;color:var(--green-strong)}.backup-panel .notice{word-break:break-word}@media(max-width:760px){.backup-option__actions .quiet-button,.backup-option__actions .primary-button{width:100%}}
 
-.vault-health-card>footer .quiet-button{font-size:12px}.vault-restore-progress li.done>i{border-color:var(--green);background:var(--accent-solid)}.vault-restore-progress li.active{border-color:var(--accent-soft);background:var(--accent-soft)}.vault-restore-progress li.active>i{border:2px solid var(--green);background:var(--surface);box-shadow:0 0 0 3px var(--accent-soft)}@keyframes vault-restore-pulse{0%,100%{opacity:.55}50%{opacity:1}}@media(max-width:900px){}@media(prefers-reduced-motion:reduce){}
+.vault-health-card>footer .quiet-button{font-size:12px}.vault-restore-progress li.done>i{border-color:var(--green);background:var(--accent-solid)}.vault-restore-progress li.active{border-color:var(--accent-soft);background:var(--accent-soft)}.vault-restore-progress li.active>i{border:2px solid var(--green);background:var(--surface);box-shadow:0 0 0 3px var(--accent-soft)}@keyframes vault-restore-pulse{0%,100%{opacity:.55}50%{opacity:1}}
 
 /* External Markdown workspace: two clear sidebar sources, a lazily rendered
    tree and a desktop-sized context menu. */
@@ -595,8 +547,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .external-workspace-menu button.danger{color:var(--danger)}.external-workspace-menu button.danger:hover,.external-workspace-menu button.danger:focus-visible{color:var(--danger);background:var(--danger-soft)}
 
-@media(prefers-reduced-motion:reduce){}
-
 
 
 .workspace-entry-dialog input[aria-invalid=true]{border-color:var(--danger);box-shadow:0 0 0 3px var(--danger-soft)}
@@ -614,7 +564,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
    color alone. */
 .save-state.is-dirty{color:var(--warn);font-weight:700}
 .editor-recovery-banner__actions .primary-button{box-shadow:none}
-@media(max-width:900px){}
 .document-workspace-tab.active{z-index:1;color:var(--text);border-color:var(--line);background:var(--surface-raised);box-shadow:0 -2px 8px var(--accent-soft)}.document-workspace-tab>button[role=tab]{display:flex;align-items:center;gap:7px;min-width:0;flex:1;padding:0 27px 0 9px;border:0;color:inherit;background:transparent;font:650 12px/1 var(--font-family-ui);cursor:pointer}.document-workspace-tab>button[role=tab]>i{flex:0 0 6px;width:6px;height:6px;border-radius:50%;background:var(--accent-soft)}.document-workspace-tab.active>button[role=tab]>i{background:var(--accent-solid)}.document-workspace-tab.dirty>button[role=tab]>i{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}.document-workspace-tab>button[role=tab]>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.document-workspace-tab>button[role=tab]>small{position:absolute;right:7px;top:-4px;padding:1px 4px;border-radius:4px;color:var(--warn);background:var(--surface-2);font:700 11px var(--font-family-ui);pointer-events:none}.document-workspace-tab:hover .document-workspace-tab__close,.document-workspace-tab.active .document-workspace-tab__close,.document-workspace-tab__close:focus-visible{opacity:1}.document-workspace-tab.dirty .document-workspace-tab__close{top:8px}.document-workspace-tab :focus-visible{outline:2px solid var(--accent-soft);outline-offset:-2px}.document-tab-context-menu button.separator{margin-top:4px;border-top:1px solid var(--line-weak);border-radius:0 0 6px 6px}
 /* The tab strip lives in the final-loaded desktop chrome: transient menus stay
    above inspectors, while the close target never overlaps the dirty label. */
@@ -624,8 +573,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 .document-unsaved-dialog .eyebrow{color:var(--warn)}
-
-@media(prefers-reduced-motion:reduce){}
 
 /* External workspace search exposes its I/O cost before the query runs. */
 .external-workspace__search-scope { display: grid; min-height: 28px; grid-template-columns: auto auto minmax(0,1fr); align-items: center; gap: 7px; margin: 0 11px 6px; color: var(--muted); }
@@ -647,4 +594,4 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* Vault diagnostics are fetched only when Settings is opened. This keeps the
    integrity check out of startup while making the data layer verifiable. */
-.vault-health-card{overflow:hidden;margin-bottom:17px;border:1px solid var(--accent-soft);border-radius:14px;background:linear-gradient(135deg,var(--accent-soft),var(--surface) 56%,var(--surface-2));box-shadow:0 10px 28px var(--accent-soft);cursor:context-menu}.vault-health-card>header>p.ready{color:var(--green-strong)}.vault-health-card>header>p.ready i{background:var(--accent-solid);box-shadow:0 0 0 4px var(--accent-soft)}.vault-health-card>footer .quiet-button{min-height:30px;padding:0 9px;font-size:12px}@keyframes vault-menu-in{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:none}}@keyframes vault-health-pulse{0%{background-position:100% 0}100%{background-position:-100% 0}}@media(max-width:900px){}
+.vault-health-card{overflow:hidden;margin-bottom:17px;border:1px solid var(--accent-soft);border-radius:14px;background:linear-gradient(135deg,var(--accent-soft),var(--surface) 56%,var(--surface-2));box-shadow:0 10px 28px var(--accent-soft);cursor:context-menu}.vault-health-card>header>p.ready{color:var(--green-strong)}.vault-health-card>header>p.ready i{background:var(--accent-solid);box-shadow:0 0 0 4px var(--accent-soft)}.vault-health-card>footer .quiet-button{min-height:30px;padding:0 9px;font-size:12px}@keyframes vault-menu-in{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:none}}@keyframes vault-health-pulse{0%{background-position:100% 0}100%{background-position:-100% 0}}

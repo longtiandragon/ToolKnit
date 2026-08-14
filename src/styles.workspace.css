@@ -866,12 +866,6 @@ a:hover {
   margin-top: 12px;
 }
 
-@media (max-width: 1120px) {
-  
-
-  
-}
-
 /* Final interaction colors. Earlier dark-theme hover rules must not leak into
    the current light workspace and turn text white on a light surface. */
 .command-trigger:hover:not(:disabled),
@@ -928,16 +922,6 @@ a:hover {
 
 
 
-.workbench-hero::before,
-.workbench-hero::after,
-.hero-copy > .eyebrow,
-.hero-copy h2,
-.hero-copy > p:not(.eyebrow) {
-  display: none;
-}
-
-
-
 
 
 
@@ -966,26 +950,6 @@ a:hover {
 .quick-launch > div > button:hover,
 .favorite-card:hover {
   box-shadow: none;
-}
-
-@media (max-width: 1180px) {
-
-  
-
-  
-
-  
-}
-
-@media (max-width: 920px) {
-
-  
-
-  
-
-  
-
-  
 }
 
 .document-workspace-tab > button[role="tab"] > small {

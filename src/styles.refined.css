@@ -1,14 +1,11 @@
 /* Refined desktop shell: quiet graphite surfaces, a single mint action color, and less visual chrome. */
 .app-icon{display:block;flex:0 0 auto;overflow:visible}.new-task,.primary-button,.quiet-button{gap:7px}.rail-link .app-icon{transition:transform .18s}.rail-link:hover .app-icon{transform:scale(1.08)}
-@media(max-width:1250px){}
 .annotation-canvas{cursor:crosshair}.annotation-mark.box{width:17%;height:13%;border-radius:3px}.annotation-mark.arrow{border:0;background:transparent;font-size:42px;line-height:1;text-shadow:0 1px 7px var(--line-strong)}.annotation-mark.text{width:auto;height:auto;padding:5px 8px;border-radius:4px;background:var(--line-strong);font-size:14px;font-weight:700;white-space:nowrap}
 
-body{background:var(--bg);letter-spacing:.005em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}html{scrollbar-color:var(--line) transparent;scrollbar-width:thin}.command-trigger:hover,.quiet-button:hover,.secondary-action:hover{border-color:var(--accent);color:var(--text);background:var(--green-bg)}.new-task,.run-tool,.primary-button{min-height:36px;padding:0 16px;border-radius:var(--radius-lg);box-shadow:0 4px 12px var(--accent-soft);transition:transform var(--duration-fast) var(--ease-out),box-shadow var(--duration-fast) var(--ease-out),background var(--duration-fast) var(--ease-out)}.new-task:hover,.run-tool:hover,.primary-button:hover{transform:translateY(-1px);box-shadow:0 8px 20px var(--accent-soft)}.new-task:active,.run-tool:active,.primary-button:active{transform:translateY(0);box-shadow:0 2px 6px var(--accent-soft)}
-.control-hero p:not(.eyebrow){max-width:535px;font-size:12px;line-height:1.8;color:var(--text-secondary)}.activity-panel,.inbox-panel,.panel{border-color:var(--line);border-radius:var(--radius-lg);background:var(--surface);box-shadow:none}
+body{background:var(--bg);letter-spacing:.005em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}html{scrollbar-color:var(--line) transparent;scrollbar-width:thin}.command-trigger:hover,.quiet-button:hover,.secondary-action:hover{border-color:var(--accent);color:var(--text);background:var(--green-bg)}.new-task,.run-tool,.primary-button{min-height:36px;padding:0 16px;border-radius:var(--radius-lg);box-shadow:0 4px 12px var(--accent-soft);transition:transform var(--duration-fast) var(--ease-out),box-shadow var(--duration-fast) var(--ease-out),background var(--duration-fast) var(--ease-out)}.new-task:hover,.run-tool:hover,.primary-button:hover{transform:translateY(-1px);box-shadow:0 8px 20px var(--accent-soft)}.new-task:active,.run-tool:active,.primary-button:active{transform:translateY(0);box-shadow:0 2px 6px var(--accent-soft)}.activity-panel,.inbox-panel,.panel{border-color:var(--line);border-radius:var(--radius-lg);background:var(--surface);box-shadow:none}
 .tool-nav button.active{background: var(--surface-2);border-color:var(--accent-soft)}.operation-tabs button.active{background:var(--accent-solid);color:var(--accent-fg)}
 .ai-action-panel>button.active{background: var(--surface-2);border-color:var(--accent-soft)}
 .profile-delete:hover,.profile-delete.pending{border-color:var(--danger);color:var(--fg)}.profile-delete.pending{background:var(--danger-soft)}
-@media(max-width:1250px){}
 
 /* File center: compact, task-led, and safe in narrow desktop windows. */
 body{min-width:0;overflow-x:hidden}
@@ -57,14 +54,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .diff-results .added{background:var(--accent-soft)}.diff-results .removed{background:var(--danger-soft)}.diff-results .added> b{color:var(--green)}.diff-results .removed> b{color:var(--red)}
 .qr-result .primary-button{gap:7px;margin-top:5px}
 
-
-@media(max-width:1050px){
-  
-  
-  
-  
-}
-
 @media(max-width:760px){
   
   
@@ -80,7 +69,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 /* Knitspace — a precise desktop instrument panel, not an admin dashboard. */
 .task-indicator.active i{background:var(--amber);box-shadow:0 0 9px var(--warn);animation:signal 1.5s ease infinite}@keyframes signal{50%{opacity:.35}}.task-drawer article>i.running{color:var(--amber)}.task-drawer article>i.failed{color:var(--red)}.task-drawer article>i.succeeded{color:var(--green)}
 .breadcrumbs{display:flex;align-items:center;gap:6px;padding-top:19px;color:var(--text-disabled);font:12px var(--font-family-ui);letter-spacing:.04em}.breadcrumbs a{transition:color var(--duration-fast) var(--ease-out)}.breadcrumbs a:hover{color:var(--green)}.breadcrumbs i{font-style:normal;opacity:.45}
-.hero-copy>p:not(.eyebrow){max-width:610px;margin:12px 0 20px;color:var(--text-secondary);font-size:12px;line-height:1.75}
 
 .favorite-card{position:relative;min-height:136px;padding:15px;overflow:visible;border:1px solid var(--line);border-radius:var(--radius-lg);background:var(--surface);transition:border-color var(--duration-fast) var(--ease-out),transform var(--duration-fast) var(--ease-out)}.favorite-card:hover{transform:translateY(-2px);border-color:var(--accent-soft)}.favorite-card>span{display:flex;align-items:center;justify-content:space-between}.favorite-card>span>b{display:grid;place-items:center;width:34px;height:34px;border-radius:8px;color:var(--green);background:var(--accent-soft)}.favorite-card kbd{color:var(--fg-3);font:12px 'DM Mono'}.favorite-card h4{margin-top:13px;font-size:12px}.favorite-card p{margin-top:4px;color:var(--muted);font-size:12px;line-height:1.55}.favorite-card>i{position:absolute;left:15px;bottom:12px;color:var(--green);font-size:12px;font-style:normal}.favorite-card menu{position:absolute;z-index:5;right:7px;top:34px;display:grid;width:112px;margin:0;padding:5px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:0 12px 30px var(--fg)}.favorite-card menu button{padding:7px;border:0;color:var(--text);background:transparent;font-size:12px;text-align:left}.favorite-card menu button:hover{background:var(--accent-soft)}
 .compact-task-list article>span.succeeded i{background:var(--accent-solid)}.compact-task-list article>span.running i{background:var(--amber)}.compact-task-list article>span.failed i{background:var(--red)}
@@ -90,9 +78,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .app-toast.error{border-left-color:var(--red)}.app-toast.error::after{background:var(--red);animation-duration:7s}.app-toast.warning{border-left-color:var(--amber)}.app-toast.warning::after{background:var(--amber)}.app-toast.info{border-left-color:var(--accent)}.app-toast.info::after{background:var(--accent-solid)}.app-toast.error>b{color:var(--red);background:var(--red-bg)}.app-toast.warning>b{color:var(--amber);background:var(--amber-bg)}@keyframes toast-in{from{opacity:0;transform:translateX(15px)}to{opacity:1;transform:none}}@keyframes toast-progress{from{width:100%}to{width:0%}}.confirm-dialog>p:not(.eyebrow),.close-dialog>p:not(.eyebrow){margin-top:9px;color:var(--muted);font-size:13px;line-height:1.7}
 .setting-control,.setting-toggle{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 0;border-top:1px solid var(--line)}.setting-control span,.setting-toggle span{min-width:0}.setting-control b,.setting-control small,.setting-toggle b,.setting-toggle small{display:block}.setting-control b,.setting-toggle b{font-size:13px}.setting-control small,.setting-toggle small{margin-top:4px;overflow:hidden;color:var(--muted);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.setting-control select{padding:7px;border:1px solid var(--line);border-radius:6px;color:var(--text);background:var(--surface);font-size:12px}.setting-toggle>input{width:35px;height:18px;accent-color:var(--green)}.setting-toggle.warning{border-color:var(--warn-soft)}
 .command-favorite.active{color:var(--amber)!important}
-@media(max-width:1180px){}
-@media(max-width:1050px){}
-@media(max-width:900px){}
 .unified-drop.active{border-color:var(--green);border-style:solid;background:var(--accent-soft);box-shadow:inset 0 0 0 3px var(--accent-soft),0 0 32px var(--accent-soft)}.inbox-zone>.quiet-button{margin-top:10px}
 @keyframes skeleton-scan{to{background-position:-200% 0}}
 
@@ -104,8 +89,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .codesnap-forest .codesnap-titlebar{background:#fff}.codesnap-paper .codesnap-titlebar{background:#e7dfd0}.codesnap-paper .codesnap-titlebar strong{color:#535c57}.codesnap-paper .hljs-title,.codesnap-paper .hljs-title.function_,.codesnap-paper .hljs-built_in,.codesnap-paper .hljs-type{color:#3972a3}
 .codesnap-capture-host{position:fixed;z-index:-100;left:-10000px;top:0;display:grid;gap:20px;pointer-events:none}.codesnap-export-frame{width:800px;padding:40px;background:radial-gradient(circle at 40% 0,rgba(197,215,230,.24),transparent 46%),#8896a3}.codesnap-export-frame .codesnap-card{width:720px}
 .codesnap-stage>.codesnap-card{cursor:context-menu}.codesnap-stage>.codesnap-card:focus-visible{outline:3px solid color-mix(in srgb,var(--green) 68%,transparent);outline-offset:4px}
-@media(max-width:950px){.codesnap-stage{padding:22px}}
-@media(max-width:760px){}.codesnap-stage{min-height:0}.codesnap-capture-host{gap:0}.codesnap-export-frame{width:720px;padding:0;background:transparent}.codesnap-export-frame .codesnap-card{width:720px;box-shadow:none}
+@media(max-width:950px){.codesnap-stage{padding:22px}}.codesnap-stage{min-height:0}.codesnap-capture-host{gap:0}.codesnap-export-frame{width:720px;padding:0;background:transparent}.codesnap-export-frame .codesnap-card{width:720px;box-shadow:none}
 
 /* ── Surgical readability overrides ── */
 /* 8px → 9px */

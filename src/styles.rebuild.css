@@ -195,29 +195,6 @@ textarea:focus-visible,
 
 
 
-.hero-copy .eyebrow {
-  color: var(--accent);
-}
-
-
-
-
-
-.hero-copy > p:not(.eyebrow) {
-  max-width: 650px;
-  color: var(--fg);
-  font-size: 15px;
-  line-height: 1.8;
-}
-
-
-
-
-
-
-
-
-
 
 
 
@@ -562,29 +539,6 @@ textarea:focus-visible,
   font-size: 12px;
 }
 
-@media (max-width: 1240px) {
-
-  
-
-  
-
-}
-
-@media (max-width: 1000px) {
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-}
-
 /* Workspace density pass — one calm desktop grammar across every view. */
 .workspace-content > .page-enter {
   width: 100%;
@@ -620,16 +574,6 @@ textarea:focus-visible,
 /* Dashboard: brand moment, not a full-screen billboard. */
 .workbench-dashboard {
   padding-top: 22px;
-}
-
-
-
-
-
-.hero-copy > p:not(.eyebrow) {
-  max-width: 620px;
-  font-size: 13px;
-  line-height: 1.65;
 }
 
 
@@ -795,10 +739,6 @@ textarea:focus-visible,
 .setting-card > p:not(.eyebrow) {
   margin-bottom: 13px;
   line-height: 1.6;
-}
-
-@media (max-width: 1400px) {
-  
 }
 
 @media (max-width: 900px) {

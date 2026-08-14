@@ -1,15 +1,20 @@
 /*
- * Compatibility bridge for the not-yet-migrated views.
+ * Token aliases for the legacy stylesheets.
  *
- * The legacy stylesheets reference their own token vocabulary — `--text`,
- * `--muted`, `--green`, `--surface-raised` and friends — roughly 2,700 times,
- * and each of those layers declares its own `:root` values. This file loads
- * after all of them and redefines that vocabulary in terms of the new design
- * tokens, so a view still running on legacy CSS follows the theme switch
- * without being rewritten first.
+ * Every view, the shell and every component now render in UnoCSS utilities.
+ * What is left in the six legacy sheets is the Markdown reading surface and
+ * the rules that dress content the app does not own — and those still speak
+ * the old token vocabulary (`--text`, `--muted`, `--green`, `--surface-raised`
+ * and friends), about 150 references. This file loads after all of them and
+ * redefines that vocabulary in terms of the design tokens, so the reading
+ * surface follows the theme switch without being rewritten.
  *
- * It is scaffolding. Every entry here should disappear as its views migrate to
- * UnoCSS, and the file should be deleted with the last of them.
+ * It used to be scaffolding for un-migrated *views*; those are all gone, and
+ * with them the hero blocks, the desktop title bar, the focus card and the
+ * vocabulary grid this file used to correct. What remains is one alias table.
+ * It disappears when the reading surface is rewritten in terms of the new
+ * names — a job worth doing on its own, because that surface is also what
+ * gets exported to HTML.
  */
 
 :root,
@@ -139,11 +144,7 @@
 
 /* The legacy layers each painted their own page ground — a warm gradient, a
    32px engineering grid. The theme owns the ground now. */
-body {
-  background: var(--bg) !important;
-  color: var(--fg);
-  font-family: var(--font-family-ui);
-}/* The rail is a component again (`AppRail.vue`, 240px). The legacy layers
+/* The rail is a component again (`AppRail.vue`, 240px). The legacy layers
    still position the workspace against the old 246px aside, so the offset is
    corrected here until the shell's own CSS is gone. */
 /* `AppRail.vue` paints itself with tokens, but it still answers to `.rail`
@@ -162,9 +163,6 @@ body {
   border-bottom: 1px solid var(--line);
   box-shadow: none;
 }
-.desktop-titlebar__identity b { color: var(--fg); }
-.desktop-titlebar__identity span { color: var(--fg-2); border-color: var(--line); }
-.desktop-titlebar__route { color: var(--fg-2); }
 
 /* Page heroes were dark evergreen slabs designed to be islands inside a light
    page: light text, decorative rings, gradient grounds. On a dark theme the
@@ -218,8 +216,6 @@ body {
   font: 600 22px/1.35 var(--font-family-display);
   letter-spacing: -.015em;
 }
-.hero-copy h2 em { color: var(--accent); font-style: normal; }
-.hero-copy > p:not(.eyebrow) { max-width: 62ch; color: var(--fg-2); font-size: 13px; }
 
 /* `.vocabulary` is both the route root and its own two-pane grid. The polish
    layer turns every route root into a flex column so short pages can fill the
@@ -239,25 +235,9 @@ body {
   border-color: var(--line);
   background: var(--line);
 }
-.today-focus > * { min-height: 100%; }
 
 /* Colour pickers were inheriting the generic `width: 100%` for inputs, so a
    swatch became a full-width slab that dominated the parameter panel. A colour
    is a value, not a field. */
-input[type='color'] {
-  width: 44px;
-  min-width: 44px;
-  height: 32px;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--well);
-  cursor: pointer;
-}
-input[type='color']:hover { border-color: var(--line-strong); }
 
-/* Decorative counters and console panels inside the old heroes. */
-.hero-console,
-.hero-metric-grid,
-.hero-signal,
-.hero-privacy { border-color: var(--line); background: var(--surface); color: var(--fg-2); }
+
