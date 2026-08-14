@@ -4442,7 +4442,13 @@ onBeforeUnmount(() => {
             <template #fallback><div class="editor-mode-loading" role="status">正在加载思维导图…</div></template>
           </Suspense>
         </div>
-        <footer class="row-between gap-3 shrink-0 relative px-3 h-8 border-t border-line" aria-label="Markdown 文档状态">
+        <!-- `pr-28`: the AI launcher is anchored bottom-right over this footer
+             (`AiAssistPanel.vue`, fixed right-5 bottom-5) and covered its last
+             86px — the reading-time figure and the statistics chevron. The bar
+             reserves the room rather than the launcher moving, because the
+             launcher is anchored to the window and this footer is the only
+             thing that ever sits under it. -->
+        <footer class="row-between gap-3 shrink-0 relative px-3 pr-28 h-8 border-t border-line" aria-label="Markdown 文档状态">
           <span class="row gap-2 min-w-0 text-[11px] text-fg-3">
             <b class="shrink-0 font-medium text-fg-2">MARKDOWN</b>
             <i class="w-px h-3 shrink-0 bg-line" aria-hidden="true" />

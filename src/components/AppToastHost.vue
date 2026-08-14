@@ -1,7 +1,20 @@
 <script setup lang="ts">
 import { useUiStore } from '@/stores/ui'
+import type { ToastTone } from '@/stores/ui'
 import AppIcon from '@/components/AppIcon.vue'
 const ui = useUiStore()
+
+/* The glyph has to agree with the sentence. These were `review`, `shield` and
+   `sparkle` — which is to say 「任务已完成」 shipped with an undo arrow,
+   「AI 请求失败」 with a checkmark inside a shield, and 「词表文件过大」 with the
+   AI sparkle. Colour was carrying the tone alone while the icon argued with
+   it. */
+const toneIcon: Record<ToastTone, string> = {
+  success: 'check',
+  error: 'warning',
+  warning: 'warning',
+  info: 'sparkle',
+}
 </script>
 <!--
   Toasts land over whatever page is open, so they cannot borrow their legibility
@@ -23,8 +36,8 @@ const ui = useUiStore()
           : item.tone === 'error' ? 'bg-danger-soft text-danger'
             : item.tone === 'warning' ? 'bg-warn-soft text-warn'
               : 'bg-accent-soft text-accent'"
-      ><AppIcon :name="item.tone === 'success' ? 'review' : item.tone === 'error' ? 'shield' : 'sparkle'" :size="16" /></b>
-      <span class="stack gap-0.5 min-w-0 flex-1"><strong class="text-[13px] font-medium text-fg">{{ item.title }}</strong><small v-if="item.detail" class="text-[11px] leading-relaxed text-fg-2">{{ item.detail }}</small></span>
+      ><AppIcon :name="toneIcon[item.tone]" :size="16" /></b>
+      <span class="stack gap-0.5 min-w-0 flex-1"><strong class="text-[13px] font-medium text-fg">{{ item.title }}<span v-if="item.repeats > 1" class="ml-1.5 text-[11px] font-normal tabular-nums text-fg-3">×{{ item.repeats }}</span></strong><small v-if="item.detail" class="text-[11px] leading-relaxed text-fg-2">{{ item.detail }}</small></span>
       <button v-if="item.actionLabel" class="btn-ghost btn-sm shrink-0 text-accent hover:not-disabled:bg-accent-soft hover:not-disabled:text-accent" @click="ui.runAction(item)">{{ item.actionLabel }}</button>
       <button class="center w-7 h-7 shrink-0 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" aria-label="关闭通知" @click="ui.dismiss(item.id)"><AppIcon name="close" :size="14" /></button>
     </article>

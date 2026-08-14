@@ -386,6 +386,10 @@ const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN', { 
       <button v-if="store.settings.clipboardEnabled" class="btn-default btn-sm shrink-0" @click="togglePause">
         {{ store.settings.clipboardPaused ? '继续' : '暂停' }}
       </button>
+      <!-- The strip promises 「可以随时手动读取当前剪贴板」 while监听 is off, and
+           the button that does it only existed inside the empty state — so the
+           promise expired the moment there was one item in the list. -->
+      <button v-else class="btn-default btn-sm shrink-0" @click="capture">读取当前剪贴板</button>
     </section>
 
     <section class="row gap-2 flex-wrap mb-3 p-2 panel" :aria-busy="searchPending">

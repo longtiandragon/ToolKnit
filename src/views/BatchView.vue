@@ -533,7 +533,7 @@ async function run() {
   progress.value = 15
   recentOutputs.value = []
   const kind = group.value as 'pdf' | 'image' | 'text' | 'archive'
-  const label = `${groups.find((item) => item[0] === group.value)?.[1]} · ${operations.value.find((item) => item[0] === operation.value)?.[1]}`
+  const label = `${groups.find((item) => item[0] === group.value)?.[2]} · ${operations.value.find((item) => item[0] === operation.value)?.[1]}`
   const toolId = `${group.value}:${operation.value}`
   const inputs: FileReference[] = files.value.map((file) => ({ name:file.name, size:file.size, mime:file.type, path:(file as File & { path?:string }).path }))
   const job = store.addJob(kind, label, files.value.map((file) => file.name), { toolId, route:'/tools', parameters:recipeParameters(), inputs, retryable:true })
@@ -728,7 +728,7 @@ onBeforeUnmount(() => {
             :max-total-bytes="inputTotalLimit"
             title="或者载入一个文本文件"
             hint="载入后内容会填进上方输入框，原文件不会被改动"
-            @error="message = $event"
+            @error="ui.toast($event, '', 'error')"
           />
         </template>
 
@@ -741,7 +741,7 @@ onBeforeUnmount(() => {
           :max-total-bytes="inputTotalLimit"
           :title="group === 'pdf' && operation === 'images-to-pdf' ? '拖入要合成的图片' : '拖入要处理的文件'"
           :hint="`本次最多载入 ${formatSize(inputTotalLimit)}；处理后生成新文件，原件保持不变`"
-          @error="message = $event"
+          @error="ui.toast($event, '', 'error')"
         />
 
         <!-- A rename report is a preview of an answer, so it belongs beside

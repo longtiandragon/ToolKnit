@@ -71,7 +71,14 @@ watch(() => store.aiProfiles.map((item) => item.id), (ids) => {
   if (!ids.includes(profileId.value)) profileId.value = ids[0] ?? ''
 }, { immediate: true })
 watch(inputFiles,async files=>{const file=files[0];const version=++inputReadVersion;if(!file)return;try{if(file.size>AI_MAX_INPUT_FILE_BYTES)throw new Error('文本文件超过 4 MB，未载入编辑区。');const text=await file.text();if(text.length>AI_MAX_CONTENT_CHARS)throw new Error('文本内容超过 100 万字符，请先在 Markdown 编辑器中拆分需要处理的部分。');if(version===inputReadVersion&&inputFiles.value[0]===file)content.value=text}catch(reason){if(version===inputReadVersion){inputFiles.value=[];error.value=reason instanceof Error?reason.message:'无法读取这个文本文件。'}}})
-watch([content, action, profileId, () => profile.value?.model], () => { payloadVersion.value += 1 })
+/* The banner is an answer to what was on screen when 运行 was pressed. Once any
+   of that changes the answer is stale — 「先粘贴、输入或拖入需要处理的文本。」
+   was still sitting above a box with text in it and a 「31 字符」 counter beside
+   it. */
+watch([content, action, profileId, () => profile.value?.model], () => {
+  payloadVersion.value += 1
+  error.value = ''
+})
 watch(() => route.query.action, value => { action.value = normalizeAction(value) })
 watch(() => route.query.profile, value => {
   if (typeof value === 'string' && store.aiProfiles.some((item) => item.id === value)) profileId.value = value
