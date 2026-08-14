@@ -78,20 +78,29 @@ watch(() => [props.mode, props.initialName] as const, ([mode, initialName]) => {
 
 <template>
   <Teleport to="body">
-    <div class="workspace-entry-dialog-backdrop" @click.self="cancel" @keydown="handleKeydown">
-      <form ref="dialogElement" class="workspace-entry-dialog" role="dialog" aria-modal="true" :aria-labelledby="`workspace-entry-title-${mode}`" @submit.prevent="submit">
-        <header>
-          <span><AppIcon :name="isRename ? 'rename' : isMarkdown ? 'file-text' : 'folder'" :size="18" /></span>
-          <div><p>{{ isRename ? 'WORKSPACE RENAME' : 'WORKSPACE CREATE' }}</p><h3 :id="`workspace-entry-title-${mode}`">{{ title }}</h3></div>
-          <button type="button" aria-label="关闭" :disabled="busy" @click="cancel"><AppIcon name="close" :size="16" /></button>
+    <div class="fixed inset-0 z-150 center px-4 bg-[var(--scrim)] backdrop-blur-[3px]" @click.self="cancel" @keydown="handleKeydown">
+      <form ref="dialogElement" class="stack gap-2.5 w-full max-w-112 p-5 panel shadow-lg" role="dialog" aria-modal="true" :aria-labelledby="`workspace-entry-title-${mode}`" @submit.prevent="submit">
+        <header class="row-between gap-3">
+          <span class="center w-9 h-9 shrink-0 rounded-sm bg-accent-soft text-accent"><AppIcon :name="isRename ? 'rename' : isMarkdown ? 'file-text' : 'folder'" :size="18" /></span>
+          <div class="stack gap-0.5 min-w-0 flex-1">
+            <p class="text-[11px] font-semibold text-fg-3">{{ isRename ? 'WORKSPACE RENAME' : 'WORKSPACE CREATE' }}</p>
+            <h3 :id="`workspace-entry-title-${mode}`" class="text-[15px] font-semibold text-fg">{{ title }}</h3>
+          </div>
+          <button type="button" class="btn-ghost btn-icon w-8 h-8 shrink-0" aria-label="关闭" :disabled="busy" @click="cancel"><AppIcon name="close" :size="16" /></button>
         </header>
-        <p class="workspace-entry-dialog__description">{{ description }}</p>
-        <label>
-          <span>名称</span>
-          <input ref="inputElement" v-model="name" :placeholder="isMarkdown ? '例如：二分查找.md' : '例如：算法'" :aria-invalid="Boolean(visibleError)" aria-describedby="workspace-entry-error" @blur="touched = true" @input="handleInput" />
+        <p class="text-[12px] leading-relaxed text-fg-2">{{ description }}</p>
+        <label class="stack gap-1.5">
+          <span class="text-[12px] font-medium text-fg-2">名称</span>
+          <input ref="inputElement" v-model="name" class="field w-full" :placeholder="isMarkdown ? '例如：二分查找.md' : '例如：算法'" :aria-invalid="Boolean(visibleError)" aria-describedby="workspace-entry-error" @blur="touched = true" @input="handleInput" />
         </label>
-        <p id="workspace-entry-error" class="workspace-entry-dialog__error" :class="{ visible: visibleError }" role="status" aria-live="polite">{{ visibleError || (isMarkdown ? '未填写扩展名时会自动补全 .md' : '名称只作用于当前工作区。') }}</p>
-        <footer><button type="button" class="quiet-button" :disabled="busy" @click="cancel">取消</button><button type="submit" class="primary-button" :disabled="busy || Boolean(validationError)">{{ busy ? '正在处理…' : isRename ? '确认重命名' : '立即创建' }}</button></footer>
+        <!-- The hint line never leaves: it holds its row whether it is telling
+             you the extension will be filled in or that the name is invalid,
+             so the buttons do not jump when validation turns on. -->
+        <p id="workspace-entry-error" class="min-h-4 text-[11px] leading-snug" :class="visibleError ? 'text-danger' : 'text-fg-3'" role="status" aria-live="polite">{{ visibleError || (isMarkdown ? '未填写扩展名时会自动补全 .md' : '名称只作用于当前工作区。') }}</p>
+        <footer class="row justify-end gap-2 mt-1">
+          <button type="button" class="btn-default" :disabled="busy" @click="cancel">取消</button>
+          <button type="submit" class="btn-primary" :disabled="busy || Boolean(validationError)">{{ busy ? '正在处理…' : isRename ? '确认重命名' : '立即创建' }}</button>
+        </footer>
       </form>
     </div>
   </Teleport>

@@ -2,6 +2,9 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const knitspaceCss = readFileSync(new URL('../styles.knitspace.css', import.meta.url), 'utf8')
+// The application frame moved out of the legacy layers into one file that owns
+// it; the rail breakpoints came with it.
+const shellCss = readFileSync(new URL('../styles/shell.css', import.meta.url), 'utf8')
 const viteConfig = readFileSync(new URL('../../vite.config.ts', import.meta.url), 'utf8')
 const packageJson = JSON.parse(
   readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
@@ -21,14 +24,15 @@ describe('native desktop layout contract', () => {
   })
 
   it('applies the compact rail after the wider Knitspace rail breakpoint', () => {
-    const wideRailBreakpoint = knitspaceCss.indexOf('@media (max-width: 1180px)')
-    const compactRailBreakpoint = knitspaceCss.indexOf('@media (max-width: 1050px)')
+    const wideRailBreakpoint = shellCss.indexOf('@media (max-width: 1180px)')
+    const compactRailBreakpoint = shellCss.indexOf('@media (max-width: 1050px)')
 
     expect(wideRailBreakpoint).toBeGreaterThan(-1)
     expect(compactRailBreakpoint).toBeGreaterThan(wideRailBreakpoint)
-    expect(knitspaceCss.slice(compactRailBreakpoint, compactRailBreakpoint + 420)).toContain(
-      '.rail { width: 76px; }',
-    )
+    // The rail's width is driven by `--rail-w`, which the workspace also reads,
+    // so the two can never disagree about how wide the gutter is.
+    expect(shellCss.slice(compactRailBreakpoint)).toContain('--rail-w: 76px;')
+    expect(shellCss.slice(compactRailBreakpoint)).toMatch(/\.app-shell \.rail\s*\{\s*width: var\(--rail-w\);/)
   })
 
   it('keeps the desktop development command and Vite address in one explicit contract', () => {

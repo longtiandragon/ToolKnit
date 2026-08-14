@@ -154,8 +154,11 @@ onBeforeUnmount(() => activeRunController?.abort())
 </script>
 
 <template>
-  <div class="ai-workbench page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeOutputContextMenu()">
-    <PageHeader title="AI 工作台" subtitle="三步走:选任务、确认要发送的材料、校对生成的草稿">
+  <!-- No `ai-workbench__*` classes; the scoped block that styled them is gone
+       with them. The 01 / 02 / 03 order stays — sending content to a model is
+       a linear, consequential task and the steps are the reassurance. -->
+  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6" @click="closeOutputContextMenu()">
+    <PageHeader title="AI 工作台" subtitle="三步走：选任务、确认要发送的材料、校对生成的草稿">
       <template #actions>
         <span class="row gap-1.5 h-9 px-3 rounded-sm bg-surface-2 border border-line text-[12px] text-fg-2">
           <AppIcon name="shield" :size="14" :class="profile ? 'text-success' : 'text-warn'" />
@@ -167,124 +170,180 @@ onBeforeUnmount(() => activeRunController?.abort())
       </template>
     </PageHeader>
 
-    <section class="ai-workbench__flow">
-      <aside class="ai-workbench__actions">
-        <header><p class="eyebrow">01 · 选择任务</p><h3>这次要得到什么</h3></header>
-        <nav aria-label="AI 内容操作">
+    <section class="flex-1 min-h-0 grid grid-cols-[minmax(220px,260px)_minmax(0,1.15fr)_minmax(0,0.95fr)] panel overflow-hidden">
+      <!-- ── 01 Task ───────────────────────────────────────────────────── -->
+      <aside class="stack min-h-0 border-r border-line" aria-label="选择任务">
+        <header class="row gap-2 shrink-0 px-3 h-10 border-b border-line">
+          <span class="center w-5.5 h-5.5 shrink-0 rounded-sm bg-accent-soft font-mono text-[11px] font-semibold text-accent">01</span>
+          <b class="text-[11px] font-semibold text-fg-3">这次要得到什么</b>
+        </header>
+        <nav class="flex-1 min-h-0 overflow-y-auto stack gap-0.5 p-1.5" aria-label="AI 内容操作">
           <button
             v-for="(label, key) in contentActionLabels"
             :key="key"
-            :class="{ active: action === key }"
+            class="row gap-2.5 px-2 py-2 rounded-sm text-left transition-colors duration-120"
+            :class="action === key ? 'bg-accent-soft' : 'hover:bg-surface-2'"
             :aria-pressed="action === key"
             @click="selectAction(key as ContentAiAction)"
           >
-            <b><AppIcon :name="actionMeta[key as ContentAiAction].icon" :size="15" /></b>
-            <span><strong>{{ label }}</strong><small>{{ actionMeta[key as ContentAiAction].description }}</small></span>
-            <AppIcon name="chevron" :size="13" />
+            <b class="center w-7 h-7 shrink-0 rounded-sm" :class="action === key ? 'bg-accent-solid text-accent-fg' : 'bg-surface-2 text-fg-2'">
+              <AppIcon :name="actionMeta[key as ContentAiAction].icon" :size="14" />
+            </b>
+            <span class="stack gap-0.5 min-w-0 flex-1">
+              <strong class="text-[12px] font-medium truncate" :class="action === key ? 'text-accent' : 'text-fg'">{{ label }}</strong>
+              <small class="text-[11px] truncate text-fg-3">{{ actionMeta[key as ContentAiAction].description }}</small>
+            </span>
           </button>
         </nav>
-        <footer>
-          <label for="ai-profile">使用配置</label>
-          <select id="ai-profile" v-model="profileId" :disabled="!store.aiProfiles.length">
+        <footer class="stack gap-1.5 shrink-0 p-3 border-t border-line">
+          <label for="ai-profile" class="text-[11px] font-semibold text-fg-3">使用配置</label>
+          <select id="ai-profile" v-model="profileId" class="field h-8 text-[12px]" :disabled="!store.aiProfiles.length">
             <option v-if="!store.aiProfiles.length" value="">尚未配置</option>
             <option v-for="item in store.aiProfiles" :key="item.id" :value="item.id">{{ item.label }} · {{ item.model }}</option>
           </select>
-          <RouterLink to="/settings?section=ai">管理 API 与系统凭据</RouterLink>
+          <RouterLink to="/settings?section=ai" class="text-[11px] text-accent hover:underline underline-offset-2">管理 API 与系统凭据</RouterLink>
         </footer>
       </aside>
 
-      <main class="ai-workbench__composer">
-        <header>
-          <div><p class="eyebrow">02 · 确认输入</p><h3>确认发送的材料</h3></div>
-          <div class="ai-workbench__composer-status"><span :class="{ warning: contentNearLimit }">{{ contentSizeLabel }} / 100 万</span><button class="primary-button" :class="{ 'is-cancelling': running }" @click="running ? cancelRun() : run()"><AppIcon :name="running ? 'close' : 'sparkle'" :size="14" />{{ running ? '停止等待' : contentActionLabels[action] }}</button></div>
+      <!-- ── 02 Input ──────────────────────────────────────────────────── -->
+      <main class="stack min-h-0 border-r border-line" aria-label="确认输入">
+        <header class="row-between gap-2 shrink-0 px-3 h-10 border-b border-line">
+          <span class="row gap-2 min-w-0">
+            <span class="center w-5.5 h-5.5 shrink-0 rounded-sm bg-accent-soft font-mono text-[11px] font-semibold text-accent">02</span>
+            <b class="text-[11px] font-semibold text-fg-3">确认发送的材料</b>
+          </span>
+          <span class="row gap-2 shrink-0">
+            <small class="font-mono text-[11px] tabular-nums" :class="contentNearLimit ? 'text-warn' : 'text-fg-3'">{{ contentSizeLabel }} / 100 万</small>
+            <button class="btn-sm" :class="running ? 'btn-danger' : 'btn-primary'" @click="running ? cancelRun() : run()">
+              <AppIcon :name="running ? 'close' : 'sparkle'" :size="14" />{{ running ? '停止等待' : contentActionLabels[action] }}
+            </button>
+          </span>
         </header>
+
         <FileDropZone
           v-model="inputFiles"
+          compact
           accept=".txt,.md,.json,.js,.ts,.py,.java,.csv,text/*,application/json"
           :multiple="false"
           :max-file-bytes="AI_MAX_INPUT_FILE_BYTES"
           :max-files="1"
           title="拖入文本、Markdown 或代码"
-          hint="读取后仍会放进下方编辑区，由你最终确认"
+          class="shrink-0 rounded-none! border-0! border-b! border-line!"
           @error="error = $event"
         />
-        <label class="ai-workbench__editor">
-          <span class="visually-hidden">准备发送的文字</span>
-          <textarea v-model="content" :maxlength="AI_MAX_CONTENT_CHARS" spellcheck="true" placeholder="粘贴会议记录、课程笔记、邮件草稿、需求说明或代码……" />
-        </label>
-        <details class="ai-workbench__payload" @toggle="togglePayloadPreview">
-          <summary><span><AppIcon name="shield" :size="14" />查看实际请求体</span><small>{{ payloadStale ? '正文、模型或任务已变化 · 需要刷新' : '密钥不会显示' }}</small></summary>
-          <div>
-            <header><span :title="requestTarget">{{ payloadStale ? '当前预览不是最新请求' : payloadPreviewTruncated ? '请求体预览已安全截断' : '与下一次请求体保持一致' }} · {{ requestTarget }}</span><button type="button" @click="refreshPayloadPreview">刷新预览</button></header>
-            <pre>{{ payloadPreview }}</pre>
+
+        <textarea
+          v-model="content"
+          class="flex-1 min-h-0 px-3 py-2.5 bg-well border-0 text-[13px] leading-relaxed text-fg resize-none focus:outline-none"
+          :maxlength="AI_MAX_CONTENT_CHARS"
+          spellcheck="true"
+          aria-label="准备发送的文字"
+          placeholder="粘贴会议记录、课程笔记、邮件草稿、需求说明或代码……"
+        />
+
+        <p v-if="error" class="row gap-2 shrink-0 px-3 py-2 border-t border-line bg-danger-soft text-[11px] leading-relaxed text-danger" role="alert">
+          <AppIcon name="warning" :size="14" class="shrink-0 mt-0.5" />{{ error }}
+        </p>
+
+        <!-- The one disclosure worth keeping: nobody wants a request body on
+             screen by default, and everybody should be able to see it. -->
+        <details class="stack shrink-0 border-t border-line" @toggle="togglePayloadPreview">
+          <summary class="row-between gap-2 px-3 h-9 cursor-pointer text-[11px] transition-colors duration-120 hover:bg-surface-2">
+            <span class="row gap-1.5 font-semibold text-fg-3"><AppIcon name="shield" :size="13" />查看实际请求体</span>
+            <small :class="payloadStale ? 'text-warn' : 'text-fg-3'">{{ payloadStale ? '正文、模型或任务已变化 · 需要刷新' : '密钥不会显示' }}</small>
+          </summary>
+          <div class="stack gap-1.5 px-3 pb-3">
+            <div class="row-between gap-2">
+              <span class="min-w-0 truncate text-[11px] text-fg-3" :title="requestTarget">
+                {{ payloadStale ? '当前预览不是最新请求' : payloadPreviewTruncated ? '请求体预览已安全截断' : '与下一次请求体保持一致' }} · {{ requestTarget }}
+              </span>
+              <button type="button" class="btn-tool shrink-0" @click="refreshPayloadPreview">刷新预览</button>
+            </div>
+            <pre class="max-h-48 overflow-auto p-2.5 rounded-sm bg-well border border-line font-mono text-[11px] leading-relaxed text-fg-2 whitespace-pre-wrap break-all">{{ payloadPreview }}</pre>
           </div>
         </details>
-        <p v-if="error" class="ai-workbench__error" role="alert"><AppIcon name="warning" :size="15" />{{ error }}</p>
-        <footer>
-          <p><AppIcon name="shield" :size="15" /><span><b>需要你主动发送</b><small>结果只进入右侧草稿区，不自动写入任何文档。</small></span></p>
-          <button type="button" class="quiet-button" :disabled="running || (!content && !inputFiles.length)" @click="clearInput">清空材料</button>
+
+        <footer class="row-between gap-3 shrink-0 px-3 py-2.5 border-t border-line">
+          <span class="row gap-2 min-w-0 text-[11px] leading-relaxed text-fg-3">
+            <AppIcon name="shield" :size="14" class="shrink-0 mt-0.5 text-success" />
+            需要你主动发送；结果只进入右侧草稿区，不自动写入任何文档。
+          </span>
+          <button type="button" class="btn-tool shrink-0" :disabled="running || (!content && !inputFiles.length)" @click="clearInput">清空材料</button>
         </footer>
       </main>
 
+      <!-- ── 03 Draft ──────────────────────────────────────────────────── -->
       <aside
         ref="outputPanelElement"
-        class="ai-workbench__result ai-output-panel--interactive"
+        class="stack min-h-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)] focus-visible:ring-inset"
         tabindex="0"
         :aria-busy="running"
         aria-label="AI 草稿结果；右键或 Shift 加 F10 打开操作菜单"
         @contextmenu="openOutputContextMenu"
         @keydown="openOutputContextFromKeyboard"
       >
-        <header>
-          <div><p class="eyebrow">03 · 校对草稿</p><h3>人工确认草稿</h3></div>
-          <span>{{ result ? contentActionLabels[resultAction] : '等待生成' }}</span>
+        <header class="row-between gap-2 shrink-0 px-3 h-10 border-b border-line">
+          <span class="row gap-2 min-w-0">
+            <span class="center w-5.5 h-5.5 shrink-0 rounded-sm bg-accent-soft font-mono text-[11px] font-semibold text-accent">03</span>
+            <b class="text-[11px] font-semibold text-fg-3">人工确认草稿</b>
+          </span>
+          <span class="chip h-5 px-2 text-[11px] shrink-0">{{ result ? contentActionLabels[resultAction] : '等待生成' }}</span>
         </header>
-        <div v-if="running" class="ai-workbench__running" role="status"><i /><span><b>正在生成新的草稿</b><small>你仍可阅读上一次结果；完成后会原位替换。</small></span></div>
-        <MarkdownContent v-if="result" class="ai-workbench__result-text" :source="result" compact />
-        <div v-else class="ai-workbench__empty">
-          <b><AppIcon name="file-text" :size="24" /></b>
-          <strong>结果会留在这里，等你决定下一步</strong>
-          <p>选择左侧任务、确认中间材料后生成。草稿可复制、导出，或通过右键存入知识库。</p>
-          <span>{{ actionMeta[action].outcome }}</span>
+
+        <p v-if="running" class="row gap-2 shrink-0 px-3 py-2 border-b border-line bg-accent-soft" role="status">
+          <i class="w-1.5 h-1.5 shrink-0 mt-1.5 rounded-full bg-accent animate-pulse" aria-hidden="true" />
+          <span class="stack gap-0.5 min-w-0">
+            <b class="text-[12px] font-medium text-accent">正在生成新的草稿</b>
+            <small class="text-[11px] leading-relaxed text-fg-2">你仍可阅读上一次结果；完成后会原位替换。</small>
+          </span>
+        </p>
+
+        <div class="flex-1 min-h-0 overflow-y-auto">
+          <MarkdownContent v-if="result" class="markdown-content p-4 text-[13px]" :source="result" compact />
+          <div v-else class="stack items-center justify-center gap-3 h-full p-6 text-center">
+            <span class="center w-12 h-12 rounded-lg bg-accent-soft text-accent"><AppIcon name="file-text" :size="22" /></span>
+            <strong class="text-[13px] font-semibold text-fg">结果会留在这里，等你决定下一步</strong>
+            <p class="text-[11px] leading-relaxed text-fg-3">选择左侧任务、确认中间材料后生成。草稿可复制、导出，或通过右键存入知识库。</p>
+            <small class="text-[11px] text-accent">{{ actionMeta[action].outcome }}</small>
+          </div>
         </div>
-        <footer v-if="result">
-          <span>右键或 Shift+F10 查看全部操作</span>
-          <div><button class="quiet-button" @click="copy"><AppIcon name="copy" :size="14" />复制</button><button class="primary-button" @click="exportDraft"><AppIcon name="download" :size="14" />导出 Markdown</button><button class="more-button ai-output-more" aria-label="草稿更多操作" aria-haspopup="menu" :aria-expanded="Boolean(outputContextMenu)" @click.stop="openOutputContextMenu($event)">•••</button></div>
+
+        <footer v-if="result" class="row-between gap-2 shrink-0 px-3 h-11 border-t border-line">
+          <small class="min-w-0 truncate text-[11px] text-fg-3">右键或 Shift+F10 查看全部操作</small>
+          <span class="row gap-1.5 shrink-0">
+            <button class="btn-default btn-sm" @click="copy"><AppIcon name="duplicate" :size="13" />复制</button>
+            <button class="btn-primary btn-sm" @click="exportDraft"><AppIcon name="download" :size="13" />导出</button>
+            <button
+              class="center w-7 h-7 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg"
+              aria-label="草稿更多操作"
+              aria-haspopup="menu"
+              :aria-expanded="Boolean(outputContextMenu)"
+              @click.stop="openOutputContextMenu($event)"
+            >
+              <AppIcon name="more" :size="15" />
+            </button>
+          </span>
         </footer>
       </aside>
     </section>
 
-    <Teleport to="body"><div v-if="outputContextMenu" ref="outputMenuElement" class="ai-output-context-menu" role="menu" aria-label="AI 草稿操作" :style="{left:`${outputContextMenu.x}px`,top:`${outputContextMenu.y}px`}" @click.stop @contextmenu.prevent @keydown.stop="handleOutputMenuKeydown"><p>AI 草稿 <small>仅在你确认后执行</small></p><button role="menuitem" @click="copyFromOutputMenu">复制 Markdown</button><button role="menuitem" @click="saveDraftToKnowledge">存入本地知识库</button><button role="menuitem" @click="exportFromOutputMenu">导出为 Markdown…</button></div></Teleport>
+    <Teleport to="body">
+      <div
+        v-if="outputContextMenu"
+        ref="outputMenuElement"
+        class="menu-panel w-60"
+        role="menu"
+        aria-label="AI 草稿操作"
+        :style="{ left: `${outputContextMenu.x}px`, top: `${outputContextMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleOutputMenuKeydown"
+      >
+        <p class="menu-title">AI 草稿<small class="font-normal">仅在你确认后执行</small></p>
+        <button class="menu-item" role="menuitem" @click="copyFromOutputMenu">复制 Markdown</button>
+        <button class="menu-item" role="menuitem" @click="saveDraftToKnowledge">存入本地知识库</button>
+        <button class="menu-item" role="menuitem" @click="exportFromOutputMenu">导出为 Markdown…</button>
+      </div>
+    </Teleport>
   </div>
 </template>
-
-<style scoped>
-.ai-workbench{width:min(1220px,100%);margin:0 auto;padding:26px 28px 56px;color:var(--text)}
-.ai-workbench__hero{display:grid;grid-template-columns:minmax(0,1fr) 260px;overflow:hidden;box-shadow:0 18px 42px var(--accent-soft)}
-.ai-workbench__hero:before{display:none}
-.ai-workbench__hero>div{position:relative;z-index:1;display:grid;align-content:center;padding:28px 34px}
-.ai-workbench__hero .eyebrow{}.ai-workbench__hero h2{max-width:720px;margin:7px 0 9px;font:710 clamp(27px,3vw,40px)/1.14 var(--font-display);letter-spacing:-.045em}.ai-workbench__hero h2 em{font-style:normal}.ai-workbench__hero>div>p:last-child{max-width:690px;margin:0;font-size:11px;line-height:1.75}
-.ai-workbench__hero>aside{position:relative;z-index:1;display:grid;align-content:center;gap:6px;padding:25px;border-left:1px solid var(--surface-2);}.ai-workbench__hero>aside>span{display:flex;align-items:center;gap:7px;font:700 9px var(--font-mono);letter-spacing:.06em}.ai-workbench__hero>aside strong{margin-top:5px;font:700 20px var(--font-display)}.ai-workbench__hero>aside small{overflow:hidden;font:9px/1.5 var(--font-mono);text-overflow:ellipsis;white-space:nowrap}.ai-workbench__hero>aside a{display:flex;width:max-content;align-items:center;gap:6px;margin-top:8px;font:700 10px var(--font-ui)}.ai-workbench__hero>aside a:hover{}
-.ai-workbench__flow{display:grid;grid-template-columns:205px minmax(300px,1.05fr) minmax(300px,.95fr);align-items:stretch;margin-top:15px;overflow:hidden;border:1px solid var(--accent-soft);border-radius:17px;background:var(--surface-2);box-shadow:0 12px 32px var(--accent-soft)}
-.ai-workbench__actions,.ai-workbench__composer,.ai-workbench__result{min-width:0}.ai-workbench__actions{display:flex;min-height:575px;flex-direction:column;border-right:1px solid var(--line-weak);background:linear-gradient(180deg,var(--accent-soft),var(--surface-2))}.ai-workbench__actions>header,.ai-workbench__composer>header,.ai-workbench__result>header{padding:17px 18px 14px;border-bottom:1px solid var(--line-weak)}.ai-workbench__actions h3,.ai-workbench__composer h3,.ai-workbench__result h3{margin:4px 0 0;font:700 17px var(--font-display)}.ai-workbench__actions nav{display:grid;padding:8px}.ai-workbench__actions nav button{display:grid;width:100%;min-height:62px;grid-template-columns:29px minmax(0,1fr) 13px;align-items:center;gap:8px;padding:8px;border:1px solid transparent;border-radius:10px;color:var(--text-secondary);background:transparent;text-align:left}.ai-workbench__actions nav button:hover,.ai-workbench__actions nav button:focus-visible{border-color:var(--accent-soft);color:var(--green-strong);background:var(--surface-2)}.ai-workbench__actions nav button.active{border-color:var(--accent-soft);color:var(--green-strong);background:var(--surface);box-shadow:inset 3px 0 var(--green),0 5px 14px var(--accent-soft)}.ai-workbench__actions nav button>b{display:grid;width:29px;height:29px;place-items:center;border-radius:8px;color:var(--green-strong);background:var(--green-bg)}.ai-workbench__actions nav button>span{display:grid;min-width:0;gap:3px}.ai-workbench__actions nav strong{font:680 10px var(--font-ui)}.ai-workbench__actions nav small{overflow:hidden;color:var(--muted);font-size:8px;text-overflow:ellipsis;white-space:nowrap}.ai-workbench__actions nav button>.app-icon{color:var(--muted)}
-.ai-workbench__actions>footer{display:grid;gap:6px;margin-top:auto;padding:14px;border-top:1px solid var(--line-weak)}.ai-workbench__actions>footer label{color:var(--muted);font:700 8px var(--font-mono);letter-spacing:.05em}.ai-workbench__actions select{width:100%;min-width:0;height:34px;padding:0 8px;border:1px solid var(--line);border-radius:7px;color:var(--text-secondary);background:var(--surface);font-size:9px}.ai-workbench__actions>footer a{margin-top:3px;color:var(--green-strong);font:700 9px var(--font-ui)}
-.ai-workbench__composer{display:flex;min-height:575px;flex-direction:column;padding:0 16px 15px;border-right:1px solid var(--line-weak)}.ai-workbench__composer>header{display:flex;align-items:flex-end;justify-content:space-between;margin:0 -16px 13px}.ai-workbench__composer>header>span,.ai-workbench__result>header>span{flex:0 0 auto;padding:4px 7px;border-radius:999px;color:var(--green-strong);background:var(--green-bg);font:700 8px var(--font-mono)}.ai-workbench__editor{display:flex;min-height:0;flex:1;margin-top:10px}.ai-workbench__editor textarea{width:100%;min-height:220px;flex:1;padding:14px;border:1px solid var(--line);border-radius:11px;outline:0;color:var(--text);background:var(--surface-2);font:12px/1.75 var(--font-mono);resize:vertical}.ai-workbench__editor textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}.ai-workbench__editor textarea::placeholder{color:var(--text-disabled)}
-.ai-workbench__payload{margin-top:9px;overflow:hidden;border:1px solid var(--line-weak);border-radius:9px;background:var(--accent-soft)}.ai-workbench__payload summary{display:flex;min-height:35px;align-items:center;justify-content:space-between;gap:10px;padding:0 10px;cursor:pointer;list-style:none}.ai-workbench__payload summary::-webkit-details-marker{display:none}.ai-workbench__payload summary>span{display:flex;align-items:center;gap:6px;color:var(--text-secondary);font:650 9px var(--font-ui)}.ai-workbench__payload summary small{color:var(--muted);font:8px var(--font-mono)}.ai-workbench__payload>div{border-top:1px solid var(--line-weak)}.ai-workbench__payload>div>header{display:flex;align-items:center;justify-content:space-between;padding:7px 9px;color:var(--muted);font-size:8px}.ai-workbench__payload>div button{padding:0;border:0;color:var(--green-strong);background:transparent;font:700 8px var(--font-ui)}.ai-workbench__payload pre{max-height:150px;overflow:auto;margin:0;padding:10px;color:var(--accent-fg);background:var(--accent);font:9px/1.65 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}.ai-workbench__error{display:flex;align-items:flex-start;gap:7px;margin:9px 0 0;padding:9px 10px;border-left:3px solid var(--danger);color:var(--danger);background:var(--danger-soft);font-size:9px;line-height:1.55}.ai-workbench__composer>footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px}.ai-workbench__composer>footer>p{display:flex;min-width:0;align-items:flex-start;gap:7px;color:var(--green-strong)}.ai-workbench__composer>footer>p>span{display:grid;gap:2px}.ai-workbench__composer>footer b{color:var(--text-secondary);font:650 9px var(--font-ui)}.ai-workbench__composer>footer small{color:var(--muted);font-size:8px;line-height:1.4}.ai-workbench__composer>footer>div{display:flex;flex:0 0 auto;gap:7px}.ai-workbench__composer button{gap:6px;font-size:9px}
-.ai-workbench__result{position:relative;display:flex;min-height:575px;flex-direction:column;background:linear-gradient(145deg,var(--surface-2),var(--surface-2))}.ai-workbench__result>header{display:flex;align-items:flex-end;justify-content:space-between}.ai-workbench__result-text{min-height:0;flex:1;overflow:auto;padding:18px 20px;color:var(--text);font-size:11px;line-height:1.8}.ai-workbench__empty{display:grid;flex:1;place-items:center;align-content:center;justify-items:center;gap:8px;padding:34px;text-align:center}.ai-workbench__empty>b{display:grid;width:50px;height:50px;place-items:center;border:1px solid var(--accent-soft);border-radius:15px;color:var(--green-strong);background:var(--green-bg)}.ai-workbench__empty strong{max-width:310px;font:700 16px/1.4 var(--font-display)}.ai-workbench__empty p{max-width:330px;margin:0;color:var(--muted);font-size:10px;line-height:1.65}.ai-workbench__empty>span{margin-top:4px;padding:5px 8px;border-radius:999px;color:var(--green-strong);background:var(--accent-soft);font:700 8px var(--font-mono)}.ai-workbench__running{display:flex;align-items:center;gap:9px;margin:10px 12px 0;padding:9px 10px;border:1px solid var(--accent-soft);border-radius:9px;color:var(--green-strong);background:var(--green-bg)}.ai-workbench__running>i{width:15px;height:15px;border:2px solid var(--accent-soft);border-top-color:var(--green);border-radius:50%;animation:ai-workbench-spin .8s linear infinite}.ai-workbench__running>span{display:grid;gap:2px}.ai-workbench__running b{font-size:9px}.ai-workbench__running small{color:var(--muted);font-size:8px}.ai-workbench__result>footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-top:1px solid var(--line-weak);background:var(--surface-2)}.ai-workbench__result>footer>span{color:var(--muted);font:8px var(--font-mono)}.ai-workbench__result>footer>div{display:flex;gap:6px}.ai-workbench__result>footer button{gap:6px;min-height:32px;font-size:9px}
-@keyframes ai-workbench-spin{to{transform:rotate(1turn)}}
-@media(max-width:1120px){.ai-workbench{padding-inline:22px}.ai-workbench__flow{grid-template-columns:190px minmax(0,1fr)}.ai-workbench__result{grid-column:1/-1;min-height:360px;border-top:1px solid var(--line-weak)}.ai-workbench__composer{border-right:0}.ai-workbench__actions{min-height:560px}.ai-workbench__composer{min-height:560px}}
-@media(max-width:760px){.ai-workbench{padding:18px 14px 42px}.ai-workbench__hero{}.ai-workbench__hero>aside{border-top:1px solid var(--surface-2);border-left:0}.ai-workbench__flow{grid-template-columns:1fr}.ai-workbench__actions{min-height:0}.ai-workbench__actions nav{grid-template-columns:repeat(2,minmax(0,1fr))}.ai-workbench__actions>footer{margin-top:0}.ai-workbench__composer{min-height:520px}.ai-workbench__composer>footer,.ai-workbench__result>footer{align-items:flex-start;flex-direction:column}.ai-workbench__composer>footer>div,.ai-workbench__result>footer>div{width:100%}.ai-workbench__composer>footer button,.ai-workbench__result>footer button{flex:1}.ai-workbench__payload summary small{display:none}}
-@media(prefers-reduced-motion:reduce){.ai-workbench__running>i{animation:none}}
-
-/* Keep the primary action visible at the top of the desktop input surface.
-   Auxiliary labels stay at least 9 px even in the dense three-pane layout. */
-.ai-workbench__composer>header{gap:12px}
-.ai-workbench__composer-status{display:flex;flex:0 0 auto;align-items:center;gap:7px}
-.ai-workbench__composer-status>span{padding:4px 7px;border-radius:999px;color:var(--green-strong);background:var(--green-bg);font:700 9px var(--font-mono)}
-.ai-workbench__composer-status>span.warning{color:var(--warn);background:var(--warn-soft)}
-.ai-workbench__composer-status .primary-button{min-height:31px;padding-inline:9px;font-size:9px}
-.ai-workbench__composer-status .primary-button.is-cancelling{border-color:var(--danger-soft);color:var(--danger);background:var(--danger-soft);box-shadow:none}
-.ai-workbench__payload>div>header>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ai-workbench__actions nav small,.ai-workbench__actions>footer label,.ai-workbench__payload summary small,.ai-workbench__payload>div>header,.ai-workbench__composer>footer small,.ai-workbench__running small,.ai-workbench__result>header>span,.ai-workbench__result>footer>span{font-size:9px}
-.ai-workbench__payload>div button,.ai-workbench__empty>span{font-size:9px}
-</style>

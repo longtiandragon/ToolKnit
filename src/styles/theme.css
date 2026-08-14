@@ -22,22 +22,34 @@
   --surface-3: #21262f;
   --well: #0e1116;
 
-  /* Ink. Three steps is enough; a fourth always gets misused. */
+  /* Ink. Three steps is enough; a fourth always gets misused.
+     Every step clears 4.5:1 against the lightest ground it can land on, which
+     is not `--surface-3` but an accent-tinted selection sitting on top of it.
+     `--fg-3` used to fail even plain surface-3 at 3.05:1, which is why the
+     quiet metadata all over the product read as smudges. */
   --fg: #e7e9ee;
-  --fg-2: #99a1b0;
-  --fg-3: #69707e;
+  --fg-2: #b9c1ce;
+  --fg-3: #959dac;
 
   /* Hairlines do the structural work that shadows do in light mode. */
   --line: #232833;
   --line-strong: #2f3644;
 
-  /* One action colour. */
-  --accent: #5b8cff;
-  --accent-hover: #7aa2ff;
-  --accent-press: #4675e6;
+  /* The action colour has two jobs that pull in opposite directions. As ink
+     on the page it must be light enough to read against a dark plane; as a
+     fill under a white label it must be dark enough for that label to read.
+     One value cannot do both — a single #5b8cff gave white-on-accent 3.16:1 —
+     so the ramp is split by role. `--accent*` is ink, stroke and icon;
+     `--accent-solid*` is anything filled that carries `--accent-fg`. */
+  --accent: #7aa2ff;
+  --accent-hover: #9dbaff;
+  --accent-press: #5b8cff;
+  --accent-solid: #3768d8;
+  --accent-solid-hover: #3f72e2;
+  --accent-solid-press: #2f5fc8;
   --accent-fg: #ffffff;
-  --accent-soft: rgb(91 140 255 / 0.14);
-  --accent-ring: rgb(91 140 255 / 0.4);
+  --accent-soft: rgb(122 162 255 / 0.16);
+  --accent-ring: rgb(122 162 255 / 0.4);
 
   --success: #3dd68c;
   --success-soft: rgb(61 214 140 / 0.13);
@@ -54,6 +66,11 @@
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-md: 0 4px 12px rgb(0 0 0 / 0.4);
   --shadow-lg: 0 16px 48px rgb(0 0 0 / 0.55);
+
+  /* What a modal puts between its dialog and the page. It has to be a wash
+     over whatever is behind it, so it is its own token rather than a reused
+     line or surface colour. */
+  --scrim: rgb(2 4 8 / 0.62);
 
   /* Tool categories. Colour is an identifier here, not decoration, so the
      hues stay far apart and are reused verbatim across nav, cards and chips. */
@@ -75,32 +92,53 @@
   --surface: #ffffff;
   --surface-2: #f2f4f7;
   --surface-3: #e9ecf1;
-  --well: #ffffff;
+  /* A well is a recess: the plane an input, a drop target or a canvas sits
+     *in*. It was #ffffff here, the same value as `--surface`, so in light mode
+     every text field, drop zone and editor canvas was flush with the panel
+     around it and only its hairline said where it started. */
+  --well: #f3f5f9;
 
   --fg: #0f1319;
-  --fg-2: #5a6474;
-  --fg-3: #8b94a3;
+  --fg-2: #4a5464;
+  --fg-3: #626b79;
 
   --line: #e4e7ec;
   --line-strong: #cdd3dc;
 
-  --accent: #3b6fe0;
-  --accent-hover: #2f5fc8;
-  --accent-press: #274fa8;
+  /* Light mode needs the same split, in the other direction: ink darkens,
+     the fill can stay at the brighter value because white already reads on
+     it. */
+  --accent: #2f5fc8;
+  --accent-hover: #274fa8;
+  --accent-press: #1f4390;
+  --accent-solid: #3b6fe0;
+  --accent-solid-hover: #2f5fc8;
+  --accent-solid-press: #274fa8;
   --accent-fg: #ffffff;
-  --accent-soft: rgb(59 111 224 / 0.09);
-  --accent-ring: rgb(59 111 224 / 0.3);
+  --accent-soft: rgb(47 95 200 / 0.09);
+  --accent-ring: rgb(47 95 200 / 0.3);
 
-  --success: #12875a;
-  --success-soft: rgb(18 135 90 / 0.1);
-  --warn: #a5680a;
-  --warn-soft: rgb(165 104 10 / 0.1);
-  --danger: #cf3b32;
-  --danger-soft: rgb(207 59 50 / 0.09);
+  /* Each status ink has to clear 4.5:1 against its *own* soft tint, not just
+     against white. A status chip is `text-warn` on `bg-warn-soft`, and at
+     11–12px the old values landed at 3.98 / 4.04 / 4.27 — readable enough to
+     ship, not readable enough to be right. Darkened until the ink on its own
+     tint clears AA — and against a *doubly* tinted ground too, because a
+     status chip often sits inside a tinted card (a warn pill inside a warn
+     notice). Measured worst grounds: rgb(232 229 223), rgb(238 227 229),
+     rgb(224 236 233). On plain white they now measure ~5.6:1.
+     Dark mode was never affected (7.5 / 7.0 / 6.6). */
+  --success: #0f774f;
+  --success-soft: rgb(15 119 79 / 0.1);
+  --warn: #8a5708;
+  --warn-soft: rgb(138 87 8 / 0.1);
+  --danger: #ba352d;
+  --danger-soft: rgb(186 53 45 / 0.09);
 
   --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.05);
   --shadow-md: 0 4px 12px rgb(16 24 40 / 0.08);
   --shadow-lg: 0 16px 48px rgb(16 24 40 / 0.14);
+
+  --scrim: rgb(16 24 40 / 0.38);
 
   --cat-pdf: #d9463c;
   --cat-image: #0d9184;
@@ -131,30 +169,45 @@ body {
   min-height: 100vh;
   background: var(--bg);
   color: var(--fg);
-  font-family: var(--font-ui);
+  font-family: var(--font-family-ui);
   font-size: 14px;
   line-height: 1.6;
 }
 
 /* CJK is the primary script, so it leads the stack; the Latin faces only get
-   picked for glyphs the CJK fonts do not cover. */
+   picked for glyphs the CJK fonts do not cover.
+
+   The names are `--font-family-*`, not `--font-*`, and that matters: UnoCSS
+   derives a custom property from every `theme.font` key, so a key named `ui`
+   pointing at `var(--font-ui)` makes Uno emit `--font-ui: var(--font-ui)` —
+   a self-reference. CSS answers a cycle by dropping the property, and since
+   `virtual:uno.css` is imported last it won that fight: `--font-ui` resolved
+   to nothing and the whole product fell back to Times New Roman. Latin text
+   was serif everywhere; CJK only looked right because Windows substitutes
+   its own font for glyphs Times cannot draw. */
 :root {
-  --font-ui: "Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC",
+  --font-family-ui: "Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC",
     "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
-  --font-display: "Segoe UI Variable Display", "Microsoft YaHei UI",
+  --font-family-display: "Segoe UI Variable Display", "Microsoft YaHei UI",
     "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
-  --font-mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Segoe UI Symbol",
+  --font-family-mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Segoe UI Symbol",
     "Microsoft YaHei UI", monospace;
 }
 
 h1, h2, h3, h4, h5, h6, p, figure { margin: 0; }
 button, input, textarea, select { font: inherit; color: inherit; }
-button { cursor: pointer; background: none; border: 0; padding: 0; }
+/* `border-width: 0`, never the `border` shorthand. The shorthand also sets
+   `border-style: none`, and an element selector beats the `*` preflight that
+   supplies `solid` — so `btn-default`'s `border-width: 1px` computed back to
+   zero and every outlined button in the product was borderless. */
+button { cursor: pointer; background: none; border-width: 0; padding: 0; }
 a { color: inherit; text-decoration: none; }
-code, pre, kbd, samp { font-family: var(--font-mono); }
+code, pre, kbd, samp { font-family: var(--font-family-mono); }
 
 ::placeholder { color: var(--fg-3); opacity: 1; }
-::selection { background: var(--accent-soft); color: var(--fg); }
+/* A 14% tint does not read as "selected". The ring value is the weakest one
+   that still marks a run of text at a glance. */
+::selection { background: var(--accent-ring); color: var(--fg); }
 
 :focus-visible {
   outline: 2px solid var(--accent);

@@ -17,6 +17,21 @@ export default defineConfig({
   // rewritten, which breaks the SFC. Groups are written out in full instead.
   transformers: [transformerDirectives()],
 
+  // presetWind4's reset is off — the six legacy sheets still own base element
+  // styling and a second reset on top of them changed more than it fixed. But
+  // the reset is also where Tailwind-style borders get their *style*: `border-b`
+  // emits only `border-bottom-width: 1px`, and a width with no style paints
+  // nothing. Every `border-b` / `border-t` / `border-l` / `border-r` in the
+  // rewritten views was therefore invisible, and the rules you could see were
+  // legacy declarations that have since been deleted.
+  //
+  // These three lines are the border half of that reset, and nothing else.
+  preflights: [
+    {
+      getCSS: () => `*,::before,::after{border-style:solid;border-width:0;border-color:var(--line)}`,
+    },
+  ],
+
   theme: {
     colors: {
       bg: 'var(--bg)',
@@ -35,12 +50,20 @@ export default defineConfig({
         DEFAULT: 'var(--line)',
         strong: 'var(--line-strong)',
       },
+      // Two ramps, split by role. `accent` is ink — text, icons, borders,
+      // rings — and is light enough to read on a dark plane. `accent-solid`
+      // is the fill under an `accent-fg` label and is dark enough for that
+      // label to clear 4.5:1. Using the ink ramp as a fill puts white on a
+      // pale blue at 2:1, which is what the skip link used to do.
       accent: {
         DEFAULT: 'var(--accent)',
         hover: 'var(--accent-hover)',
         press: 'var(--accent-press)',
         fg: 'var(--accent-fg)',
         soft: 'var(--accent-soft)',
+        solid: 'var(--accent-solid)',
+        'solid-hover': 'var(--accent-solid-hover)',
+        'solid-press': 'var(--accent-solid-press)',
       },
       success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
       warn: { DEFAULT: 'var(--warn)', soft: 'var(--warn-soft)' },
@@ -50,10 +73,15 @@ export default defineConfig({
       // safelist.
       cat: 'var(--cat)',
     },
+    // These must NOT be named the same as the raw tokens in theme.css. UnoCSS
+    // emits `--font-<key>: <value>` for every entry here, so `ui:
+    // 'var(--font-ui)'` became `--font-ui: var(--font-ui)` — a cycle, which
+    // CSS resolves by dropping the property. uno.css loads last, so it won,
+    // and the whole product rendered in Times New Roman.
     font: {
-      ui: 'var(--font-ui)',
-      display: 'var(--font-display)',
-      mono: 'var(--font-mono)',
+      ui: 'var(--font-family-ui)',
+      display: 'var(--font-family-display)',
+      mono: 'var(--font-family-mono)',
     },
     shadow: {
       sm: 'var(--shadow-sm)',
@@ -90,14 +118,58 @@ export default defineConfig({
     ['btn-icon', 'w-9 px-0 shrink-0'],
     [
       'btn-primary',
-      'btn bg-accent text-accent-fg hover:not-disabled:bg-accent-hover active:not-disabled:bg-accent-press',
+      'btn bg-accent-solid text-accent-fg hover:not-disabled:bg-accent-solid-hover active:not-disabled:bg-accent-solid-press',
     ],
+    // `border-line-strong`, not `border-line`: a secondary button's whole
+    // identity is its outline, and in light mode `--surface-2` on a `--well`
+    // ground differ by three units — the audit found the 选择文件 button in
+    // the compact drop zone genuinely invisible.
     [
       'btn-default',
-      'btn bg-surface-2 text-fg border border-line hover:not-disabled:bg-surface-3 hover:not-disabled:border-line-strong',
+      'btn bg-surface-2 text-fg border border-line-strong hover:not-disabled:bg-surface-3 hover:not-disabled:border-fg-3',
     ],
     ['btn-ghost', 'btn text-fg-2 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg'],
     ['btn-danger', 'btn bg-danger-soft text-danger hover:not-disabled:bg-danger hover:not-disabled:text-white'],
+    // A toolbar button: shorter than `btn`, no border, and it never wraps.
+    // Toolbars pack a dozen of these into one row above an editor or canvas,
+    // where a 36px control would cost more height than the row is worth.
+    [
+      'btn-tool',
+      'inline-flex items-center gap-1 shrink-0 h-7 px-2 rounded-sm text-[12px] whitespace-nowrap select-none ' +
+        'text-fg-2 transition-colors duration-120 ' +
+        'hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg ' +
+        'disabled:opacity-45 disabled:cursor-not-allowed',
+    ],
+    ['btn-tool-active', 'bg-accent-soft text-accent font-medium'],
+
+    // ── Context menus ─────────────────────────────────────────────────────
+    // Right-click is a first-class interaction in this app — /documents alone
+    // opens fifteen menus — and they had grown four separate class names with
+    // four slightly different paddings, radii and hover colours. One set.
+    // Panels are always teleported to `body`, hence `fixed`.
+    ['menu-panel', 'fixed z-130 stack py-1 rounded-md bg-surface border border-line shadow-lg'],
+    ['menu-title', 'row-between gap-3 px-3 pt-1 pb-1.5 text-[11px] font-semibold text-fg-3'],
+    [
+      'menu-item',
+      'flex items-center justify-between gap-3 w-full shrink-0 min-h-8 px-3 py-1 ' +
+        'text-[12px] text-fg-2 text-left transition-colors duration-120 ' +
+        'hover:not-disabled:bg-accent-soft hover:not-disabled:text-accent ' +
+        'focus-visible:not-disabled:bg-accent-soft focus-visible:not-disabled:text-accent ' +
+        'focus-visible:outline-none disabled:opacity-45 disabled:cursor-not-allowed',
+    ],
+    [
+      'menu-item-danger',
+      'text-danger hover:not-disabled:bg-danger-soft hover:not-disabled:text-danger ' +
+        'focus-visible:not-disabled:bg-danger-soft focus-visible:not-disabled:text-danger',
+    ],
+    ['menu-sep', 'shrink-0 my-1 h-px bg-line'],
+
+    // ── Command palette rows ──────────────────────────────────────────────
+    // Eight result kinds — spaces, favourites, recents, tools, canvases,
+    // knowledge, sources, clipboard — all render the same row. One shape.
+    ['command-row', 'row gap-2.5 px-2 py-1.5 rounded-sm transition-colors duration-120 hover:bg-accent-soft focus-visible:bg-accent-soft focus-visible:outline-none'],
+    ['command-row__mark', 'center w-8 h-8 shrink-0 rounded-sm bg-surface-2 text-fg-2'],
+    ['command-row__tag', 'shrink-0 text-[11px] not-italic text-fg-3'],
 
     // ── Form controls ─────────────────────────────────────────────────────
     [
@@ -109,6 +181,28 @@ export default defineConfig({
         'disabled:opacity-50 disabled:cursor-not-allowed',
     ],
     ['field-area', 'field h-auto py-2 leading-relaxed resize-y'],
+
+    // ── Work panes ────────────────────────────────────────────────────────
+    // A pane is a panel that fills its column and scrolls its own body: a
+    // fixed header strip, then content that takes the rest. Tool pages are
+    // built almost entirely out of these.
+    // The pane, not the field inside it, carries the focus indication: a
+    // textarea that fills its container has no edge of its own to ring.
+    ['pane', 'panel flex flex-col overflow-hidden min-w-0 transition-colors focus-within:border-line-strong'],
+    ['pane-head', 'row-between gap-2 shrink-0 px-3 h-10 border-b border-line'],
+    ['pane-title', 'text-[12px] font-medium text-fg-2'],
+    // The editable surface inside a pane. It owns no border of its own — the
+    // pane already drew one, and two nested boxes read as a mistake.
+    //
+    // The `!` overrides are aimed at the legacy sheets, which style bare
+    // `textarea`/`input` elements globally for the views that have not been
+    // rebuilt yet. They come out with `legacy-bridge.css`.
+    [
+      'code-area',
+      'w-full flex-1 min-h-40 px-3 py-2.5 border-0! rounded-none! bg-transparent! shadow-none! ' +
+        'font-mono text-[13px] leading-relaxed resize-none ' +
+        'focus:outline-none focus-visible:shadow-none!',
+    ],
 
     // ── Small parts ───────────────────────────────────────────────────────
     ['chip', 'inline-flex items-center gap-1 h-6 px-2 rounded-full text-[12px] bg-surface-2 text-fg-2'],

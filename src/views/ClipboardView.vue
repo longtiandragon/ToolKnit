@@ -333,7 +333,7 @@ const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN', { 
 </script>
 
 <template>
-  <div class="clipboard-view page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeCardMenu()">
+  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeCardMenu()">
     <AppBreadcrumbs :items="[{ label: '工作', to: '/' }, { label: '剪贴板' }]"/>
     <PageHeader title="剪贴板" subtitle="找回刚刚复制过的内容,把反复要用的存成常用片段">
       <template #actions>
@@ -343,50 +343,218 @@ const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN', { 
       </template>
     </PageHeader>
 
-    <section v-if="composerOpen" class="snippet-composer panel">
-      <div><p class="eyebrow">新建片段</p><h3>保存一段经常使用的内容</h3><p>片段只保存在本机，并固定显示在历史记录顶部。</p></div>
-      <textarea ref="snippetElement" v-model="snippetText" aria-label="常用片段内容" placeholder="例如：邮件回复、收货地址、常用命令或代码模板…" @keydown.ctrl.enter="saveSnippet"></textarea>
-      <div><button class="quiet-button" @click="composerOpen = false; snippetText = ''">取消</button><button class="primary-button" :disabled="!snippetText.trim()" @click="saveSnippet">保存片段</button></div>
+    <!-- The composer is a form, not a permanent section: it appears when
+         asked for and takes the space it needs, rather than reserving a
+         three-column grid that is empty most of the time. -->
+    <section v-if="composerOpen" class="panel p-4 stack gap-3 mb-3">
+      <div class="stack gap-0.5">
+        <h3 class="text-[14px] font-semibold text-fg">保存一段经常使用的内容</h3>
+        <p class="text-[12px] text-fg-3">片段只存在本机，并固定显示在历史顶部。</p>
+      </div>
+      <textarea
+        ref="snippetElement"
+        v-model="snippetText"
+        aria-label="常用片段内容"
+        class="w-full min-h-24 px-3 py-2.5 rounded-sm bg-well border border-line font-mono text-[13px] leading-relaxed resize-y focus:outline-none focus:border-accent"
+        placeholder="例如：邮件回复、收货地址、常用命令或代码模板…（Ctrl+Enter 保存）"
+        @keydown.ctrl.enter="saveSnippet"
+      />
+      <div class="row justify-end gap-2">
+        <button class="btn-ghost" @click="composerOpen = false; snippetText = ''">取消</button>
+        <button class="btn-primary" :disabled="!snippetText.trim()" @click="saveSnippet">保存片段</button>
+      </div>
     </section>
 
-    <section class="clipboard-warning" :class="{ active: store.settings.clipboardEnabled }"><i></i><span><b>{{ store.settings.clipboardEnabled ? (store.settings.clipboardPaused ? '监听已暂停' : '正在本地监听') : '后台监听未开启' }}</b><small>{{ store.settings.clipboardEnabled ? '不做密码过滤；请避免复制不希望保留的敏感内容。' : '可随时手动读取当前剪贴板。' }}</small></span><button v-if="store.settings.clipboardEnabled" @click="togglePause">{{ store.settings.clipboardPaused ? '继续' : '暂停' }}</button></section>
+    <section
+      class="row-between gap-3 mb-3 px-3 py-2.5 rounded-md"
+      :class="store.settings.clipboardEnabled && store.settings.clipboardPaused ? 'bg-warn-soft' : 'bg-surface-2'"
+    >
+      <span class="row gap-2 min-w-0">
+        <i
+          class="w-1.5 h-1.5 rounded-full shrink-0"
+          :class="!store.settings.clipboardEnabled ? 'bg-fg-3' : store.settings.clipboardPaused ? 'bg-warn' : 'bg-success'"
+        />
+        <span class="stack gap-0.5 min-w-0">
+          <b class="text-[13px] font-medium text-fg">
+            {{ store.settings.clipboardEnabled ? (store.settings.clipboardPaused ? '监听已暂停' : '正在本地监听') : '后台监听未开启' }}
+          </b>
+          <small class="text-[12px] text-fg-3">
+            {{ store.settings.clipboardEnabled ? '不做密码过滤，请避免复制不希望留下的敏感内容' : '可以随时手动读取当前剪贴板' }}
+          </small>
+        </span>
+      </span>
+      <button v-if="store.settings.clipboardEnabled" class="btn-default btn-sm shrink-0" @click="togglePause">
+        {{ store.settings.clipboardPaused ? '继续' : '暂停' }}
+      </button>
+    </section>
 
-    <section class="clipboard-toolbar panel" :aria-busy="searchPending"><input v-model="query" class="search-input" aria-label="搜索剪贴板历史" placeholder="搜索历史和常用片段…"/><div><button v-for="option in clipboardFilterOptions" :key="option.id" :class="{ active: filter === option.id }" @click="selectFilter(option.id)">{{ option.label }}</button></div><span class="clipboard-result-count" aria-live="polite">{{ items.length }} 条{{ searchPending ? ' · 筛选中' : '' }}</span><button class="quiet-button" :class="{ active: selectionMode }" :disabled="!store.clipboardItems.length" @click="toggleSelectionMode"><AppIcon name="task" :size="14" />{{ selectionMode ? '退出批量' : '批量管理' }}</button><button class="quiet-button" :disabled="!store.clipboardItems.length" @click="clear">清空</button></section>
+    <section class="row gap-2 flex-wrap mb-3 p-2 panel" :aria-busy="searchPending">
+      <label class="row gap-2 flex-1 min-w-56 h-9 px-3 rounded-sm bg-well border border-line focus-within:border-accent">
+        <AppIcon name="search" :size="15" class="shrink-0 text-fg-3" />
+        <input v-model="query" aria-label="搜索剪贴板历史" placeholder="搜索历史和常用片段…" class="flex-1 min-w-0 bg-transparent border-0 outline-none text-[13px]" />
+      </label>
+      <div class="row gap-0.5 p-0.5 rounded-sm bg-surface-2 border border-line shrink-0">
+        <button
+          v-for="option in clipboardFilterOptions"
+          :key="option.id"
+          class="h-8 px-2.5 rounded-[4px] text-[12px] transition-colors"
+          :class="filter === option.id ? 'bg-surface text-fg font-medium shadow-sm' : 'text-fg-3 hover:text-fg'"
+          @click="selectFilter(option.id)"
+        >
+          {{ option.label }}
+        </button>
+      </div>
+      <span class="row px-1 text-[12px] tabular-nums text-fg-3 shrink-0" aria-live="polite">{{ items.length }} 条{{ searchPending ? ' · 筛选中' : '' }}</span>
+      <button class="btn-sm shrink-0" :class="selectionMode ? 'btn-primary' : 'btn-default'" :disabled="!store.clipboardItems.length" @click="toggleSelectionMode">
+        <AppIcon name="task" :size="14" />{{ selectionMode ? '退出批量' : '批量管理' }}
+      </button>
+      <button class="btn-ghost btn-sm shrink-0 hover:text-danger" :disabled="!store.clipboardItems.length" @click="clear">清空</button>
+    </section>
 
-    <section v-if="selectionMode" class="clipboard-batch-bar panel" aria-label="剪贴板批量操作">
-      <span><AppIcon name="task" :size="16" /><b>已选择 {{ selectedIds.size }} 条</b><small>当前筛选共 {{ items.length }} 条；切换筛选会清空选择。</small></span>
-      <button type="button" class="quiet-button" :disabled="!items.length" @click="toggleAllFiltered">{{ allFilteredSelected ? '取消全选' : `选择全部 ${items.length} 条` }}</button>
-      <button type="button" class="quiet-button" :disabled="!selectedIds.size" @click="batchTogglePin"><AppIcon name="star" :size="14" />{{ selectedAllPinned ? '取消固定' : '固定所选' }}</button>
-      <button type="button" class="quiet-button danger" :disabled="!selectedIds.size" @click="batchRemove"><AppIcon name="trash" :size="14" />删除所选</button>
-      <button type="button" class="quiet-button" @click="exitSelectionMode">完成</button>
+    <section v-if="selectionMode" class="row gap-2 flex-wrap mb-3 px-3 py-2.5 rounded-md border border-accent bg-accent-soft" aria-label="剪贴板批量操作">
+      <span class="stack gap-0.5 mr-auto min-w-0">
+        <b class="text-[13px] font-medium text-fg">已选择 {{ selectedIds.size }} 条</b>
+        <small class="text-[11px] text-fg-3">当前筛选共 {{ items.length }} 条；切换筛选会清空选择</small>
+      </span>
+      <button type="button" class="btn-default btn-sm" :disabled="!items.length" @click="toggleAllFiltered">
+        {{ allFilteredSelected ? '取消全选' : `选择全部 ${items.length} 条` }}
+      </button>
+      <button type="button" class="btn-default btn-sm" :disabled="!selectedIds.size" @click="batchTogglePin">
+        <AppIcon name="star" :size="14" />{{ selectedAllPinned ? '取消固定' : '固定所选' }}
+      </button>
+      <button type="button" class="btn-danger btn-sm" :disabled="!selectedIds.size" @click="batchRemove"><AppIcon name="trash" :size="14" />删除所选</button>
+      <button type="button" class="btn-ghost btn-sm" @click="exitSelectionMode">完成</button>
     </section>
 
     <template v-if="items.length">
-      <section class="clipboard-grid"><article v-for="item in visibleItems" :id="`clipboard-${item.id}`" :key="item.id" v-memo="[item.id, item.kind, item.pinned, item.capturedAt, item.contentLoaded, copyingId === item.id, Boolean(archivingId), targetItemId === item.id, selectionMode, selectedIds.has(item.id)]" tabindex="0" class="clipboard-card panel" :class="{ snippet: item.pinned, targeted: targetItemId === item.id, selectable: selectionMode, selected: selectedIds.has(item.id) }" :aria-label="`${selectedIds.has(item.id) ? '已选择，' : ''}${item.pinned ? '常用片段' : item.kind === 'image' ? '图片' : item.kind === 'code' ? '代码' : '文本'}，${formatTime(item.capturedAt)}。右键或 Shift 加 F10 打开操作。`" aria-haspopup="menu" :aria-expanded="cardMenu?.item.id === item.id" @click="selectionMode && toggleSelected(item.id)" @contextmenu.prevent.stop="openCardMenu($event, item)" @keydown="handleCardKeydown($event, item)"><header><button v-if="selectionMode" type="button" class="clipboard-select-toggle" :class="{ checked: selectedIds.has(item.id) }" :aria-pressed="selectedIds.has(item.id)" :aria-label="selectedIds.has(item.id) ? '取消选择这条记录' : '选择这条记录'" @click.stop="toggleSelected(item.id)"><AppIcon name="check" :size="13"/></button><span :class="item.kind">{{ item.pinned ? '常用片段' : item.kind === 'image' ? '图片' : item.kind === 'code' ? '代码' : '文本' }}</span><time>{{ formatTime(item.capturedAt) }}</time><button type="button" :class="{ pinned: item.pinned }" :title="item.pinned ? '移出常用片段' : '固定为常用片段'" @click.stop="store.toggleClipboardPin(item.id)"><AppIcon name="clipboard" :size="14"/></button></header><ClipboardImagePreview v-if="item.kind === 'image'" :asset-path="item.assetPath" :preview="item.preview" alt="剪贴板图片预览"/><template v-else><pre>{{ item.content }}</pre><p v-if="item.contentLoaded === false" class="clipboard-preview-hint">为保持流畅，仅显示前 12,000 个字符；复制时会读取完整内容。</p></template><footer><button type="button" class="primary-button" :disabled="Boolean(copyingId || archivingId)" @click.stop="copy(item.id)">{{ copyingId === item.id ? '复制中…' : '复制' }}</button><button v-if="item.kind === 'image'" type="button" class="quiet-button" :disabled="!desktop || !item.assetPath || Boolean(archivingId)" @click.stop="recognizeImageFromClipboard(item.id)">识别文字</button><button type="button" class="quiet-button danger" :disabled="Boolean(copyingId || archivingId)" @click.stop="remove(item.id)">删除</button></footer></article></section>
-      <button v-if="hasMoreItems" type="button" class="clipboard-load-more quiet-button" @click="visibleLimit += CLIPBOARD_PAGE_SIZE">再显示 {{ Math.min(CLIPBOARD_PAGE_SIZE, items.length - visibleItems.length) }} 条</button>
-    </template>
-    <EmptyState v-else-if="store.clipboardItems.length && hasActiveFilters" icon="search" title="当前筛选没有匹配内容" description="历史记录仍在本机；可以清除搜索或回到全部类型。" action="清除筛选" @action="clearFilters"/>
-    <EmptyState v-else icon="file-text" :title="filter === 'snippets' ? '还没有常用片段' : '剪贴板历史还是空的'" :description="filter === 'snippets' ? '保存常用回复、地址或代码，以后点击一次就能复制。' : '复制一段文字、代码或图片，然后读取当前内容。'" :action="filter === 'snippets' ? '新建片段' : '读取当前剪贴板'" @action="filter === 'snippets' ? openSnippetComposer() : capture()"/>
-    <Teleport to="body">
-      <section v-if="cardMenu" ref="cardMenuElement" class="clipboard-context-menu" role="menu" :aria-label="`${cardMenu.item.kind === 'image' ? '图片' : cardMenu.item.kind === 'code' ? '代码' : '文本'}剪贴板操作`" :style="{ left: `${cardMenu.x}px`, top: `${cardMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleCardMenuKeydown">
-        <p>{{ cardMenu.item.pinned ? '常用片段' : cardMenu.item.kind === 'image' ? '图片记录' : cardMenu.item.kind === 'code' ? '代码记录' : '文本记录' }}</p>
-        <button type="button" role="menuitem" @click="runCardMenuAction('select')"><AppIcon name="task" :size="14" />{{ selectedIds.has(cardMenu.item.id) ? '取消选择这条记录' : '选择这条记录' }}</button>
-        <button type="button" role="menuitem" :disabled="Boolean(copyingId || archivingId)" @click="runCardMenuAction('copy')"><AppIcon name="duplicate" :size="14" />{{ copyingId === cardMenu.item.id ? '正在复制…' : '重新复制到系统剪贴板' }}</button>
-        <button v-if="cardMenu.item.kind === 'code'" type="button" role="menuitem" @click="runCardMenuAction('code-image')"><AppIcon name="terminal" :size="14" />制作代码分享图</button>
-        <button v-if="cardMenu.item.kind === 'image'" type="button" role="menuitem" :disabled="!desktop || !cardMenu.item.assetPath" @click="runCardMenuAction('ocr')"><AppIcon name="file-text" :size="14" />离线识别图片文字</button>
-        <button v-if="cardMenu.item.kind === 'image'" type="button" role="menuitem" :disabled="!desktop || !cardMenu.item.assetPath || Boolean(archivingId)" @click="runCardMenuAction('archive-image')"><AppIcon name="inbox" :size="14" />{{ archivingId === cardMenu.item.id ? '正在归档…' : '归档图片到资料库' }}</button>
-        <button type="button" role="menuitem" :disabled="cardMenu.item.kind === 'image'" @click="runCardMenuAction('note')"><AppIcon name="book" :size="14" />整理为 Markdown 笔记</button>
-        <button type="button" role="menuitem" @click="runCardMenuAction('pin')"><AppIcon name="clipboard" :size="14" />{{ cardMenu.item.pinned ? '移出常用片段' : '固定为常用片段' }}</button>
-        <button type="button" role="menuitem" class="danger" :disabled="Boolean(copyingId || archivingId)" @click="runCardMenuAction('remove')"><AppIcon name="close" :size="14" />删除这条记录</button>
+      <section class="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+        <article
+          v-for="item in visibleItems"
+          :id="`clipboard-${item.id}`"
+          :key="item.id"
+          v-memo="[item.id, item.kind, item.pinned, item.capturedAt, item.contentLoaded, copyingId === item.id, Boolean(archivingId), targetItemId === item.id, selectionMode, selectedIds.has(item.id)]"
+          tabindex="0"
+          class="stack overflow-hidden rounded-lg border bg-surface transition-colors"
+          :class="[
+            selectedIds.has(item.id) ? 'border-accent bg-accent-soft'
+              : targetItemId === item.id ? 'border-accent'
+                : item.pinned ? 'border-accent' : 'border-line hover:border-line-strong',
+            selectionMode ? 'cursor-pointer' : '',
+          ]"
+          :aria-label="`${selectedIds.has(item.id) ? '已选择，' : ''}${item.pinned ? '常用片段' : item.kind === 'image' ? '图片' : item.kind === 'code' ? '代码' : '文本'}，${formatTime(item.capturedAt)}。右键或 Shift 加 F10 打开操作。`"
+          aria-haspopup="menu"
+          :aria-expanded="cardMenu?.item.id === item.id"
+          @click="selectionMode && toggleSelected(item.id)"
+          @contextmenu.prevent.stop="openCardMenu($event, item)"
+          @keydown="handleCardKeydown($event, item)"
+        >
+          <header class="row gap-2 px-3 h-10 shrink-0 border-b border-line">
+            <button
+              v-if="selectionMode"
+              type="button"
+              class="center w-5 h-5 shrink-0 rounded-[4px] border transition-colors"
+              :class="selectedIds.has(item.id) ? 'border-accent-solid bg-accent-solid text-accent-fg' : 'border-line-strong text-transparent'"
+              :aria-pressed="selectedIds.has(item.id)"
+              :aria-label="selectedIds.has(item.id) ? '取消选择这条记录' : '选择这条记录'"
+              @click.stop="toggleSelected(item.id)"
+            >
+              <AppIcon name="check" :size="12" />
+            </button>
+            <span class="chip h-6 px-2 text-[11px]" :class="item.pinned ? 'bg-accent-soft text-accent' : ''">
+              {{ item.pinned ? '常用片段' : item.kind === 'image' ? '图片' : item.kind === 'code' ? '代码' : '文本' }}
+            </span>
+            <time class="text-[11px] tabular-nums text-fg-3">{{ formatTime(item.capturedAt) }}</time>
+            <button
+              type="button"
+              class="center w-7 h-7 ml-auto shrink-0 rounded-sm transition-colors"
+              :class="item.pinned ? 'text-accent' : 'text-fg-3 hover:bg-surface-2 hover:text-fg'"
+              :title="item.pinned ? '移出常用片段' : '固定为常用片段'"
+              @click.stop="store.toggleClipboardPin(item.id)"
+            >
+              <AppIcon name="clipboard" :size="14" />
+            </button>
+          </header>
+
+          <ClipboardImagePreview
+            v-if="item.kind === 'image'"
+            class="flex-1 min-h-32"
+            :asset-path="item.assetPath"
+            :preview="item.preview"
+            alt="剪贴板图片预览"
+          />
+          <template v-else>
+            <pre class="m-0 px-3 py-2.5 flex-1 max-h-40 overflow-auto font-mono text-[12px] leading-relaxed text-fg-2 whitespace-pre-wrap break-words">{{ item.content }}</pre>
+            <p v-if="item.contentLoaded === false" class="px-3 pb-2 text-[11px] leading-snug text-fg-3">
+              为保持流畅只显示前 12,000 个字符；复制时会读取完整内容。
+            </p>
+          </template>
+
+          <footer class="row gap-1.5 px-3 py-2.5 shrink-0 border-t border-line">
+            <button type="button" class="btn-default btn-sm flex-1" :disabled="Boolean(copyingId || archivingId)" @click.stop="copy(item.id)">
+              {{ copyingId === item.id ? '复制中…' : '复制' }}
+            </button>
+            <button
+              v-if="item.kind === 'image'"
+              type="button"
+              class="btn-ghost btn-sm"
+              :disabled="!desktop || !item.assetPath || Boolean(archivingId)"
+              @click.stop="recognizeImageFromClipboard(item.id)"
+            >
+              识别文字
+            </button>
+            <button type="button" class="btn-ghost btn-sm text-fg-3 hover:text-danger" :disabled="Boolean(copyingId || archivingId)" @click.stop="remove(item.id)">删除</button>
+          </footer>
+        </article>
       </section>
+
+      <button v-if="hasMoreItems" type="button" class="btn-default w-full mt-3" @click="visibleLimit += CLIPBOARD_PAGE_SIZE">
+        再显示 {{ Math.min(CLIPBOARD_PAGE_SIZE, items.length - visibleItems.length) }} 条
+      </button>
+    </template>
+
+    <EmptyState v-else-if="store.clipboardItems.length && hasActiveFilters" icon="search" title="当前筛选没有匹配内容" description="历史记录仍在本机；清除搜索或回到全部类型即可。" action="清除筛选" @action="clearFilters" />
+    <EmptyState v-else icon="file-text" :title="filter === 'snippets' ? '还没有常用片段' : '剪贴板历史还是空的'" :description="filter === 'snippets' ? '保存常用回复、地址或代码，以后点一次就能复制。' : '复制一段文字、代码或图片，然后读取当前内容。'" :action="filter === 'snippets' ? '新建片段' : '读取当前剪贴板'" @action="filter === 'snippets' ? openSnippetComposer() : capture()" />
+
+    <Teleport to="body">
+      <div
+        v-if="cardMenu"
+        ref="cardMenuElement"
+        class="fixed z-[120] w-64 p-1 rounded-md bg-surface border border-line-strong shadow-lg"
+        role="menu"
+        :aria-label="`${cardMenu.item.kind === 'image' ? '图片' : cardMenu.item.kind === 'code' ? '代码' : '文本'}剪贴板操作`"
+        :style="{ left: `${cardMenu.x}px`, top: `${cardMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleCardMenuKeydown"
+      >
+        <p class="px-2.5 py-1.5 text-[11px] text-fg-3">
+          {{ cardMenu.item.pinned ? '常用片段' : cardMenu.item.kind === 'image' ? '图片记录' : cardMenu.item.kind === 'code' ? '代码记录' : '文本记录' }}
+        </p>
+        <button type="button" class="nav-item w-full" role="menuitem" @click="runCardMenuAction('select')">
+          <AppIcon name="task" :size="14" />{{ selectedIds.has(cardMenu.item.id) ? '取消选择这条记录' : '选择这条记录' }}
+        </button>
+        <button type="button" class="nav-item w-full" role="menuitem" :disabled="Boolean(copyingId || archivingId)" @click="runCardMenuAction('copy')">
+          <AppIcon name="duplicate" :size="14" />{{ copyingId === cardMenu.item.id ? '正在复制…' : '重新复制到系统剪贴板' }}
+        </button>
+        <button v-if="cardMenu.item.kind === 'code'" type="button" class="nav-item w-full" role="menuitem" @click="runCardMenuAction('code-image')">
+          <AppIcon name="terminal" :size="14" />制作代码分享图
+        </button>
+        <button v-if="cardMenu.item.kind === 'image'" type="button" class="nav-item w-full" role="menuitem" :disabled="!desktop || !cardMenu.item.assetPath" @click="runCardMenuAction('ocr')">
+          <AppIcon name="file-text" :size="14" />离线识别图片文字
+        </button>
+        <button v-if="cardMenu.item.kind === 'image'" type="button" class="nav-item w-full" role="menuitem" :disabled="!desktop || !cardMenu.item.assetPath || Boolean(archivingId)" @click="runCardMenuAction('archive-image')">
+          <AppIcon name="inbox" :size="14" />{{ archivingId === cardMenu.item.id ? '正在归档…' : '归档图片到资料库' }}
+        </button>
+        <button type="button" class="nav-item w-full" role="menuitem" :disabled="cardMenu.item.kind === 'image'" @click="runCardMenuAction('note')">
+          <AppIcon name="book" :size="14" />整理为 Markdown 笔记
+        </button>
+        <button type="button" class="nav-item w-full" role="menuitem" @click="runCardMenuAction('pin')">
+          <AppIcon name="clipboard" :size="14" />{{ cardMenu.item.pinned ? '移出常用片段' : '固定为常用片段' }}
+        </button>
+        <button type="button" class="nav-item w-full hover:bg-danger-soft hover:text-danger" role="menuitem" :disabled="Boolean(copyingId || archivingId)" @click="runCardMenuAction('remove')">
+          <AppIcon name="close" :size="14" />删除这条记录
+        </button>
+      </div>
     </Teleport>
   </div>
 </template>
-
-<style scoped>
-.snippet-composer{display:grid;grid-template-columns:minmax(220px,.65fr) minmax(360px,1.35fr) auto;align-items:end;gap:18px;margin-bottom:14px;padding:20px}.snippet-composer h3{margin:4px 0;font-size:18px}.snippet-composer p:not(.eyebrow){margin:0;color:var(--muted);font-size:12px}.snippet-composer textarea{min-height:94px;resize:vertical;border:1px solid var(--line);border-radius:12px;padding:13px;background:var(--canvas);color:var(--ink);font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;outline:none}.snippet-composer textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}.snippet-composer>div:last-child{display:flex;gap:8px}.clipboard-card.snippet{border-color:color-mix(in srgb,var(--accent) 34%,var(--line));box-shadow:inset 0 3px 0 color-mix(in srgb,var(--accent) 76%,transparent)}.clipboard-card.targeted{border-color:color-mix(in srgb,var(--accent) 64%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}.clipboard-preview-hint{margin:-3px 0 10px;color:var(--muted);font-size:11px;line-height:1.45}@media(max-width:900px){.snippet-composer{grid-template-columns:1fr}.snippet-composer>div:last-child{justify-content:flex-end}}
-.clipboard-toolbar>.quiet-button{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.clipboard-toolbar>.quiet-button.active{border-color:var(--accent);color:var(--green-strong);background:var(--green-bg)}
-.clipboard-batch-bar{display:flex;align-items:center;gap:7px;margin:-3px 0 12px;padding:10px 12px;border-color:var(--accent-soft);background:linear-gradient(100deg,var(--accent-soft),var(--surface))}.clipboard-batch-bar>span{display:grid;min-width:0;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:2px 8px;margin-right:auto;color:var(--green-strong)}.clipboard-batch-bar>span>.app-icon{grid-row:1/3}.clipboard-batch-bar b{color:var(--text);font:700 11px var(--font-ui)}.clipboard-batch-bar small{overflow:hidden;color:var(--muted);font:9px var(--font-ui);text-overflow:ellipsis;white-space:nowrap}.clipboard-batch-bar button{display:inline-flex;align-items:center;gap:5px;min-height:32px;font-size:9px;white-space:nowrap}.clipboard-batch-bar button.danger{color:var(--danger)!important;border-color:var(--danger-soft)}
-.clipboard-card.selectable{cursor:pointer}.clipboard-card.selected{border-color:var(--accent);background:linear-gradient(145deg,var(--surface-2),var(--surface));box-shadow:inset 0 0 0 2px var(--accent-soft),0 8px 22px var(--accent-soft)}.clipboard-card>header>.clipboard-select-toggle{border-color:var(--accent-soft);color:transparent;background:var(--surface-raised)}.clipboard-card>header>.clipboard-select-toggle.checked{border-color:var(--green);color:var(--fg);background:var(--green-strong)}.clipboard-card>header>.clipboard-select-toggle:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:2px}
-@media(max-width:1050px){.clipboard-toolbar{flex-wrap:wrap}.clipboard-toolbar>.search-input{min-width:220px;flex:1 1 100%}.clipboard-batch-bar{align-items:stretch;flex-wrap:wrap}.clipboard-batch-bar>span{flex:1 1 100%}}@media(max-width:720px){.clipboard-batch-bar button{flex:1;justify-content:center}.clipboard-batch-bar small{white-space:normal}}
-</style>

@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, r
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import SegmentedControl from '@/components/SegmentedControl.vue'
 import TagPill from '@/components/TagPill.vue'
 import type { QuestionReviewFacet, ReviewRating, ReviewState, VocabularyEntry, VocabularyReviewFacet, VocabularySense } from '@/types'
 import { useWorkbenchStore } from '@/stores/workbench'
@@ -13,7 +14,7 @@ import { cloneReviewState } from '@/lib/review-state'
 import { vocabularyReviewCards, vocabularyReviewFacetLabels } from '@/lib/vocabulary-review'
 import { hasQuestionReviewFront, questionReviewBack, questionReviewCards, questionReviewFacetLabels, questionReviewFront } from '@/lib/question-review'
 import { buildVocabularyCloze, countReviewKinds, filterReviewItems, isVocabularyAnswerVisible, reviewKindFromQuery, vocabularyReviewAnswerMatches, vocabularyReviewHeading, type ReviewKind } from '@/lib/review-session'
-import { reviewWorkflowActions } from '@/lib/review-workflows'
+import { reviewWorkflowGroups } from '@/lib/review-workflows'
 import { formatNextReviewDue, resolveReviewEmptyState } from '@/lib/review-empty-state'
 import { useVocabularySpeech } from '@/lib/use-vocabulary-speech'
 import { classifyMarkdownLink } from '@/lib/markdown-link'
@@ -134,6 +135,91 @@ const reviewEmptyState = computed(() => {
   })
 })
 const nextReviewLabel = computed(() => formatNextReviewDue(reviewScheduleSummary.value.nextDue))
+// The filter was declared and never rendered — a queue you could only leave
+// through the empty state. It belongs with the progress bar, where "which
+// cards" and "how far in" are read together.
+const reviewKindChoices = computed(() =>
+  reviewKindOptions.map((option) => ({
+    ...option,
+    detail: `${queueKindCounts.value[option.id]} 张`,
+  })),
+)
+// Four ratings pressed a few hundred times a day. Tinted, not filled: four
+// saturated buttons in a row is a slot machine, and the colour still has to
+// separate "again" from "easy" at a glance.
+const ratingTone: Record<ReviewRating, string> = {
+  Again: 'border-line text-danger hover:not-disabled:border-danger hover:not-disabled:bg-danger-soft',
+  Hard: 'border-line text-warn hover:not-disabled:border-warn hover:not-disabled:bg-warn-soft',
+  Good: 'border-line text-accent hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft',
+  Easy: 'border-line text-success hover:not-disabled:border-success hover:not-disabled:bg-success-soft',
+}
+// Each finished state answers a different question, so each gets its own
+// sentence rather than a shared "没有卡片了".
+const reviewFinishedState = computed(() => {
+  if (deferredCount.value) {
+    return {
+      icon: 'review',
+      title: `本轮先完成了 ${sessionReviewed.value} 张`,
+      detail: `还有 ${deferredCount.value} 张暂缓卡留在本轮末尾；它们没有被评分，也没有改变 FSRS 计划。`,
+    }
+  }
+  switch (reviewEmptyState.value) {
+    case 'filtered':
+      return {
+        icon: 'rule',
+        title: '这个分类当前没有到期卡片',
+        detail: `其他类型还有 ${queueKindCounts.value.all} 张到期内容；切回全部队列即可继续。`,
+      }
+    case 'no-material':
+      return {
+        icon: 'plus',
+        title: '先准备第一份复习材料',
+        detail: '记录一道错题，或录入一个带词义的单词，再为需要记忆的方向启用卡片。',
+      }
+    case 'no-cards':
+      return {
+        icon: 'sort',
+        title: '内容已经存在，但还没有启用复习方向',
+        detail: '进入题目或单词，选择答案、错因、词义、拼写或例句卡；每张卡会独立安排 FSRS。',
+      }
+    case 'waiting':
+      return {
+        icon: 'clock',
+        title: '当前没有到期卡片',
+        detail: `${reviewScheduleSummary.value.count} 张卡正在按各自节奏安排；下一次复习：${nextReviewLabel.value}。`,
+      }
+    default:
+      return {
+        icon: 'check',
+        title: '今天的线已经织完了',
+        detail: '可以收一份新资料，或者放心地合上 Knitspace。',
+      }
+  }
+})
+// Materials used to be two panels — "准备复习材料" and "管理复习材料" — with
+// separate headers pointing at the same two destinations. Split by source
+// instead: each column owns its count and its own three tasks.
+const materialGroups = computed(() => {
+  const groups = reviewWorkflowGroups()
+  return [
+    {
+      id: 'question',
+      label: '题目与错题',
+      icon: 'review',
+      to: '/documents?kind=question',
+      summary: `${questionMaterialCount.value} 道题 · ${store.dueQuestionCards.length} 张到期`,
+      actions: groups.question,
+    },
+    {
+      id: 'word',
+      label: '结构化单词',
+      icon: 'sort',
+      to: '/words',
+      summary: `${vocabularyMaterialCount.value} 个词 · ${store.dueVocabularyCards.length} 张到期`,
+      actions: groups.word,
+    },
+  ]
+})
 const canUndoLastRating = computed(() => Boolean(lastRating.value))
 const currentLocationLabel = computed(() => current.value?.type === 'word' ? '在单词库中打开' : '在题库中打开')
 const currentQuestion = computed(() => current.value?.type === 'question'
@@ -607,8 +693,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="review page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeReviewMenu()">
-    <PageHeader title="学习复习" subtitle="题面、错因和词义各自排期,熟的那一面不会替你把生的那面盖过去">
+  <!-- No `review` / `review-card` class: the legacy sheets cap those at
+       1040px and 920px and centre them, which left the card floating in two
+       wide gutters inside the rebuilt page column. -->
+  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeReviewMenu()">
+    <PageHeader title="学习复习" subtitle="题面、错因和词义各自排期，熟的那一面不会替你把生的那面盖过去">
       <template #actions>
         <button v-if="canUndoLastRating" class="btn-default" :disabled="ratingInProgress" @click="undoLastRating">
           撤销上一评分<kbd class="kbd">Ctrl Z</kbd>
@@ -616,14 +705,16 @@ onBeforeUnmount(() => {
       </template>
       <template #lead>
         <!-- Progress belongs above the card, not in a side panel: it is read
-             between ratings, in the same glance as the next question. -->
-        <div class="stack gap-2">
+             between ratings, in the same glance as the next question. The
+             queue filter sits with it, because "which cards am I doing" and
+             "how far in am I" are one decision. -->
+        <div class="stack gap-2.5">
           <div class="row-between gap-4 text-[12px]">
             <span class="row gap-2">
               <b class="text-[13px] text-fg">{{ remainingCount }} 张待复习</b>
               <span class="text-fg-3">{{ remainingKindsLabel }}</span>
             </span>
-            <span class="text-fg-3">{{ sessionReviewed }} / {{ Math.max(1, sessionTotal) }} · 共 {{ reviewScheduleSummary.count }} 张已安排</span>
+            <span class="text-fg-3 tabular-nums">{{ sessionReviewed }} / {{ Math.max(1, sessionTotal) }} · 共 {{ reviewScheduleSummary.count }} 张已安排</span>
           </div>
           <div
             class="h-1 rounded-full bg-surface-3 overflow-hidden"
@@ -635,131 +726,346 @@ onBeforeUnmount(() => {
           >
             <i class="block h-full bg-accent transition-[width] duration-300" :style="{ width: `${sessionProgress}%` }" />
           </div>
+          <SegmentedControl
+            :options="reviewKindChoices"
+            :model-value="reviewKind"
+            label="复习队列筛选"
+            size="compact"
+            @update:model-value="selectReviewKind($event as ReviewKind)"
+          />
         </div>
       </template>
     </PageHeader>
-    <section v-if="current" ref="reviewCard" tabindex="0" class="review-card panel" :class="{ 'review-card--word': current.type === 'word', 'review-card--question-error': current.type === 'question' && current.facet === 'error', 'review-card--question-active': currentCanDraftAnswer && !revealed }" role="region" aria-haspopup="menu" :aria-expanded="Boolean(reviewMenu)" :aria-label="`${currentCardTitle}；右键或 Shift 加 F10 打开复习菜单`" @contextmenu.prevent.stop="openReviewMenu($event, $event.currentTarget)" @keydown="handleReviewCardKeydown">
-      <header v-if="current.type === 'question'">
-        <div><p>{{ current.document.subject }} · {{ questionReviewFacetLabels[current.facet] }} · 难度 {{ current.document.difficulty }}</p><h3>{{ current.document.title }}</h3><div><TagPill v-for="tag in current.document.tags" :key="tag" :label="tag" /></div></div>
-        <span class="card-number"><b>{{ String(sessionReviewed + 1).padStart(2, '0') }}</b><small>/ {{ String(Math.max(1, sessionTotal)).padStart(2, '0') }}</small></span>
-      </header>
-      <header v-else>
-        <div><p>{{ current.entry.language }} · {{ vocabularyReviewFacetLabels[current.facet] }} · {{ current.sense.partOfSpeech || '词义卡' }}</p><h3>{{ currentCardTitle }}</h3><small v-if="currentWordAnswerVisible && current.entry.pronunciation">{{ current.entry.pronunciation }}</small></div>
-        <div class="review-card__word-tools">
-          <button v-if="currentWordAnswerVisible" type="button" class="review-word-speak" :class="{ active: speakingEntryId === current.entry.id }" :aria-pressed="speakingEntryId === current.entry.id" :aria-label="speakingEntryId === current.entry.id ? `停止朗读 ${current.entry.lemma}` : `朗读 ${current.entry.lemma}`" aria-keyshortcuts="P" @click.stop="speakCurrentWord"><AppIcon :name="speakingEntryId === current.entry.id ? 'pause' : 'play'" :size="12" /><span>{{ speakingEntryId === current.entry.id ? '停止' : '朗读' }}</span><kbd>P</kbd></button>
-          <span class="card-number"><b>{{ String(sessionReviewed + 1).padStart(2, '0') }}</b><small>/ {{ String(Math.max(1, sessionTotal)).padStart(2, '0') }}</small></span>
-        </div>
-      </header>
-      <div ref="reviewBody" class="review-card__body" tabindex="0" aria-label="复习卡正文；内容较长时可在此滚动">
-        <div v-if="current.type === 'question' && questionLoading" class="review-front-surface review-loading" role="status" aria-live="polite">正在从本机资料库加载题目…</div>
-        <div v-else-if="current.type === 'question' && !questionFrontAvailable" class="review-front-surface review-front-empty">
-          <span aria-hidden="true">?</span>
-          <div><h4>这张卡还没有题干</h4><p>复习计划仍然保留着；补全题目后，它会继续按原来的 FSRS 进度出现。</p></div>
-          <button class="quiet-button" @click="openCurrentItem">去题库补全</button>
-        </div>
-        <Suspense v-else-if="current.type === 'question'">
-          <template #default><div class="review-front-surface"><MarkdownContent class="review-content" :source="front.replace(/^---[\s\S]*?---\s*/, '')" @link-open="openReviewMarkdownLink" /></div></template>
-          <template #fallback><div class="review-front-surface review-loading" role="status" aria-live="polite">正在准备题目阅读视图…</div></template>
-        </Suspense>
-        <form v-if="currentCanDraftAnswer && !revealed" id="question-review-form" class="question-review-response" @submit.prevent="checkQuestionDraft" @contextmenu.stop>
-          <div class="question-review-response__heading">
-            <div><p class="eyebrow">主动回忆</p><label for="question-review-answer">{{ current.facet === 'error' ? '写下你认为的错因' : '先写下你的答案或解题思路' }}</label><small id="question-review-answer-hint">仅本次内存 · 不写回题库 · 评分仍由你决定</small></div>
-            <small>{{ questionDraftAnswer.length.toLocaleString() }} / 8,000</small>
+
+    <!-- The card is the page. It claims a fixed slice of the window so the
+         rating buttons land in the same place on every card — you rate a few
+         hundred of these, and a footer that moves with the content length
+         means aiming at a moving target. -->
+    <section
+      v-if="current"
+      ref="reviewCard"
+      tabindex="0"
+      class="panel flex flex-col overflow-hidden h-[clamp(420px,calc(100vh_-_var(--titlebar-h)_-_21rem),680px)] focus:outline-none focus-visible:border-accent"
+      role="region"
+      aria-haspopup="menu"
+      :aria-expanded="Boolean(reviewMenu)"
+      :aria-label="`${currentCardTitle}；右键或 Shift 加 F10 打开复习菜单`"
+      @contextmenu.prevent.stop="openReviewMenu($event, $event.currentTarget)"
+      @keydown="handleReviewCardKeydown"
+    >
+      <header class="row-between gap-4 shrink-0 px-5 py-3.5 border-b border-line">
+        <div v-if="current.type === 'question'" class="stack gap-1 min-w-0">
+          <p class="text-[11px] text-fg-3 truncate">{{ current.document.subject }} · {{ questionReviewFacetLabels[current.facet] }} · 难度 {{ current.document.difficulty }}</p>
+          <h3 class="text-[15px] font-semibold text-fg truncate">{{ current.document.title }}</h3>
+          <div v-if="current.document.tags.length" class="row gap-1 flex-wrap mt-0.5">
+            <TagPill v-for="tag in current.document.tags" :key="tag" :label="tag" />
           </div>
-          <textarea id="question-review-answer" ref="questionAnswerInput" v-model="questionDraftAnswer" rows="3" maxlength="8000" spellcheck="true" aria-describedby="question-review-answer-hint" :placeholder="current.facet === 'error' ? '当时忽略了什么？以后用什么原则避免？' : '不用写得完整，先留下关键步骤、结论或复杂度…'" @keydown.ctrl.enter="handleQuestionDraftShortcut" @keydown.meta.enter="handleQuestionDraftShortcut" @contextmenu.stop></textarea>
-        </form>
-        <div v-if="current.type === 'word'" class="word-review-front" :class="`word-review-front--${current.facet}`">
-          <template v-if="current.facet === 'meaning'"><span>请回想这一条词义</span><b>{{ current.entry.lemma }}</b><small>{{ current.sense.partOfSpeech || '词性待补充' }}</small></template>
-          <template v-else-if="current.facet === 'spelling'"><span>根据释义，拼写单词</span><b class="word-review-front__prompt">{{ current.sense.definition || '先补全这条释义' }}</b><small>{{ current.sense.partOfSpeech || '拼写卡' }}</small></template>
-          <template v-else><span>补全例句中的空白</span><b class="word-review-front__example">{{ currentVocabularyCloze.prompt }}</b><small>{{ current.sense.definition || current.sense.partOfSpeech || '例句填空卡' }}</small></template>
-          <form v-if="currentCanTypeAnswer && !revealed" class="word-review-response" @submit.prevent="checkTypedAnswer" @contextmenu.stop>
-            <label for="word-review-answer">{{ current.facet === 'spelling' ? '输入单词' : '填入空白处' }}</label>
-            <div>
-              <input id="word-review-answer" ref="answerInput" v-model="typedAnswer" type="text" autocomplete="off" autocapitalize="none" :spellcheck="false" aria-describedby="word-review-answer-hint" placeholder="在这里作答…" @keydown.enter="handleTypedAnswerEnter" @contextmenu.stop />
-              <button type="submit" class="primary-button">检查答案 <kbd>Enter</kbd></button>
-            </div>
-            <small id="word-review-answer-hint">只在当前卡片内存中保留；检查后仍由你决定熟练度。</small>
-          </form>
         </div>
-        <div v-if="revealed && !questionLoading" ref="answerReveal" class="answer-reveal">
-          <template v-if="current.type === 'question'">
-            <section v-if="questionDraftAnswer.trim()" class="question-review-attempt" aria-labelledby="question-review-attempt-title"><div><p class="eyebrow">我的作答</p><h4 id="question-review-attempt-title">我的本次作答</h4></div><pre>{{ questionDraftAnswer }}</pre></section>
-            <p class="eyebrow">{{ current.facet === 'error' ? '错因与原则' : '答案与解法' }}</p><Suspense><template #default><MarkdownContent :source="back" @link-open="openReviewMarkdownLink" /></template><template #fallback><div class="review-loading" role="status">正在准备复习内容…</div></template></Suspense>
+        <div v-else class="stack gap-1 min-w-0">
+          <p class="text-[11px] text-fg-3 truncate">{{ current.entry.language }} · {{ vocabularyReviewFacetLabels[current.facet] }} · {{ current.sense.partOfSpeech || '词义卡' }}</p>
+          <h3 class="text-[15px] font-semibold text-fg truncate">{{ currentCardTitle }}</h3>
+          <small v-if="currentWordAnswerVisible && current.entry.pronunciation" class="text-[12px] text-fg-2 font-mono">{{ current.entry.pronunciation }}</small>
+        </div>
+
+        <div class="row gap-2 shrink-0">
+          <button
+            v-if="current.type === 'word' && currentWordAnswerVisible"
+            type="button"
+            class="btn-ghost btn-sm"
+            :class="speakingEntryId === current.entry.id ? 'text-accent' : ''"
+            :aria-pressed="speakingEntryId === current.entry.id"
+            :aria-label="speakingEntryId === current.entry.id ? `停止朗读 ${current.entry.lemma}` : `朗读 ${current.entry.lemma}`"
+            aria-keyshortcuts="P"
+            @click.stop="speakCurrentWord"
+          >
+            <AppIcon :name="speakingEntryId === current.entry.id ? 'pause' : 'play'" :size="13" />
+            {{ speakingEntryId === current.entry.id ? '停止' : '朗读' }}<kbd class="kbd">P</kbd>
+          </button>
+          <span class="row items-baseline gap-0.5 tabular-nums">
+            <b class="text-[17px] font-semibold text-fg">{{ String(sessionReviewed + 1).padStart(2, '0') }}</b>
+            <small class="text-[12px] text-fg-3">/ {{ String(Math.max(1, sessionTotal)).padStart(2, '0') }}</small>
+          </span>
+        </div>
+      </header>
+
+      <div ref="reviewBody" class="flex-1 min-h-0 overflow-auto px-5 py-4" tabindex="0" aria-label="复习卡正文；内容较长时可在此滚动">
+        <div v-if="current.type === 'question' && questionLoading" class="center h-full text-[13px] text-fg-3" role="status" aria-live="polite">正在从本机资料库加载题目…</div>
+
+        <div v-else-if="current.type === 'question' && !questionFrontAvailable" class="stack items-center justify-center gap-3 h-full text-center">
+          <span class="center w-12 h-12 rounded-lg bg-surface-2 text-[20px] font-semibold text-fg-3" aria-hidden="true">?</span>
+          <b class="text-[14px] font-semibold text-fg">这张卡还没有题干</b>
+          <p class="max-w-96 text-[12px] leading-relaxed text-fg-3">复习计划仍然保留着；补全题目后，它会继续按原来的 FSRS 进度出现。</p>
+          <button class="btn-default" @click="openCurrentItem">去题库补全</button>
+        </div>
+
+        <Suspense v-else-if="current.type === 'question'">
+          <template #default>
+            <MarkdownContent class="review-content" :source="front.replace(/^---[\s\S]*?---\s*/, '')" @link-open="openReviewMarkdownLink" />
+          </template>
+          <template #fallback>
+            <div class="center h-full text-[13px] text-fg-3" role="status" aria-live="polite">正在准备题目阅读视图…</div>
+          </template>
+        </Suspense>
+
+        <!-- Active recall: the draft box sits directly under the prompt, so
+             writing an answer is the obvious next move rather than a feature
+             you discover. -->
+        <form
+          v-if="currentCanDraftAnswer && !revealed"
+          id="question-review-form"
+          class="stack gap-2 mt-4 pt-4 border-t border-line"
+          @submit.prevent="checkQuestionDraft"
+          @contextmenu.stop
+        >
+          <div class="row-between gap-3">
+            <label for="question-review-answer" class="text-[13px] font-medium text-fg">
+              {{ current.facet === 'error' ? '写下你认为的错因' : '先写下你的答案或解题思路' }}
+            </label>
+            <small class="text-[11px] text-fg-3 tabular-nums">{{ questionDraftAnswer.length.toLocaleString() }} / 8,000</small>
+          </div>
+          <textarea
+            id="question-review-answer"
+            ref="questionAnswerInput"
+            v-model="questionDraftAnswer"
+            rows="3"
+            maxlength="8000"
+            spellcheck="true"
+            aria-describedby="question-review-answer-hint"
+            class="field-area w-full text-[13px]"
+            :placeholder="current.facet === 'error' ? '当时忽略了什么？以后用什么原则避免？' : '不用写得完整，先留下关键步骤、结论或复杂度…'"
+            @keydown.ctrl.enter="handleQuestionDraftShortcut"
+            @keydown.meta.enter="handleQuestionDraftShortcut"
+            @contextmenu.stop
+          ></textarea>
+          <small id="question-review-answer-hint" class="text-[11px] text-fg-3">仅本次内存 · 不写回题库 · 评分仍由你决定</small>
+        </form>
+
+        <div v-if="current.type === 'word'" class="stack items-center gap-2 py-6 text-center">
+          <template v-if="current.facet === 'meaning'">
+            <span class="text-[12px] text-fg-3">请回想这一条词义</span>
+            <b class="text-[32px] font-semibold leading-tight text-fg">{{ current.entry.lemma }}</b>
+            <small class="text-[12px] text-fg-3">{{ current.sense.partOfSpeech || '词性待补充' }}</small>
+          </template>
+          <template v-else-if="current.facet === 'spelling'">
+            <span class="text-[12px] text-fg-3">根据释义，拼写单词</span>
+            <b class="max-w-160 text-[20px] font-medium leading-snug text-fg">{{ current.sense.definition || '先补全这条释义' }}</b>
+            <small class="text-[12px] text-fg-3">{{ current.sense.partOfSpeech || '拼写卡' }}</small>
           </template>
           <template v-else>
-            <div v-if="currentCanTypeAnswer" class="word-review-feedback" :class="{ correct: typedAnswerCorrect === true, incorrect: typedAnswerCorrect === false, skipped: typedAnswerCorrect === undefined }" role="status" aria-live="polite"><AppIcon :name="typedAnswerCorrect === true ? 'check' : typedAnswerCorrect === false ? 'close' : 'review'" :size="15" /><div><b>{{ typedAnswerCorrect === true ? '拼写正确' : typedAnswerCorrect === false ? '再看一眼正确形式' : '已直接揭晓' }}</b><small v-if="typedAnswer.trim()">你的答案：{{ typedAnswer }}</small><small v-else>本次没有输入答案，不会自动替你评分。</small></div></div>
-            <p class="eyebrow">{{ vocabularyReviewFacetLabels[current.facet] }} · 答案</p><h4>{{ currentCanTypeAnswer ? currentExpectedWordAnswer : current.sense.definition || '尚未填写释义' }}</h4><p v-if="current.sense.examples.length">{{ current.sense.examples.join(' · ') }}</p><small v-if="current.facet !== 'meaning' && current.sense.definition">释义：{{ current.sense.definition }}</small><small v-if="current.sense.collocations.length">常用搭配：{{ current.sense.collocations.join(' · ') }}</small><small v-if="current.sense.synonyms.length">近义 / 易混：{{ current.sense.synonyms.join(' · ') }}</small>
+            <span class="text-[12px] text-fg-3">补全例句中的空白</span>
+            <b class="max-w-160 text-[19px] font-medium leading-relaxed text-fg">{{ currentVocabularyCloze.prompt }}</b>
+            <small class="text-[12px] text-fg-3">{{ current.sense.definition || current.sense.partOfSpeech || '例句填空卡' }}</small>
+          </template>
+
+          <form v-if="currentCanTypeAnswer && !revealed" class="stack gap-2 w-full max-w-100 mt-3 text-left" @submit.prevent="checkTypedAnswer" @contextmenu.stop>
+            <label for="word-review-answer" class="text-[12px] font-medium text-fg-2">{{ current.facet === 'spelling' ? '输入单词' : '填入空白处' }}</label>
+            <div class="row gap-2">
+              <input
+                id="word-review-answer"
+                ref="answerInput"
+                v-model="typedAnswer"
+                type="text"
+                autocomplete="off"
+                autocapitalize="none"
+                :spellcheck="false"
+                aria-describedby="word-review-answer-hint"
+                class="field flex-1 min-w-0"
+                placeholder="在这里作答…"
+                @keydown.enter="handleTypedAnswerEnter"
+                @contextmenu.stop
+              />
+              <button type="submit" class="btn-primary shrink-0">检查答案<kbd class="kbd">Enter</kbd></button>
+            </div>
+            <small id="word-review-answer-hint" class="text-[11px] text-fg-3">只在当前卡片内存中保留；检查后仍由你决定熟练度。</small>
+          </form>
+        </div>
+
+        <div v-if="revealed && !questionLoading" ref="answerReveal" class="stack gap-3 mt-4 pt-4 border-t border-line">
+          <template v-if="current.type === 'question'">
+            <section v-if="questionDraftAnswer.trim()" class="stack gap-1.5 p-3 rounded-md bg-well border border-line" aria-labelledby="question-review-attempt-title">
+              <h4 id="question-review-attempt-title" class="text-[12px] font-medium text-fg-2">我的本次作答</h4>
+              <pre class="m-0 whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-fg">{{ questionDraftAnswer }}</pre>
+            </section>
+            <p class="eyebrow">{{ current.facet === 'error' ? '错因与原则' : '答案与解法' }}</p>
+            <Suspense>
+              <template #default><MarkdownContent class="review-content" :source="back" @link-open="openReviewMarkdownLink" /></template>
+              <template #fallback><div class="text-[13px] text-fg-3" role="status">正在准备复习内容…</div></template>
+            </Suspense>
+          </template>
+
+          <template v-else>
+            <div
+              v-if="currentCanTypeAnswer"
+              class="row gap-2.5 p-3 rounded-md border"
+              :class="typedAnswerCorrect === true ? 'border-success bg-success-soft text-success'
+                : typedAnswerCorrect === false ? 'border-danger bg-danger-soft text-danger'
+                : 'border-line bg-surface-2 text-fg-2'"
+              role="status"
+              aria-live="polite"
+            >
+              <AppIcon :name="typedAnswerCorrect === true ? 'check' : typedAnswerCorrect === false ? 'close' : 'review'" :size="15" class="shrink-0 mt-0.5" />
+              <div class="stack gap-0.5 min-w-0">
+                <b class="text-[13px] font-medium">{{ typedAnswerCorrect === true ? '拼写正确' : typedAnswerCorrect === false ? '再看一眼正确形式' : '已直接揭晓' }}</b>
+                <small v-if="typedAnswer.trim()" class="text-[12px] opacity-90">你的答案：{{ typedAnswer }}</small>
+                <small v-else class="text-[12px] opacity-90">本次没有输入答案，不会自动替你评分。</small>
+              </div>
+            </div>
+
+            <p class="eyebrow">{{ vocabularyReviewFacetLabels[current.facet] }} · 答案</p>
+            <h4 class="text-[19px] font-semibold leading-snug text-fg">{{ currentCanTypeAnswer ? currentExpectedWordAnswer : current.sense.definition || '尚未填写释义' }}</h4>
+            <p v-if="current.sense.examples.length" class="text-[13px] leading-relaxed text-fg-2">{{ current.sense.examples.join(' · ') }}</p>
+            <dl class="stack gap-1 text-[12px]">
+              <div v-if="current.facet !== 'meaning' && current.sense.definition" class="row gap-2">
+                <dt class="shrink-0 w-20 text-fg-3">释义</dt><dd class="m-0 min-w-0 text-fg-2">{{ current.sense.definition }}</dd>
+              </div>
+              <div v-if="current.sense.collocations.length" class="row gap-2">
+                <dt class="shrink-0 w-20 text-fg-3">常用搭配</dt><dd class="m-0 min-w-0 text-fg-2">{{ current.sense.collocations.join(' · ') }}</dd>
+              </div>
+              <div v-if="current.sense.synonyms.length" class="row gap-2">
+                <dt class="shrink-0 w-20 text-fg-3">近义 / 易混</dt><dd class="m-0 min-w-0 text-fg-2">{{ current.sense.synonyms.join(' · ') }}</dd>
+              </div>
+            </dl>
           </template>
         </div>
       </div>
-      <footer>
-        <button v-if="!revealed && current.type === 'question' && !questionLoading && !questionFrontAvailable" class="primary-button wide" @click="openCurrentItem">先补全题干，再开始复习 <span>→</span></button>
-        <button v-else-if="!revealed && currentCanTypeAnswer" class="quiet-button wide" @click="revealCurrent">暂不输入，直接揭晓 <span>↓</span></button>
-        <div v-else-if="!revealed && currentCanDraftAnswer" class="question-review-footer-actions"><button class="quiet-button" @click="revealCurrent">暂不记录，直接揭晓</button><button type="submit" form="question-review-form" class="primary-button">对照答案 <kbd>Ctrl / ⌘ Enter</kbd></button></div>
-        <button v-else-if="!revealed" class="primary-button wide" :disabled="questionLoading" @click="revealCurrent">{{ current.type === 'word' ? '查看答案' : questionLoading ? '正在读取题目…' : current.facet === 'error' ? '先回想错因，再看复盘' : '先想一想，再看解法' }} <span>↓</span></button>
+
+      <footer class="stack gap-2 shrink-0 px-5 py-3 border-t border-line">
+        <button v-if="!revealed && current.type === 'question' && !questionLoading && !questionFrontAvailable" class="btn-primary w-full" @click="openCurrentItem">
+          先补全题干，再开始复习
+        </button>
+        <button v-else-if="!revealed && currentCanTypeAnswer" class="btn-default w-full" @click="revealCurrent">暂不输入，直接揭晓</button>
+        <div v-else-if="!revealed && currentCanDraftAnswer" class="row gap-2">
+          <button class="btn-default flex-1" @click="revealCurrent">暂不记录，直接揭晓</button>
+          <button type="submit" form="question-review-form" class="btn-primary flex-1">对照答案<kbd class="kbd">Ctrl / ⌘ Enter</kbd></button>
+        </div>
+        <button v-else-if="!revealed" class="btn-primary w-full" :disabled="questionLoading" @click="revealCurrent">
+          {{ current.type === 'word' ? '查看答案' : questionLoading ? '正在读取题目…' : current.facet === 'error' ? '先回想错因，再看复盘' : '先想一想，再看解法' }}
+        </button>
+
         <template v-else>
-          <p>{{ current.type === 'word' ? `这张${vocabularyReviewFacetLabels[current.facet]}卡现在有多熟？` : `这张${questionReviewFacetLabels[current.facet]}卡现在有多熟？` }}<small v-if="ratingPreviewLoading" class="review-interval-loading" role="status">正在估算下一次复习…</small></p>
-          <div class="rating-row">
-            <button v-for="item in ratingOptions" :key="item.rating" :class="`rating-${item.rating.toLowerCase()}`" :disabled="ratingInProgress || questionLoading" :aria-label="`${item.shortcut}，${item.label}；下次复习 ${ratingIntervals[item.rating] || '正在估算'}`" @click="rate(item.rating)"><b><kbd>{{ item.shortcut }}</kbd>{{ item.label }}</b><small>{{ ratingIntervals[item.rating] || item.rating }}</small></button>
+          <!-- Four ratings, four equal targets, always in this order. The
+               colour is a tint rather than a fill: these are pressed all day,
+               and four saturated buttons in a row is a slot machine. -->
+          <div class="row-between gap-3">
+            <p class="text-[12px] text-fg-2">{{ current.type === 'word' ? `这张${vocabularyReviewFacetLabels[current.facet]}卡现在有多熟？` : `这张${questionReviewFacetLabels[current.facet]}卡现在有多熟？` }}</p>
+            <small v-if="ratingPreviewLoading" class="text-[11px] text-fg-3" role="status">正在估算下一次复习…</small>
+          </div>
+          <div class="grid grid-cols-4 gap-2">
+            <button
+              v-for="item in ratingOptions"
+              :key="item.rating"
+              class="stack items-center justify-center gap-0.5 h-13 rounded-sm border bg-surface transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+              :class="ratingTone[item.rating]"
+              :disabled="ratingInProgress || questionLoading"
+              :aria-label="`${item.shortcut}，${item.label}；下次复习 ${ratingIntervals[item.rating] || '正在估算'}`"
+              @click="rate(item.rating)"
+            >
+              <b class="row gap-1.5 text-[13px] font-medium"><kbd class="kbd">{{ item.shortcut }}</kbd>{{ item.label }}</b>
+              <small class="text-[11px] text-fg-3 tabular-nums">{{ ratingIntervals[item.rating] || item.rating }}</small>
+            </button>
           </div>
         </template>
-        <p v-if="reviewError" class="review-error" role="alert">{{ reviewError }}</p>
-        <small class="review-shortcuts"><span v-if="currentCanTypeAnswer && !revealed">Enter 检查 · </span><span v-if="currentCanDraftAnswer && !revealed">Ctrl/⌘ Enter 对照 · </span>Space 翻面 · 1–4 评分 · D 稍后再看<span v-if="currentWordAnswerVisible"> · P 朗读</span><span v-if="currentCanRetryAnswer && revealed"> · R 重答</span> · Ctrl/⌘ Z 撤销 · Shift+F10 打开菜单</small>
+
+        <p v-if="reviewError" class="text-[12px] text-danger" role="alert">{{ reviewError }}</p>
+        <small class="text-[11px] text-fg-3">
+          <span v-if="currentCanTypeAnswer && !revealed">Enter 检查 · </span><span v-if="currentCanDraftAnswer && !revealed">Ctrl/⌘ Enter 对照 · </span>Space 翻面 · 1–4 评分 · D 稍后再看<span v-if="currentWordAnswerVisible"> · P 朗读</span><span v-if="currentCanRetryAnswer && revealed"> · R 重答</span> · Ctrl/⌘ Z 撤销 · Shift+F10 打开菜单
+        </small>
       </footer>
     </section>
-    <section v-else class="review-finished panel">
-      <template v-if="deferredCount">
-        <span>暂缓</span><h3>本轮先完成了 {{ sessionReviewed }} 张。</h3><p>还有 {{ deferredCount }} 张暂缓卡留在本轮末尾；它们没有被评分，也没有改变 FSRS 计划。</p>
-        <div><button class="primary-button" @click="restoreDeferred">继续复习暂缓卡</button><RouterLink class="quiet-button" to="/library">先去收集资料</RouterLink></div>
-      </template>
-      <template v-else-if="reviewEmptyState === 'filtered'">
-        <span>筛选</span><h3>这个分类当前没有到期卡片。</h3><p>其他类型还有 {{ queueKindCounts.all }} 张到期内容；切回全部队列即可继续。</p><button class="primary-button" @click="selectReviewKind('all')">查看全部到期内容</button>
-      </template>
-      <template v-else-if="reviewEmptyState === 'no-material'">
-        <span>开始</span><h3>先准备第一份复习材料。</h3><p>记录一道错题，或录入一个带词义的单词，再为需要记忆的方向启用卡片。</p><div><RouterLink class="primary-button" to="/documents?kind=question&create=question">记录第一道错题</RouterLink><RouterLink class="quiet-button" to="/words?action=create">录入第一个单词</RouterLink></div>
-      </template>
-      <template v-else-if="reviewEmptyState === 'no-cards'">
-        <span>卡片</span><h3>内容已经存在，但还没有启用复习方向。</h3><p>进入题目或单词，选择答案、错因、词义、拼写或例句卡；每张卡会独立安排 FSRS。</p><div><RouterLink class="primary-button" to="/documents?kind=question">设置题目卡</RouterLink><RouterLink class="quiet-button" to="/words">设置单词卡</RouterLink></div>
-      </template>
-      <template v-else-if="reviewEmptyState === 'waiting'">
-        <span>等待</span><h3>当前没有到期卡片。</h3><p>{{ reviewScheduleSummary.count }} 张卡正在按各自节奏安排；下一次复习：{{ nextReviewLabel }}。</p><div><RouterLink class="primary-button" to="/knowledge">回到知识库</RouterLink><RouterLink class="quiet-button" to="/documents?kind=question&create=question">继续记录错题</RouterLink></div>
-      </template>
-      <template v-else>
-        <span>✓</span><h3>今天的线已经织完了。</h3><p>可以收一份新资料，或者放心地合上 Knitspace。</p><RouterLink class="primary-button" to="/library">去收集资料</RouterLink>
-      </template>
-    </section>
-    <section class="review-launchpad" aria-labelledby="review-launchpad-heading">
-      <header><div><p class="eyebrow">维护复习队列</p><h3 id="review-launchpad-heading">准备复习材料</h3></div><p>题目和词义仍是结构化内容；这里直接创建、导入或调整卡面。</p></header>
-      <nav aria-label="复习材料常用任务">
-        <RouterLink v-for="action in reviewWorkflowActions" :key="action.id" v-memo="[action.id]" :to="action.to"><span><AppIcon :name="action.icon" :size="14" /></span><div><b>{{ action.label }}</b><small>{{ action.detail }}</small></div><AppIcon name="arrow-right" :size="12" /></RouterLink>
-      </nav>
-    </section>
-    <section class="review-materials" aria-labelledby="review-materials-title">
-      <header>
-        <div><p class="eyebrow">复习来源</p><h3 id="review-materials-title">管理复习材料</h3><p>卡片从结构化题目和词义生成；修改材料不会把它拆成零散文件。</p></div>
-        <RouterLink class="quiet-button" to="/documents?kind=question&create=question"><AppIcon name="plus" :size="14" />记录新错题</RouterLink>
-      </header>
-      <div>
-        <RouterLink to="/documents?kind=question"><span><AppIcon name="review" :size="17" /></span><div><b>题目与错题</b><small>{{ questionMaterialCount }} 道题 · {{ store.dueQuestionCards.length }} 张当前到期卡</small></div><AppIcon name="arrow-right" :size="13" /></RouterLink>
-        <RouterLink to="/words"><span><AppIcon name="sort" :size="17" /></span><div><b>结构化单词</b><small>{{ vocabularyMaterialCount }} 个词 · {{ store.dueVocabularyCards.length }} 张当前到期卡</small></div><AppIcon name="arrow-right" :size="13" /></RouterLink>
+
+    <section v-else class="panel stack items-center justify-center gap-3 min-h-80 px-6 py-12 text-center">
+      <span class="center w-13 h-13 rounded-lg bg-accent-soft text-accent">
+        <AppIcon :name="reviewFinishedState.icon" :size="24" />
+      </span>
+      <b class="text-[17px] font-semibold text-fg">{{ reviewFinishedState.title }}</b>
+      <p class="max-w-120 text-[13px] leading-relaxed text-fg-2">{{ reviewFinishedState.detail }}</p>
+      <div class="row gap-2 mt-1">
+        <template v-if="deferredCount">
+          <button class="btn-primary" @click="restoreDeferred">继续复习暂缓卡</button>
+          <RouterLink class="btn-default" to="/library">先去收集资料</RouterLink>
+        </template>
+        <template v-else-if="reviewEmptyState === 'filtered'">
+          <button class="btn-primary" @click="selectReviewKind('all')">查看全部到期内容</button>
+        </template>
+        <template v-else-if="reviewEmptyState === 'no-material'">
+          <RouterLink class="btn-primary" to="/documents?kind=question&create=question">记录第一道错题</RouterLink>
+          <RouterLink class="btn-default" to="/words?action=create">录入第一个单词</RouterLink>
+        </template>
+        <template v-else-if="reviewEmptyState === 'no-cards'">
+          <RouterLink class="btn-primary" to="/documents?kind=question">设置题目卡</RouterLink>
+          <RouterLink class="btn-default" to="/words">设置单词卡</RouterLink>
+        </template>
+        <template v-else-if="reviewEmptyState === 'waiting'">
+          <RouterLink class="btn-primary" to="/knowledge">回到知识库</RouterLink>
+          <RouterLink class="btn-default" to="/documents?kind=question&create=question">继续记录错题</RouterLink>
+        </template>
+        <template v-else>
+          <RouterLink class="btn-primary" to="/library">去收集资料</RouterLink>
+        </template>
       </div>
-      <footer><AppIcon name="link" :size="13" /><span>一个题目或词义可生成多个独立卡面，每个卡面保留自己的 FSRS 强度与到期时间。</span></footer>
     </section>
-    <section v-if="reviewMenu && current" ref="reviewMenuElement" class="review-context-menu" role="menu" :aria-label="`${currentCardTitle} 操作`" :style="{ left: `${reviewMenu.x}px`, top: `${reviewMenu.y}px` }" @click.stop @contextmenu.prevent @keydown="handleReviewMenuKeydown"><p>{{ currentCardTitle }}</p><button v-if="currentSourceAnchor" role="menuitem" @click="openCurrentSource">回到来源资料 · 第 {{ currentSourceAnchor.pageIndex + 1 }} 页</button><button v-if="currentQuestionSource.raw" role="menuitem" @click="copyCurrentQuestionSource">复制来源 / 出处</button><button v-if="currentQuestionSource.kind !== 'text'" role="menuitem" @click="openCurrentQuestionSource">{{ questionSourceActionLabel(currentQuestionSource) }}</button><button role="menuitem" @click="openCurrentItem">{{ currentLocationLabel }}</button><button v-if="current.type === 'word' && currentWordAnswerVisible" role="menuitem" @click="speakCurrentWord">{{ speakingEntryId === current.entry.id ? '停止朗读' : '朗读单词' }} <kbd>P</kbd></button><button v-if="!revealed && currentHasDraftAnswer" role="menuitem" @click="clearCurrentAnswer">清空本次作答</button><button v-if="revealed && currentCanRetryAnswer" role="menuitem" @click="retryCurrentAnswer">重新作答 <kbd>R</kbd></button><button role="menuitem" :disabled="questionLoading || (current.type === 'question' && !questionFrontAvailable)" @click="copyCurrentReviewCard">{{ current.type === 'word' ? revealed ? '复制完整单词 Markdown' : '复制当前题面 Markdown' : revealed ? '复制当前卡片 Markdown' : '复制题目 Markdown' }}</button><button v-if="canUndoLastRating" role="menuitem" :disabled="ratingInProgress" @click="undoLastRating">撤销上一评分 <kbd>Ctrl / ⌘ Z</kbd></button><button role="menuitem" @click="deferCurrent">本轮稍后再看 <kbd>D</kbd></button><button role="menuitem" @click="closeReviewMenu(true)">继续复习</button></section>
+
+    <!-- One materials section, not two. "准备复习材料" and "管理复习材料" were
+         separate panels with separate headers that both linked to the same two
+         places; split by source instead, each column carrying its own count. -->
+    <section class="panel mt-4 p-4" aria-labelledby="review-materials-title">
+      <header class="row-between gap-4 mb-3">
+        <div class="stack gap-0.5 min-w-0">
+          <h3 id="review-materials-title" class="text-[14px] font-semibold text-fg">复习材料</h3>
+          <p class="text-[12px] text-fg-3">卡片从结构化题目和词义生成；一个题目或词义可生成多个卡面，各自保留 FSRS 强度与到期时间。</p>
+        </div>
+      </header>
+      <div class="grid gap-3 grid-cols-1 lg:grid-cols-2">
+        <div v-for="group in materialGroups" :key="group.id" class="stack gap-2 p-3 rounded-md bg-surface-2 border border-line">
+          <RouterLink :to="group.to" class="row-between gap-3 group">
+            <span class="row gap-2.5 min-w-0">
+              <AppIcon :name="group.icon" :size="17" class="shrink-0 text-accent" />
+              <b class="text-[13px] font-medium text-fg truncate">{{ group.label }}</b>
+            </span>
+            <small class="shrink-0 text-[12px] text-fg-3 tabular-nums">{{ group.summary }}</small>
+          </RouterLink>
+          <div class="stack gap-1">
+            <RouterLink
+              v-for="action in group.actions"
+              :key="action.id"
+              v-memo="[action.id]"
+              :to="action.to"
+              class="row gap-2.5 h-9 px-2 rounded-sm text-fg-2 transition-colors hover:bg-surface-3 hover:text-fg"
+            >
+              <AppIcon :name="action.icon" :size="14" class="shrink-0 text-fg-3" />
+              <b class="text-[12px] font-normal">{{ action.label }}</b>
+              <small class="ml-auto text-[11px] text-fg-3 truncate">{{ action.detail }}</small>
+            </RouterLink>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <Teleport to="body">
+      <section
+        v-if="reviewMenu && current"
+        ref="reviewMenuElement"
+        class="fixed z-[120] w-64 p-1 rounded-md bg-surface border border-line-strong shadow-lg"
+        role="menu"
+        :aria-label="`${currentCardTitle} 操作`"
+        :style="{ left: `${reviewMenu.x}px`, top: `${reviewMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown="handleReviewMenuKeydown"
+      >
+        <p class="px-2.5 py-1.5 text-[11px] text-fg-3 truncate">{{ currentCardTitle }}</p>
+        <button v-if="currentSourceAnchor" class="nav-item w-full" role="menuitem" @click="openCurrentSource">回到来源资料 · 第 {{ currentSourceAnchor.pageIndex + 1 }} 页</button>
+        <button v-if="currentQuestionSource.raw" class="nav-item w-full" role="menuitem" @click="copyCurrentQuestionSource">复制来源 / 出处</button>
+        <button v-if="currentQuestionSource.kind !== 'text'" class="nav-item w-full" role="menuitem" @click="openCurrentQuestionSource">{{ questionSourceActionLabel(currentQuestionSource) }}</button>
+        <button class="nav-item w-full" role="menuitem" @click="openCurrentItem">{{ currentLocationLabel }}</button>
+        <button v-if="current.type === 'word' && currentWordAnswerVisible" class="nav-item w-full" role="menuitem" @click="speakCurrentWord">{{ speakingEntryId === current.entry.id ? '停止朗读' : '朗读单词' }}<kbd class="kbd ml-auto">P</kbd></button>
+        <button v-if="!revealed && currentHasDraftAnswer" class="nav-item w-full" role="menuitem" @click="clearCurrentAnswer">清空本次作答</button>
+        <button v-if="revealed && currentCanRetryAnswer" class="nav-item w-full" role="menuitem" @click="retryCurrentAnswer">重新作答<kbd class="kbd ml-auto">R</kbd></button>
+        <button class="nav-item w-full" role="menuitem" :disabled="questionLoading || (current.type === 'question' && !questionFrontAvailable)" @click="copyCurrentReviewCard">{{ current.type === 'word' ? revealed ? '复制完整单词 Markdown' : '复制当前题面 Markdown' : revealed ? '复制当前卡片 Markdown' : '复制题目 Markdown' }}</button>
+        <button v-if="canUndoLastRating" class="nav-item w-full" role="menuitem" :disabled="ratingInProgress" @click="undoLastRating">撤销上一评分<kbd class="kbd ml-auto">Ctrl / ⌘ Z</kbd></button>
+        <button class="nav-item w-full" role="menuitem" @click="deferCurrent">本轮稍后再看<kbd class="kbd ml-auto">D</kbd></button>
+        <button class="nav-item w-full" role="menuitem" @click="closeReviewMenu(true)">继续复习</button>
+      </section>
+    </Teleport>
   </div>
 </template>
-
-<style scoped>
-.review-kind-switch{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}.review-kind-switch button{display:flex;min-height:34px;align-items:center;gap:7px;padding:0 10px;border:1px solid var(--accent-soft);border-radius:8px;color:var(--text-secondary);background:var(--surface-2);font:650 11px var(--font-ui);transition:border-color .16s ease,color .16s ease,background .16s ease}.review-kind-switch button:hover,.review-kind-switch button:focus-visible{border-color:var(--accent);color:var(--green-strong);background:var(--surface)}.review-kind-switch button:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 45%,transparent);outline-offset:2px}.review-kind-switch button.active{border-color:var(--accent-soft);color:var(--green-strong);background:var(--green-bg);box-shadow:inset 3px 0 var(--green)}.review-kind-switch button b{display:grid;min-width:20px;height:20px;place-items:center;padding:0 4px;border-radius:6px;color:var(--muted);background:var(--accent-soft);font:700 10px var(--font-mono)}.review-kind-switch button.active b{color:var(--fg);background:var(--green-strong)}
-.review-card{height:clamp(410px,calc(100vh - 270px),650px)}.review-card__body{min-height:0;flex:1;overflow:auto}
-.review-card__word-tools{display:flex;flex:0 0 auto;align-items:center;gap:9px}.review-word-speak{display:inline-flex;min-height:30px;align-items:center;gap:6px;padding:0 9px;border:1px solid var(--accent-soft);border-radius:8px;color:var(--green-strong);background:var(--surface-2);font:680 10px var(--font-ui);cursor:pointer;transition:border-color .16s ease,color .16s ease,background .16s ease}.review-word-speak:hover,.review-word-speak:focus-visible,.review-word-speak.active{border-color:var(--accent);color:var(--fg);background:var(--green-strong)}.review-word-speak:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 45%,transparent);outline-offset:2px}.review-word-speak kbd{padding:1px 4px;border:1px solid currentColor;border-radius:4px;font:750 9px var(--font-mono);opacity:.78}
-.review-card--question-active .review-front-surface{min-height:104px;padding-block:16px}.question-review-response{display:grid;gap:8px;padding:11px 24px 13px;border-top:1px solid var(--accent-soft);background:linear-gradient(180deg,var(--surface-2),var(--surface-2))}.question-review-response__heading{display:flex;align-items:flex-end;justify-content:space-between;gap:14px}.question-review-response__heading>div{display:grid;gap:3px}.question-review-response__heading .eyebrow{font-size:8px}.question-review-response label{color:var(--text);font:700 12px var(--font-ui)}.question-review-response__heading small{color:var(--muted);font:9px/1.45 var(--font-mono)}.question-review-response textarea{display:block;width:100%;min-height:66px;max-height:156px;resize:vertical;padding:9px 12px;border:1px solid var(--accent-soft);border-radius:9px;color:var(--text);background:var(--surface);font:500 12px/1.65 var(--font-ui);caret-color:var(--green-strong);transition:border-color .16s ease,box-shadow .16s ease}.question-review-response textarea::placeholder{color:var(--fg-3)}.question-review-response textarea:focus{border-color:var(--accent);outline:0;box-shadow:0 0 0 3px var(--accent-soft)}.question-review-footer-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.question-review-footer-actions>button{min-height:42px;padding-inline:14px;font-size:10px}.question-review-footer-actions>.quiet-button{text-align:left}.question-review-footer-actions kbd{margin-left:7px;padding:2px 4px;border:1px solid var(--surface-2);border-radius:4px;font:750 8px var(--font-mono)}.question-review-attempt{display:grid;gap:9px;margin:-4px 0 18px;padding:12px 14px;border:1px solid var(--accent-soft);border-left:3px solid var(--green);border-radius:9px;background:var(--surface)}.question-review-attempt>div{display:flex;align-items:baseline;gap:9px}.question-review-attempt h4{margin:0;color:var(--text);font:700 12px var(--font-ui)}.question-review-attempt pre{overflow-wrap:anywhere;margin:0;color:var(--text-secondary);font:500 11px/1.7 var(--font-ui);white-space:pre-wrap}
-.word-review-response{display:grid;width:min(100%,620px);gap:7px;margin-top:10px;text-align:left}.word-review-response>label{color:var(--text-secondary);font:680 10px var(--font-ui)}.word-review-response>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.word-review-response input{min-width:0;height:42px;padding:0 13px;border:1px solid var(--accent-soft);border-radius:9px;color:var(--text);background:var(--surface);font:650 15px var(--font-ui);caret-color:var(--green-strong);transition:border-color .16s ease,box-shadow .16s ease}.word-review-response input::placeholder{color:var(--fg-3)}.word-review-response input:focus{border-color:var(--accent);outline:0;box-shadow:0 0 0 3px var(--accent-soft)}.word-review-response .primary-button{min-height:42px;padding-inline:14px;font-size:11px}.word-review-response kbd{margin-left:7px;padding:2px 4px;border:1px solid var(--surface-2);border-radius:4px;font:750 9px var(--font-mono)}.word-review-response>small{color:var(--muted);font:9px/1.45 var(--font-mono);letter-spacing:0}.word-review-feedback{display:flex;align-items:flex-start;gap:9px;margin:0 0 14px;padding:10px 11px;border:1px solid var(--accent-soft);border-radius:10px;color:var(--green-strong);background:var(--accent-soft)}.word-review-feedback.incorrect{border-color:var(--danger-soft);color:var(--danger);background:var(--danger-soft)}.word-review-feedback.skipped{border-color:var(--line-strong);color:var(--text-secondary);background:var(--line)}.word-review-feedback>div{display:grid;gap:3px}.word-review-feedback b{font:700 11px var(--font-ui)}.review-card--word .answer-reveal .word-review-feedback small{margin:0;color:currentColor;font:9px/1.45 var(--font-mono);opacity:.82}.review-card>footer>.quiet-button.wide{display:flex;width:100%;min-height:42px;align-items:center;justify-content:space-between;padding:0 15px;font-size:11px;text-align:left}.review-card>footer>.quiet-button.wide span{font:700 16px var(--font-mono)}
-.review-loading{display:grid;min-height:220px;place-items:center;color:var(--muted);letter-spacing:.02em}.answer-reveal{padding:20px 24px 26px;border-top:1px solid var(--line);background:var(--surface-2)}
-.rating-row button{border-color:currentColor;color:var(--text-secondary);background:var(--surface)}.rating-row button kbd{margin-right:7px;padding:2px 4px;border:1px solid;border-radius:4px;font:750 9px var(--font-mono)}.rating-again{color:var(--danger)!important}.rating-hard{color:var(--warn)!important}.rating-good{color:var(--accent)!important}.rating-easy{color:var(--accent-fg)!important;background:var(--accent)!important}
-.review-launchpad{display:grid;grid-template-columns:218px minmax(0,1fr);gap:9px;margin:14px 0 0}.review-launchpad>header{display:flex;align-items:flex-start;flex-direction:column;justify-content:center;padding:12px 14px;border:1px solid var(--accent-soft);border-radius:13px;background:linear-gradient(135deg,var(--green-bg),var(--surface))}.review-launchpad h3{margin-top:4px;font:700 15px/1.25 var(--font-display);letter-spacing:-.02em}.review-launchpad>header>p:last-child{margin:6px 0 0;color:var(--muted);font-size:11px;line-height:1.5}.review-launchpad>nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--line);border-radius:13px;background:var(--line);box-shadow:0 7px 20px var(--accent-soft)}.review-launchpad a{display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:56px;padding:8px 10px;color:var(--text-secondary);background:var(--surface);outline:0}.review-launchpad a:hover,.review-launchpad a:focus-visible{color:var(--green-strong);background:var(--green-bg)}.review-launchpad a:focus-visible{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--green) 46%,transparent)}.review-launchpad a>span{display:grid;width:30px;height:30px;place-items:center;border:1px solid var(--accent-soft);border-radius:8px;color:var(--green-strong);background:var(--surface)}.review-launchpad a>div{display:grid;min-width:0;gap:3px}.review-launchpad b,.review-launchpad small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.review-launchpad b{font:670 11px var(--font-ui)}.review-launchpad small{color:var(--muted);font-size:10px}.review-launchpad a>.app-icon{color:var(--muted)}
-@media(max-width:960px){.review-launchpad{grid-template-columns:1fr}.review-launchpad>header{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:12px}.review-launchpad>header>p:last-child{grid-column:2;margin:0}}
-@media(max-width:720px){.review-kind-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.review-kind-switch button{justify-content:space-between;padding-inline:9px}}
-@media(max-width:620px){.word-review-response>div{grid-template-columns:1fr}.word-review-response .primary-button{width:100%}.question-review-response{padding-inline:14px}.question-review-footer-actions{grid-template-columns:1fr}.question-review-footer-actions>button{width:100%}}
-@media(prefers-reduced-motion:reduce){.review-word-speak,.question-review-response textarea{transition:none}}
-</style>

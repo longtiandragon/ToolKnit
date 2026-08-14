@@ -10,6 +10,7 @@ import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import EditorRecoveryBanner from '@/components/EditorRecoveryBanner.vue'
 import DocumentTabStrip from '@/components/DocumentTabStrip.vue'
 import ExternalMarkdownWorkspace from '@/components/ExternalMarkdownWorkspace.vue'
+import SegmentedControl from '@/components/SegmentedControl.vue'
 import type { EntityRelation, QuestionReviewFacet, QuestionType, RelationType, StudyDocument } from '@/types'
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useUiStore } from '@/stores/ui'
@@ -1371,6 +1372,76 @@ function openQuestionAttachmentMenu(event: MouseEvent | KeyboardEvent, attachmen
 }
 const anchorCrop = ref<string>()
 const inspectorLabel = computed(() => draft.value?.kind === 'question' ? '题目与复习' : '文档信息')
+
+/* ── Chrome around the document ───────────────────────────────────────────
+   Tags used to own a permanent strip between the header and the editor. They
+   describe the document rather than belong to it, so they collapse to one
+   chip that opens this. */
+const tagPopoverOpen = ref(false)
+watch(() => draft.value?.id, () => { tagPopoverOpen.value = false })
+
+/* The inspector is a column, not an overlay: it used to slide over the right
+   side of the document, so looking up a backlink hid the sentence that sent
+   you there.
+
+   Written as three whole strings rather than assembled from pieces: UnoCSS
+   extracts class names statically, and a template literal it cannot read
+   produces no CSS at all. */
+const workspaceColumns = computed(() => {
+  if (focusMode.value) return 'grid-cols-1'
+  return inspectorOpen.value && draft.value
+    ? 'px-6 py-5 grid-cols-[288px_minmax(0,1fr)_minmax(300px,340px)]'
+    : 'px-6 py-5 grid-cols-[288px_minmax(0,1fr)]'
+})
+
+const questionDetailFields = [
+  { key: 'stem', label: '题干', placeholder: '把题目或需要回想的条件写在这里…' },
+  { key: 'answer', label: '答案 / 结论', placeholder: '先写最终答案，再补充推导。' },
+  { key: 'explanation', label: '解析 / 正确思路', placeholder: '关键步骤、边界和为什么这样做。' },
+  { key: 'wrongAnswer', label: '当时的错误做法', placeholder: '记录第一次的思路或答案。' },
+  { key: 'errorReason', label: '错误原因', placeholder: '例如：遗漏边界、概念混淆、时间复杂度判断失误。' },
+] as const
+
+/* The eight formats that were worth an icon rather than a menu row. */
+const editorQuickFormats = [
+  { command: 'bold', icon: 'bold', title: '粗体 · Ctrl+B', aria: '切换粗体' },
+  { command: 'italic', icon: 'italic', title: '斜体 · Ctrl+I', aria: '切换斜体' },
+  { command: 'inline-code', icon: 'inline-code', title: '行内代码 · Ctrl+E', aria: '切换行内代码' },
+  { command: 'link', icon: 'link', title: '链接 · Ctrl+Shift+L', aria: '插入链接' },
+  { command: 'quote', icon: 'quote', title: '引用', aria: '切换引用' },
+  { command: 'numbered-list', icon: 'sort', title: '有序列表', aria: '切换有序列表' },
+  { command: 'bullet-list', icon: 'list', title: '无序列表', aria: '切换无序列表' },
+  { command: 'task-list', icon: 'task', title: '任务列表', aria: '切换任务列表' },
+] as const
+
+const noteSourceTabs = [
+  { id: 'vault', label: 'Knitspace 资料库' },
+  { id: 'workspace', label: '外部工作区' },
+] as const
+const listFilterOptions = computed(() => [
+  { id: 'all', label: '全部' },
+  { id: 'review', label: '待复习' },
+  { id: 'plain', label: '未加入' },
+])
+const editorModeOptions = [
+  { id: 'edit', label: '编辑' },
+  { id: 'split', label: '分屏' },
+  { id: 'preview', label: '预览' },
+  { id: 'mindmap', label: '图谱' },
+]
+const documentStatisticRows = computed(() => {
+  const stats = documentStatistics.value
+  if (!stats) return []
+  const count = (value: number) => value.toLocaleString('zh-CN')
+  return [
+    { label: '字符', value: count(stats.charactersWithoutWhitespace), unit: '不含空格' },
+    { label: '中文', value: count(stats.cjkCharacters), unit: '字符' },
+    { label: '英文 / 数字', value: count(stats.latinWords), unit: '词' },
+    { label: '结构', value: count(stats.paragraphs), unit: `段 · ${stats.headings} 标题` },
+    { label: '源码', value: count(stats.lines), unit: `行 · ${stats.codeLines} 代码行` },
+    { label: '预计阅读', value: String(stats.readingMinutes), unit: '分钟' },
+  ]
+})
 const relationLabel: Record<RelationType, string> = { related: '相关', prerequisite: '前置知识', variation: '变式 / 对比' }
 const wikiLinks = computed(() => draft.value ? parseWikiLinks(draft.value.content) : [])
 function entityInfo(id: string) {
@@ -3611,7 +3682,6 @@ async function removeDocument(document: StudyDocument) {
   }
   ui.toast('已删除文档', undefined, 'success')
 }
-async function remove() { if (draft.value) await removeDocument(draft.value) }
 function insertAi(content: string) { if (!draft.value) return; draft.value.content += `\n\n---\n\n## AI 草稿（已确认）\n\n${content}\n`; save() }
 function returnToSource() {
   const anchor = draft.value?.sourceAnchor
@@ -3751,64 +3821,585 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="documents page-enter" @click="closeDocumentMenu(); closeManagedVaultMenu(); closeFrontmatterMenu(); closeNoteStarterMenu(); closeRelationMenu(); closeWikiContextMenu(); closeHeadingContextMenu(); closeEditorContextMenu(); closeQuestionAttachmentMenu(); closeQuestionStructureMenu(); closeDocumentStatisticsMenu(); closeLargePreviewMenu()">
-    <div class="documents-layout" :class="{ 'documents-layout--focus': focusMode }">
-      <aside v-if="!focusMode" class="document-list">
-        <header class="document-list__header"><div><strong>{{ isNotes ? '笔记' : '错题' }}</strong><span>{{ docs.length }} 条</span></div><div class="document-list__header-actions"><button v-if="isNotes" class="icon-button document-import-button" title="打开单个本地 Markdown" aria-label="打开单个本地 Markdown" @click.stop="importMarkdown"><AppIcon name="file-text" :size="15" /></button><button v-else class="icon-button document-import-button" title="批量导入 CSV、TSV 或 TXT 题目" aria-label="批量导入题目" @click.stop="openQuestionImport"><AppIcon name="inbox" :size="15" /></button><button v-if="isNotes" class="icon-button" title="左键新建空白笔记；右键或 Shift+F10 选择模板" aria-haspopup="menu" :aria-expanded="Boolean(noteStarterMenu)" @click.stop="createNote" @contextmenu.prevent.stop="openNoteStarterMenu" @keydown="openNoteStarterMenuFromKeyboard">＋</button><button v-else class="icon-button" title="左键新建错题；右键或 Shift+F10 批量导入" @click.stop="createQuestion" @contextmenu.prevent.stop="openQuestionImport" @keydown="openQuestionImportFromKeyboard">＋</button></div></header>
-        <div v-if="isNotes" class="document-source-switch" role="tablist" aria-label="笔记来源"><button role="tab" :aria-selected="sidebarMode === 'vault'" :class="{ active: sidebarMode === 'vault' }" @click="sidebarMode = 'vault'">Knitspace 资料库</button><button role="tab" :aria-selected="sidebarMode === 'workspace'" :class="{ active: sidebarMode === 'workspace' }" @click="sidebarMode = 'workspace'">外部工作区</button></div>
+  <!--
+    No `documents` / `documents-layout` / `document-list` / `editor-shell`
+    class names: the legacy sheets pin this route to a 280px + 1fr grid with
+    its own gap, and give the editor a 1440px cap and a coloured glow.
+
+    This route also gets no PageHeader, unlike the tool pages. It is a
+    workspace: the topbar already names the route, and the only heading that
+    belongs on screen is the document's own title.
+  -->
+  <!-- `h-full`, not just the sheet's `min-height:100%`: the grid row below is
+       sized by the Markdown preview, which is arbitrarily tall, and the
+       workspace clips its own overflow — so without a definite height the
+       status bar was simply cut off the bottom of the window. -->
+  <div
+    class="page-enter h-full"
+    @click="closeDocumentMenu(); closeManagedVaultMenu(); closeFrontmatterMenu(); closeNoteStarterMenu(); closeRelationMenu(); closeWikiContextMenu(); closeHeadingContextMenu(); closeEditorContextMenu(); closeQuestionAttachmentMenu(); closeQuestionStructureMenu(); closeDocumentStatisticsMenu(); closeLargePreviewMenu(); tagPopoverOpen = false"
+  >
+    <div class="flex-1 min-h-0 grid gap-4" :class="workspaceColumns">
+      <!-- ── The library column ──────────────────────────────────────────
+           Eight stacked strips used to stand between the top of this column
+           and the first document: header, source tabs, search, filter tabs,
+           a type select, a tag select, a folder tree and a footer. The list
+           is what you came for, so the filters collapse into one row and the
+           folder tree only takes height when you open it. -->
+      <aside v-if="!focusMode" class="pane h-full min-h-0" :aria-label="isNotes ? '笔记列表' : '错题列表'">
+        <header class="pane-head">
+          <span class="row gap-2 min-w-0">
+            <b class="text-[13px] font-semibold text-fg">{{ isNotes ? '笔记' : '错题' }}</b>
+            <span class="chip h-5 px-1.5 text-[11px] tabular-nums">{{ docs.length }}</span>
+          </span>
+          <span class="row gap-0.5 shrink-0">
+            <button
+              v-if="isNotes"
+              class="center w-7 h-7 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg"
+              title="打开单个本地 Markdown"
+              aria-label="打开单个本地 Markdown"
+              @click.stop="importMarkdown"
+            >
+              <AppIcon name="file-text" :size="15" />
+            </button>
+            <button
+              v-else
+              class="center w-7 h-7 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg"
+              title="批量导入 CSV、TSV 或 TXT 题目"
+              aria-label="批量导入题目"
+              @click.stop="openQuestionImport"
+            >
+              <AppIcon name="inbox" :size="15" />
+            </button>
+            <button
+              v-if="isNotes"
+              class="center w-7 h-7 rounded-sm text-accent hover:bg-accent-soft"
+              title="左键新建空白笔记；右键或 Shift+F10 选择模板"
+              aria-label="新建笔记"
+              aria-haspopup="menu"
+              :aria-expanded="Boolean(noteStarterMenu)"
+              @click.stop="createNote"
+              @contextmenu.prevent.stop="openNoteStarterMenu"
+              @keydown="openNoteStarterMenuFromKeyboard"
+            >
+              <AppIcon name="plus" :size="15" />
+            </button>
+            <button
+              v-else
+              class="center w-7 h-7 rounded-sm text-accent hover:bg-accent-soft"
+              title="左键新建错题；右键或 Shift+F10 批量导入"
+              aria-label="新建错题"
+              @click.stop="createQuestion"
+              @contextmenu.prevent.stop="openQuestionImport"
+              @keydown="openQuestionImportFromKeyboard"
+            >
+              <AppIcon name="plus" :size="15" />
+            </button>
+          </span>
+        </header>
+
+        <div v-if="isNotes" class="row gap-0.5 shrink-0 p-1 border-b border-line" role="tablist" aria-label="笔记来源">
+          <button
+            v-for="source in noteSourceTabs"
+            :key="source.id"
+            class="flex-1 center h-7 rounded-sm text-[12px] transition-colors duration-120"
+            :class="sidebarMode === source.id ? 'bg-accent-soft text-accent font-medium' : 'text-fg-2 hover:bg-surface-2 hover:text-fg'"
+            role="tab"
+            :aria-selected="sidebarMode === source.id"
+            @click="sidebarMode = source.id"
+          >
+            {{ source.label }}
+          </button>
+        </div>
+
         <template v-if="!isNotes || sidebarMode === 'vault'">
-          <div class="document-list__search"><input v-model="query" class="search-input" :placeholder="isNotes ? '按标题、分类或标签筛选' : '按标题、分类或标签筛选'" title="全文搜索请使用 Ctrl K" /></div>
-          <div class="document-filter" role="tablist" aria-label="内容筛选"><button :class="{ active: listFilter === 'all' }" @click="listFilter = 'all'">全部</button><button :class="{ active: listFilter === 'review' }" @click="listFilter = 'review'">待复习</button><button :class="{ active: listFilter === 'plain' }" @click="listFilter = 'plain'">未加入</button></div>
-          <label v-if="!isNotes" class="document-question-type-filter"><span>题型</span><select v-model="questionTypeFilter" aria-label="按题型筛选"><option value="">全部题型</option><option v-for="choice in questionTypeChoices" :key="choice.value" :value="choice.value">{{ choice.label }}</option></select></label>
-          <label v-if="availableTags.length" class="document-tag-filter"><span>标签</span><select v-model="tagFilter" aria-label="按标签筛选"><option value="">全部标签</option><option v-for="item in availableTags" :key="item.tag" :value="item.tag">{{ item.tag }} · {{ item.count }}</option></select></label>
-          <section v-if="folderItems.length" class="document-folder-tree" aria-label="资料夹导航"><header><span>资料夹</span><button class="quiet-button" :aria-expanded="folderTreeExpanded" @click="folderTreeExpanded = !folderTreeExpanded">{{ folderTreeExpanded ? '收起' : '展开' }}</button></header><div v-show="folderTreeExpanded" role="tree"><button role="treeitem" :aria-selected="!folderFilter" :class="{ active: !folderFilter }" @click="folderFilter = ''"><b>全部文档</b><small>{{ scopedDocuments.length }}</small></button><button v-for="folder in folderItems" :key="folder.path" role="treeitem" :aria-level="folder.depth + 1" :aria-selected="folderFilter === folder.path" :class="{ active: folderFilter === folder.path }" :style="{ '--folder-depth': folder.depth }" :title="`筛选资料夹：${folder.path}`" @click="folderFilter = folder.path"><b>{{ folder.label }}</b><small>{{ folder.count }}</small></button></div></section>
-          <div ref="documentListElement" class="document-list__rows" aria-label="文档列表" @scroll.passive="handleDocumentListScroll"><div class="document-list__spacer" :style="{ height: `${documentWindow.before}px` }" aria-hidden="true"></div><button v-for="doc in visibleDocs" :key="doc.id" v-memo="[doc.id, doc.title, doc.updatedAt, doc.id === selectedId, doc.id === selectedId && documentDirty, store.isContentFavorite(doc.kind, doc.id)]" class="document-row" :class="{ selected: doc.id === selectedId, dirty: doc.id === selectedId && documentDirty }" @click="pick(doc)" @contextmenu.prevent.stop="openDocumentMenu($event, doc)" @keydown="handleDocumentContextKey($event, doc)"><i></i><div><h4>{{ doc.title }}</h4><p>{{ doc.subject }}<template v-if="doc.kind === 'question'"> · {{ questionTypeLabel(doc.questionType) }}</template><template v-if="doc.tags.length"> · {{ doc.tags.slice(0, 2).join(' · ') }}</template></p></div><small><template v-if="doc.id === selectedId && documentDirty"><span class="document-row__dirty-dot"></span>未保存</template><template v-else-if="store.isContentFavorite(doc.kind, doc.id)"><AppIcon name="star" :size="10" />收藏</template><template v-else>{{ doc.reviewEnabled ? '复习' : '' }}</template></small></button><div class="document-list__spacer" :style="{ height: `${documentWindow.after}px` }" aria-hidden="true"></div><div v-if="!docs.length" class="empty-strip">没有匹配的内容。</div></div>
-          <footer :class="{ 'document-list__footer--question': !isNotes }"><button v-if="isNotes" aria-haspopup="menu" :aria-expanded="Boolean(noteStarterMenu)" @click="createNote" @contextmenu.prevent.stop="openNoteStarterMenu" @keydown="openNoteStarterMenuFromKeyboard">＋ 新建笔记</button><template v-else><button @click="createQuestion" @contextmenu.prevent.stop="openQuestionImport" @keydown="openQuestionImportFromKeyboard">＋ 新建错题</button><button title="从 CSV、TSV 或 TXT 批量导入" @click="openQuestionImport"><AppIcon name="inbox" :size="12" />批量导入</button></template></footer>
+          <div class="stack gap-2 shrink-0 p-2 border-b border-line">
+            <input v-model="query" class="field h-8 text-[12px]" placeholder="按标题、分类或标签筛选" title="全文搜索请使用 Ctrl K" aria-label="筛选文档" />
+            <SegmentedControl
+              :options="listFilterOptions"
+              :model-value="listFilter"
+              label="内容筛选"
+              size="compact"
+              @update:model-value="listFilter = $event as 'all' | 'review' | 'plain'"
+            />
+            <div v-if="!isNotes || availableTags.length" class="row gap-1.5">
+              <select
+                v-if="!isNotes"
+                v-model="questionTypeFilter"
+                class="field h-7 min-w-0 flex-1 px-2 text-[12px]"
+                aria-label="按题型筛选"
+              >
+                <option value="">全部题型</option>
+                <option v-for="choice in questionTypeChoices" :key="choice.value" :value="choice.value">{{ choice.label }}</option>
+              </select>
+              <select v-if="availableTags.length" v-model="tagFilter" class="field h-7 min-w-0 flex-1 px-2 text-[12px]" aria-label="按标签筛选">
+                <option value="">全部标签</option>
+                <option v-for="item in availableTags" :key="item.tag" :value="item.tag">{{ item.tag }} · {{ item.count }}</option>
+              </select>
+            </div>
+          </div>
+
+          <section v-if="folderItems.length" class="stack shrink-0 border-b border-line" aria-label="资料夹导航">
+            <button
+              class="row-between gap-2 shrink-0 px-3 h-8 text-left transition-colors duration-120 hover:bg-surface-2"
+              type="button"
+              :aria-expanded="folderTreeExpanded"
+              @click="folderTreeExpanded = !folderTreeExpanded"
+            >
+              <span class="row gap-2 text-[11px] font-semibold text-fg-3">
+                资料夹
+                <span class="chip h-4.5 px-1.5 text-[11px] tabular-nums">{{ folderItems.length }}</span>
+              </span>
+              <AppIcon name="chevron" :size="13" class="text-fg-3 transition-transform duration-150" :class="folderTreeExpanded ? 'rotate-90' : ''" />
+            </button>
+            <div v-show="folderTreeExpanded" class="stack gap-0.5 max-h-44 overflow-y-auto px-1.5 pb-2" role="tree">
+              <button
+                class="row-between gap-2 shrink-0 h-7 px-2 rounded-sm text-[12px] transition-colors duration-120"
+                :class="folderFilter ? 'text-fg-2 hover:bg-surface-2 hover:text-fg' : 'bg-accent-soft text-accent font-medium'"
+                role="treeitem"
+                :aria-selected="!folderFilter"
+                @click="folderFilter = ''"
+              >
+                <b class="truncate font-inherit">全部文档</b>
+                <small class="shrink-0 tabular-nums text-fg-3">{{ scopedDocuments.length }}</small>
+              </button>
+              <button
+                v-for="folder in folderItems"
+                :key="folder.path"
+                class="row-between gap-2 shrink-0 h-7 pr-2 rounded-sm text-[12px] transition-colors duration-120"
+                :class="folderFilter === folder.path ? 'bg-accent-soft text-accent font-medium' : 'text-fg-2 hover:bg-surface-2 hover:text-fg'"
+                role="treeitem"
+                :aria-level="folder.depth + 1"
+                :aria-selected="folderFilter === folder.path"
+                :style="{ paddingLeft: `${8 + folder.depth * 12}px` }"
+                :title="`筛选资料夹：${folder.path}`"
+                @click="folderFilter = folder.path"
+              >
+                <b class="truncate font-inherit">{{ folder.label }}</b>
+                <small class="shrink-0 tabular-nums text-fg-3">{{ folder.count }}</small>
+              </button>
+            </div>
+          </section>
+
+          <!-- Windowed: the row height here is `DOCUMENT_LIST_ROW_HEIGHT`, so
+               `h-15` and that constant have to stay in step. -->
+          <div ref="documentListElement" class="flex-1 min-h-0 overflow-y-auto" aria-label="文档列表" @scroll.passive="handleDocumentListScroll">
+            <div :style="{ height: `${documentWindow.before}px` }" aria-hidden="true"></div>
+            <button
+              v-for="doc in visibleDocs"
+              :key="doc.id"
+              v-memo="[doc.id, doc.title, doc.updatedAt, doc.id === selectedId, doc.id === selectedId && documentDirty, store.isContentFavorite(doc.kind, doc.id)]"
+              class="row gap-2.5 w-full h-15 px-3 text-left border-l-2 transition-colors duration-120"
+              :class="doc.id === selectedId ? 'border-l-accent bg-accent-soft' : 'border-l-transparent hover:bg-surface-2'"
+              @click="pick(doc)"
+              @contextmenu.prevent.stop="openDocumentMenu($event, doc)"
+              @keydown="handleDocumentContextKey($event, doc)"
+            >
+              <span class="stack gap-0.5 min-w-0 flex-1">
+                <b class="text-[12px] font-medium truncate" :class="doc.id === selectedId ? 'text-accent' : 'text-fg'">{{ doc.title }}</b>
+                <small class="text-[11px] truncate text-fg-3">
+                  {{ doc.subject }}<template v-if="doc.kind === 'question'"> · {{ questionTypeLabel(doc.questionType) }}</template><template v-if="doc.tags.length"> · {{ doc.tags.slice(0, 2).join(' · ') }}</template>
+                </small>
+              </span>
+              <small v-if="doc.id === selectedId && documentDirty" class="row gap-1 shrink-0 text-[11px] font-medium text-warn">
+                <i class="w-1.5 h-1.5 rounded-full bg-warn" aria-hidden="true" />未保存
+              </small>
+              <small v-else-if="store.isContentFavorite(doc.kind, doc.id)" class="row gap-1 shrink-0 text-[11px] text-fg-3">
+                <AppIcon name="star" :size="11" />收藏
+              </small>
+              <small v-else-if="doc.reviewEnabled" class="shrink-0 text-[11px] text-fg-3">复习</small>
+            </button>
+            <div :style="{ height: `${documentWindow.after}px` }" aria-hidden="true"></div>
+            <p v-if="!docs.length" class="px-3 py-4 text-[12px] text-fg-3">没有匹配的内容。</p>
+          </div>
+
+          <footer class="row gap-1.5 shrink-0 p-2 border-t border-line">
+            <button
+              v-if="isNotes"
+              class="btn-default btn-sm flex-1"
+              aria-haspopup="menu"
+              :aria-expanded="Boolean(noteStarterMenu)"
+              @click="createNote"
+              @contextmenu.prevent.stop="openNoteStarterMenu"
+              @keydown="openNoteStarterMenuFromKeyboard"
+            >
+              <AppIcon name="plus" :size="13" />新建笔记
+            </button>
+            <template v-else>
+              <button class="btn-default btn-sm flex-1" @click="createQuestion" @contextmenu.prevent.stop="openQuestionImport" @keydown="openQuestionImportFromKeyboard">
+                <AppIcon name="plus" :size="13" />新建错题
+              </button>
+              <button class="btn-default btn-sm shrink-0" title="从 CSV、TSV 或 TXT 批量导入" @click="openQuestionImport">
+                <AppIcon name="inbox" :size="13" />导入
+              </button>
+            </template>
+          </footer>
         </template>
         <ExternalMarkdownWorkspace v-else :root="externalWorkspaceQa ? externalWorkspaceQaRoot : store.settings.markdownWorkspaceDirectory" :active-path="activeExternalMarkdownPath" :qa="externalWorkspaceQa" @update:root="setMarkdownWorkspaceRoot" @open-file="openExternalMarkdownPath" @entry-renamed="handleWorkspaceEntryRenamed" @entry-trashed="handleWorkspaceEntryTrashed" />
       </aside>
-      <section v-if="documentLoading" class="panel detail-empty detail-loading" role="status" aria-live="polite"><div><span class="detail-empty__mark"><AppIcon name="book" :size="25" /></span><p class="eyebrow">本地 Markdown 库</p><b>正在打开笔记</b><p>正文仍在本机资料库中，准备好后会显示在这里。</p></div></section>
-      <section v-else-if="draft" class="editor-shell panel">
-        <DocumentTabStrip :tabs="documentTabs" :documents="store.documents" :active-id="selectedId" :active-title="draft.title" :dirty-id="documentDirty ? selectedId : undefined" @activate="activateWorkspaceTab" @close="closeWorkspaceTab" @close-others="closeOtherWorkspaceTabs" @close-right="closeWorkspaceTabsToRight" @toggle-pin="toggleWorkspaceTabPin" @copy-link="copyWorkspaceTabLink" />
-        <header class="editor-header"><div class="editor-title-block"><input v-model="draft.title" class="title-input" aria-label="标题" /><div class="metadata-row"><select v-model="draft.subject" aria-label="分类"><option>算法</option><option>数学</option><option>物理</option><option>计算机</option><option>英语</option><option>未分类</option></select><select v-if="draft.kind === 'question'" v-model="draft.questionType" aria-label="题型"><option v-for="choice in questionTypeChoices" :key="choice.value" :value="choice.value">{{ choice.label }}</option></select><select v-if="draft.kind === 'question'" v-model="draft.difficulty" aria-label="难度"><option :value="1">难度 1</option><option :value="2">难度 2</option><option :value="3">难度 3</option><option :value="4">难度 4</option><option :value="5">难度 5</option></select><span v-if="draft.kind === 'question'" class="question-review-summary"><i></i>{{ questionReviewCards(draft).length ? `${questionReviewCards(draft).length} 张复习卡` : '未加入复习' }}</span></div></div><div class="editor-actions"><div class="editor-mode" role="tablist" aria-label="编辑模式"><button :class="{ active: mode === 'edit' }" title="源码编辑（Alt+1）" @click="mode = 'edit'">编辑</button><button :class="{ active: mode === 'split' }" title="分栏编辑（Alt+2）" @click="mode = 'split'">分屏</button><button :class="{ active: mode === 'preview' }" title="阅读预览（Alt+3）" @click="mode = 'preview'">预览</button><button :class="{ active: mode === 'mindmap' }" title="思维图谱（Alt+4）" @click="mode = 'mindmap'">图谱</button></div><button v-if="mode === 'split'" class="quiet-button editor-scroll-sync" :class="{ active: splitScrollSync }" :aria-pressed="splitScrollSync" :title="splitScrollSync ? '关闭源码与预览滚动联动' : '开启源码与预览滚动联动'" @click="toggleSplitScrollSync">{{ splitScrollSync ? '联动滚动' : '独立滚动' }}</button><button class="quiet-button editor-focus-toggle" :class="{ active: focusMode }" :title="focusMode ? '退出专注阅读（Ctrl+Shift+F）' : '专注阅读（Ctrl+Shift+F）'" @click="toggleFocusMode">{{ focusMode ? '退出专注' : '专注阅读' }}</button><span v-if="documentOutput?.documentId === draft.id" class="document-output-state" role="status" aria-live="polite" :title="documentOutput.detail"><i :style="{ '--output-progress': `${documentOutput.progress}%` }"></i>{{ documentOutput.detail }}</span><span v-else class="save-state" :class="{ 'is-dirty': documentDirty }" role="status" aria-live="polite" :title="store.settings.documentAutoSave ? `自动保存：${autoSavePolicy.label}；外部文件冲突时等待手动确认` : '自动保存已关闭；使用 Ctrl+S 保存'"><i></i>{{ documentSaveLabel }}</span><button class="primary-button" :disabled="documentSaveInProgress" title="立即保存（Ctrl+S）" @click="save()">{{ documentSaveInProgress ? '保存中…' : '保存' }}</button><button class="more-button" aria-label="更多操作" @click.stop="openDocumentMenu($event, draft)">•••</button></div></header>
-        <EditorRecoveryBanner v-if="crashDraft" :saved-at="crashDraft.savedAt" item-kind="文档" :busy="crashDraftBusy" @restore="restoreCrashDraft" @discard="discardCrashDraft" />
-        <div class="tag-editor" :aria-label="draft.kind === 'question' ? '知识点标签' : '文档标签'"><TagPill v-for="tag in draft.tags" :key="tag" :label="`${tag} ×`" @click="removeTag(tag)" /><input v-model="newTag" :placeholder="draft.kind === 'question' ? '添加知识点后回车' : '添加标签后回车'" @keydown.enter.prevent="addTag" /></div>
-        <div v-if="mode === 'edit' || mode === 'split'" class="markdown-format-bar" role="toolbar" aria-label="Markdown 格式工具">
-          <span>格式</span>
-          <button type="button" title="在当前文档中查找或替换 · Ctrl+F" aria-label="查找或替换，Ctrl+F" @mousedown.prevent @click.stop="openDocumentSearch()"><AppIcon name="search" :size="14" /><i>查找</i></button>
-          <button type="button" class="divider" title="配置并插入 Markdown 表格" aria-label="插入表格" @mousedown.prevent @click.stop="openMarkdownInsert('table')"><AppIcon name="table" :size="14" /><i>表格</i></button>
-          <button type="button" title="编写并预览 LaTeX 公式" aria-label="插入公式" @mousedown.prevent @click.stop="openMarkdownInsert('formula')"><AppIcon name="math" :size="14" /><i>公式</i></button>
-          <button v-for="tool in markdownFormattingTools" :key="tool.command" type="button" :class="{ divider: tool.divider }" :title="`${tool.label} · ${tool.shortcut}`" :aria-label="`${tool.label}，${tool.shortcut}`" @mousedown.prevent @click.stop="applyEditorCommand(tool.command)"><AppIcon :name="tool.icon" :size="14" /><i>{{ tool.label }}</i></button>
-          <button type="button" class="divider markdown-image-paste-button" :disabled="imagePasteState === 'saving'" :title="isDesktop() ? '选择本机图片并复制到当前文档资源目录' : '仅桌面版可用'" aria-label="导入本地图片到当前 Markdown" @mousedown.prevent @click.stop="importLocalMarkdownImages"><AppIcon name="file-image" :size="14" /><i>{{ imagePasteState === 'saving' ? '存入中' : '本地图片' }}</i></button>
-          <small v-if="imagePasteState === 'idle' && !richPasteMessage">右键编辑区查看更多</small>
-          <small v-else-if="imagePasteState === 'idle'" class="markdown-rich-paste-status" role="status" aria-live="polite"><AppIcon name="clipboard" :size="12" />{{ richPasteMessage }}</small>
-          <small v-else class="markdown-image-paste-status" :class="`is-${imagePasteState}`" role="status" aria-live="polite"><i></i>{{ imagePasteMessage }}</small>
+
+      <section v-if="documentLoading" class="pane h-full min-h-0 center" role="status" aria-live="polite">
+        <div class="stack items-center gap-3 text-center">
+          <span class="center w-12 h-12 rounded-lg bg-accent-soft text-accent"><AppIcon name="book" :size="24" /></span>
+          <strong class="text-[14px] font-semibold text-fg">正在打开笔记</strong>
+          <p class="max-w-80 text-[12px] leading-relaxed text-fg-3">正文仍在本机资料库中，准备好后会显示在这里。</p>
         </div>
-        <section v-if="managedVaultAlert?.documentId === draft.id" class="managed-vault-alert" :class="`is-${managedVaultAlert.status}`" tabindex="0" role="alert" aria-live="assertive" aria-haspopup="menu" :aria-expanded="Boolean(managedVaultMenu)" title="右键或 Shift+F10 查看安全处理选项" @contextmenu.prevent.stop="openManagedVaultMenu" @keydown="openManagedVaultMenu"><span><AppIcon name="warning" :size="16" /></span><div><b>{{ managedVaultAlert.status === 'missing' ? 'Vault Markdown 文件已不存在' : '另一程序修改了这篇 Vault Markdown' }}</b><small>{{ managedVaultAlert.status === 'missing' ? '数据库记录与版本历史仍保留；自动保存已暂停，避免意外创建或覆盖。' : '当前草稿不会被后台覆盖；请比较两个版本后再继续保存。' }}</small></div><div><button v-if="managedVaultAlert.status === 'pending'" class="primary-button" @click.stop="openManagedVaultConflict">比较并处理</button><button v-else class="primary-button" @click.stop="recreateManagedVaultMarkdown">用当前版本重新创建</button><button class="quiet-button" @click.stop="openManagedVaultVersionHistory">版本历史</button></div></section>
-        <div v-if="draft.externalFile" class="external-markdown-bar" :class="{ changed: externalFileChanged || externalFileUnavailable }" tabindex="0" role="group" aria-label="外部 Markdown 关联状态；右键或 Shift 加 F10 打开文件菜单" aria-haspopup="menu" :aria-expanded="Boolean(externalFileMenu)" aria-live="polite" title="右键或 Shift+F10 可比较版本、显示文件或复制路径" @contextmenu.prevent="openExternalFileMenu" @keydown="openExternalFileMenu"><span>↗ {{ draft.externalFile.name }}</span><button v-if="externalFileChanged" @click="openExternalConflictReview(draft)">磁盘文件已有更新 · 比较</button><button v-else-if="externalFileUnavailable" @click="recheckExternalMarkdown">外部文件暂不可访问 · 重试</button><span v-else class="external-markdown-bar__watch"><i :class="externalFileWatchMode"></i>{{ externalFileWatchMode === 'native' ? '已关联 · 正在监听' : externalFileWatchMode === 'poll' ? '已关联 · 定时检查' : '已关联 · 保存时同步' }}</span><button class="quiet-button" @click="saveAsMarkdown(draft)">另存为…</button></div>
-        <section v-if="frontmatter" class="markdown-frontmatter" :class="{ expanded: frontmatterExpanded, invalid: frontmatter.error }" aria-label="Markdown 文档属性">
-          <button class="markdown-frontmatter__summary" type="button" :aria-expanded="frontmatterExpanded" aria-controls="markdown-frontmatter-details" aria-haspopup="menu" title="展开文档属性；右键或 Shift+F10 打开属性菜单" @click.stop="toggleFrontmatterExpanded" @contextmenu.prevent.stop="openFrontmatterMenu" @keydown="openFrontmatterMenu">
-            <b><AppIcon name="json" :size="14" />属性</b>
-            <span v-if="frontmatter.error" class="markdown-frontmatter__error"><AppIcon name="warning" :size="12" />YAML 需要检查</span>
-            <span v-else-if="frontmatter.entries.length" class="markdown-frontmatter__chips"><i v-for="entry in frontmatter.entries.slice(0, 4)" :key="entry.key"><strong>{{ entry.key }}</strong>{{ entry.summary }}</i><em v-if="frontmatter.entries.length > 4">+{{ frontmatter.entries.length - 4 }}</em></span>
-            <span v-else class="markdown-frontmatter__empty">空属性区</span>
-            <small>{{ frontmatter.error ? '源码仍完整保留' : `${frontmatter.entries.length}${frontmatter.truncated ? '+' : ''} 项 · 预览已隐藏 YAML` }}</small>
-            <AppIcon name="chevron" :size="13" />
+      </section>
+
+      <!-- ── The document ────────────────────────────────────────────────
+           Up to ten strips used to stack between the tab bar and the first
+           line of text — tabs, a two-line header, tags, a format bar, two
+           alerts, an external-file bar, frontmatter, a source anchor and a
+           question rail. Everything that is *about* the document rather than
+           *in* it now costs one row, and the ones that are conditional only
+           appear when there is something to say. -->
+      <section v-else-if="draft" class="pane h-full min-h-0 relative">
+        <DocumentTabStrip :tabs="documentTabs" :documents="store.documents" :active-id="selectedId" :active-title="draft.title" :dirty-id="documentDirty ? selectedId : undefined" @activate="activateWorkspaceTab" @close="closeWorkspaceTab" @close-others="closeOtherWorkspaceTabs" @close-right="closeWorkspaceTabsToRight" @toggle-pin="toggleWorkspaceTabPin" @copy-link="copyWorkspaceTabLink" />
+
+        <header class="row-between gap-3 shrink-0 px-3 h-11 border-b border-line">
+          <input
+            v-model="draft.title"
+            class="min-w-0 flex-1 h-8 bg-transparent border-0 shadow-none! text-[15px] font-semibold text-fg focus:outline-none"
+            aria-label="标题"
+            placeholder="未命名文档"
+          />
+          <span class="row gap-2 shrink-0">
+            <span
+              v-if="documentOutput?.documentId === draft.id"
+              class="row gap-1.5 text-[11px] text-accent"
+              role="status"
+              aria-live="polite"
+              :title="documentOutput.detail"
+            >
+              <i class="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" aria-hidden="true" />{{ documentOutput.detail }}
+            </span>
+            <span
+              v-else
+              class="row gap-1.5 text-[11px]"
+              :class="documentDirty ? 'text-warn' : 'text-fg-3'"
+              role="status"
+              aria-live="polite"
+              :title="store.settings.documentAutoSave ? `自动保存：${autoSavePolicy.label}；外部文件冲突时等待手动确认` : '自动保存已关闭；使用 Ctrl+S 保存'"
+            >
+              <i class="w-1.5 h-1.5 rounded-full" :class="documentDirty ? 'bg-warn' : 'bg-success'" aria-hidden="true" />{{ documentSaveLabel }}
+            </span>
+            <button class="btn-primary btn-sm" :disabled="documentSaveInProgress" title="立即保存（Ctrl+S）" @click="save()">{{ documentSaveInProgress ? '保存中…' : '保存' }}</button>
+            <button
+              v-if="!focusMode"
+              class="btn-tool"
+              :class="inspectorOpen ? 'btn-tool-active' : ''"
+              :aria-expanded="inspectorOpen"
+              :title="`${inspectorOpen ? '收起' : '打开'}${inspectorLabel}`"
+              @click="inspectorOpen = !inspectorOpen"
+            >
+              <AppIcon name="task" :size="14" />{{ inspectorLabel }}
+            </button>
+            <button class="btn-ghost btn-sm btn-icon w-7" aria-label="更多操作" title="更多操作" @click.stop="openDocumentMenu($event, draft)">
+              <AppIcon name="more" :size="15" />
+            </button>
+          </span>
+        </header>
+
+        <!-- Wraps rather than scrolls: with the inspector open the editor is
+             about 650px, and a horizontally scrolled metadata row hides the
+             controls it is holding instead of admitting it is out of room. -->
+        <div class="row-between flex-wrap gap-x-3 gap-y-1.5 shrink-0 px-3 py-1.5 min-h-9 border-b border-line">
+          <span class="row flex-wrap gap-1.5 min-w-0">
+            <select v-model="draft.subject" class="field h-7 shrink-0 px-2 text-[12px]" aria-label="分类">
+              <option>算法</option><option>数学</option><option>物理</option><option>计算机</option><option>英语</option><option>未分类</option>
+            </select>
+            <select v-if="draft.kind === 'question'" v-model="draft.questionType" class="field h-7 shrink-0 px-2 text-[12px]" aria-label="题型">
+              <option v-for="choice in questionTypeChoices" :key="choice.value" :value="choice.value">{{ choice.label }}</option>
+            </select>
+            <select v-if="draft.kind === 'question'" v-model="draft.difficulty" class="field h-7 shrink-0 px-2 text-[12px]" aria-label="难度">
+              <option :value="1">难度 1</option><option :value="2">难度 2</option><option :value="3">难度 3</option><option :value="4">难度 4</option><option :value="5">难度 5</option>
+            </select>
+            <span v-if="draft.kind === 'question'" class="chip shrink-0" :class="questionReviewCards(draft).length ? 'chip-accent' : ''">
+              {{ questionReviewCards(draft).length ? `${questionReviewCards(draft).length} 张复习卡` : '未加入复习' }}
+            </span>
+            <!-- Tags were a permanent strip of their own. They are metadata
+                 about the document, not part of it, so they cost one chip. -->
+            <span class="relative shrink-0">
+              <button
+                class="chip hover:bg-surface-3"
+                :class="draft.tags.length ? 'chip-accent' : ''"
+                :aria-expanded="tagPopoverOpen"
+                aria-haspopup="dialog"
+                @click.stop="tagPopoverOpen = !tagPopoverOpen"
+              >
+                <AppIcon name="hash" :size="12" />
+                {{ draft.tags.length ? `${draft.tags.length} 个${draft.kind === 'question' ? '知识点' : '标签'}` : (draft.kind === 'question' ? '加知识点' : '加标签') }}
+              </button>
+              <div
+                v-if="tagPopoverOpen"
+                class="absolute left-0 top-full z-30 mt-1.5 w-68 stack gap-2 p-2.5 panel shadow-lg"
+                role="dialog"
+                :aria-label="draft.kind === 'question' ? '知识点标签' : '文档标签'"
+                @click.stop
+              >
+                <div v-if="draft.tags.length" class="row flex-wrap gap-1">
+                  <TagPill v-for="tag in draft.tags" :key="tag" :label="`${tag} ×`" @click="removeTag(tag)" />
+                </div>
+                <p v-else class="text-[11px] text-fg-3">还没有{{ draft.kind === 'question' ? '知识点' : '标签' }}；它们同时用于筛选和关联。</p>
+                <input
+                  v-model="newTag"
+                  class="field h-8 text-[12px]"
+                  :placeholder="draft.kind === 'question' ? '添加知识点后回车' : '添加标签后回车'"
+                  @keydown.enter.prevent="addTag"
+                />
+              </div>
+            </span>
+          </span>
+          <span class="row gap-1.5 shrink-0">
+            <SegmentedControl
+              :options="editorModeOptions"
+              :model-value="mode"
+              label="编辑模式"
+              size="compact"
+              @update:model-value="mode = $event as DocumentEditorMode"
+            />
+            <button
+              v-if="mode === 'split'"
+              class="btn-tool"
+              :class="splitScrollSync ? 'btn-tool-active' : ''"
+              :aria-pressed="splitScrollSync"
+              :title="splitScrollSync ? '关闭源码与预览滚动联动' : '开启源码与预览滚动联动'"
+              @click="toggleSplitScrollSync"
+            >
+              {{ splitScrollSync ? '联动滚动' : '独立滚动' }}
+            </button>
+            <button
+              class="btn-tool"
+              :class="focusMode ? 'btn-tool-active' : ''"
+              :title="focusMode ? '退出专注阅读（Ctrl+Shift+F）' : '专注阅读（Ctrl+Shift+F）'"
+              @click="toggleFocusMode"
+            >
+              {{ focusMode ? '退出专注' : '专注阅读' }}
+            </button>
+          </span>
+        </div>
+
+        <EditorRecoveryBanner v-if="crashDraft" :saved-at="crashDraft.savedAt" item-kind="文档" :busy="crashDraftBusy" @restore="restoreCrashDraft" @discard="discardCrashDraft" />
+
+        <section
+          v-if="managedVaultAlert?.documentId === draft.id"
+          class="row gap-2.5 shrink-0 px-3 py-2 border-b border-line"
+          :class="managedVaultAlert.status === 'missing' ? 'bg-danger-soft' : 'bg-warn-soft'"
+          tabindex="0"
+          role="alert"
+          aria-live="assertive"
+          aria-haspopup="menu"
+          :aria-expanded="Boolean(managedVaultMenu)"
+          title="右键或 Shift+F10 查看安全处理选项"
+          @contextmenu.prevent.stop="openManagedVaultMenu"
+          @keydown="openManagedVaultMenu"
+        >
+          <AppIcon name="warning" :size="15" class="shrink-0 mt-0.5" :class="managedVaultAlert.status === 'missing' ? 'text-danger' : 'text-warn'" />
+          <span class="stack gap-0.5 min-w-0 flex-1">
+            <b class="text-[12px] font-medium" :class="managedVaultAlert.status === 'missing' ? 'text-danger' : 'text-warn'">
+              {{ managedVaultAlert.status === 'missing' ? 'Vault Markdown 文件已不存在' : '另一程序修改了这篇 Vault Markdown' }}
+            </b>
+            <small class="text-[11px] leading-relaxed text-fg-2">
+              {{ managedVaultAlert.status === 'missing'
+                ? '数据库记录与版本历史仍保留；自动保存已暂停，避免意外创建或覆盖。'
+                : '当前草稿不会被后台覆盖；请比较两个版本后再继续保存。' }}
+            </small>
+          </span>
+          <span class="row gap-1.5 shrink-0">
+            <button v-if="managedVaultAlert.status === 'pending'" class="btn-primary btn-sm" @click.stop="openManagedVaultConflict">比较并处理</button>
+            <button v-else class="btn-primary btn-sm" @click.stop="recreateManagedVaultMarkdown">用当前版本重新创建</button>
+            <button class="btn-default btn-sm" @click.stop="openManagedVaultVersionHistory">版本历史</button>
+          </span>
+        </section>
+
+        <div
+          v-if="draft.externalFile"
+          class="row gap-2 shrink-0 px-3 h-9 border-b border-line"
+          :class="externalFileChanged || externalFileUnavailable ? 'bg-warn-soft' : ''"
+          tabindex="0"
+          role="group"
+          aria-label="外部 Markdown 关联状态；右键或 Shift 加 F10 打开文件菜单"
+          aria-haspopup="menu"
+          :aria-expanded="Boolean(externalFileMenu)"
+          aria-live="polite"
+          title="右键或 Shift+F10 可比较版本、显示文件或复制路径"
+          @contextmenu.prevent="openExternalFileMenu"
+          @keydown="openExternalFileMenu"
+        >
+          <AppIcon name="link" :size="14" class="shrink-0 text-fg-3" />
+          <span class="min-w-0 flex-1 truncate text-[12px] text-fg">{{ draft.externalFile.name }}</span>
+          <button v-if="externalFileChanged" class="btn-tool text-warn hover:not-disabled:text-warn" @click="openExternalConflictReview(draft)">磁盘文件已有更新 · 比较</button>
+          <button v-else-if="externalFileUnavailable" class="btn-tool text-warn hover:not-disabled:text-warn" @click="recheckExternalMarkdown">外部文件暂不可访问 · 重试</button>
+          <span v-else class="row gap-1.5 shrink-0 text-[11px] text-fg-3">
+            <i class="w-1.5 h-1.5 rounded-full" :class="externalFileWatchMode === 'native' ? 'bg-success' : externalFileWatchMode === 'poll' ? 'bg-accent' : 'bg-fg-3'" aria-hidden="true" />
+            {{ externalFileWatchMode === 'native' ? '正在监听' : externalFileWatchMode === 'poll' ? '定时检查' : '保存时同步' }}
+          </span>
+          <button class="btn-tool" @click="saveAsMarkdown(draft)">另存为…</button>
+        </div>
+
+        <div v-if="draft.sourceAnchor" class="row gap-2.5 shrink-0 px-3 h-11 border-b border-line">
+          <img v-if="anchorCrop" :src="anchorCrop" alt="来源选区" class="w-12 h-8 shrink-0 rounded-sm object-cover bg-surface-2" />
+          <span class="min-w-0 flex-1 truncate text-[11px] text-fg-3">
+            来源仍然系着：第 {{ draft.sourceAnchor.pageIndex + 1 }} 页，区域 {{ draft.sourceAnchor.bbox.map((n) => n.toFixed(2)).join(' · ') }}
+          </span>
+          <button class="btn-tool" @click="returnToSource">回到原资料</button>
+        </div>
+
+        <!-- A question's fields live in the inspector; this is the progress
+             line, so it is one row of chips rather than a three-part card. -->
+        <section
+          v-if="draft.kind === 'question'"
+          class="row gap-2 shrink-0 px-3 h-9 border-b border-line overflow-x-auto"
+          tabindex="0"
+          aria-haspopup="menu"
+          :aria-expanded="Boolean(questionStructureMenu)"
+          :aria-label="`题目结构，已完成 ${currentQuestionStructure.completed} 项，共 ${currentQuestionStructure.total} 项；右键或 Shift 加 F10 打开题目菜单`"
+          @contextmenu.prevent.stop="openQuestionStructureMenu"
+          @keydown="openQuestionStructureMenu"
+        >
+          <span class="row gap-1.5 shrink-0 text-[11px] text-fg-3">
+            题目结构<b class="tabular-nums text-fg">{{ currentQuestionStructure.completed }} / {{ currentQuestionStructure.total }}</b>
+          </span>
+          <span class="row gap-1 shrink-0" role="list">
+            <button
+              v-for="item in currentQuestionStructure.items"
+              :key="item.key"
+              class="row gap-1 shrink-0 h-6 px-2 rounded-full border text-[11px] whitespace-nowrap transition-colors duration-120"
+              :class="item.complete
+                ? 'border-success bg-success-soft text-success'
+                : item.required ? 'border-warn bg-warn-soft text-warn' : 'border-line text-fg-3 hover:border-line-strong hover:text-fg'"
+              role="listitem"
+              :aria-label="`${item.label}；${item.complete ? '已填写' : item.required ? '待补充' : '可选'}`"
+              @click.stop="openQuestionStructure(item.key)"
+            >
+              <AppIcon :name="item.complete ? 'check' : 'plus'" :size="11" />{{ item.shortLabel }}
+            </button>
+          </span>
+          <button class="btn-tool ml-auto shrink-0" @click.stop="openQuestionStructure(currentQuestionStructure.nextField)">
+            {{ currentQuestionStructure.nextField ? '继续补充' : '查看结构' }}<AppIcon name="arrow-right" :size="12" />
           </button>
-          <div v-if="frontmatterExpanded" id="markdown-frontmatter-details" class="markdown-frontmatter__details">
-            <p v-if="frontmatter.error" role="status"><AppIcon name="warning" :size="14" /><span><b>无法解析这段 YAML</b><small>{{ frontmatter.error }}。你仍可在源码中原样编辑和保存。</small></span></p>
-            <dl v-else-if="frontmatter.entries.length"><div v-for="entry in frontmatter.entries" :key="entry.key"><dt>{{ entry.key }}</dt><dd :class="`is-${entry.kind}`">{{ entry.summary }}</dd></div></dl>
-            <p v-else><AppIcon name="json" :size="14" /><span><b>当前没有属性</b><small>分隔符会保留，之后可直接在源码中添加 YAML 键值。</small></span></p>
-            <footer><span>只读解析 · 不重写原始 Markdown</span><div><button type="button" class="quiet-button" @click.stop="copyFrontmatter('yaml')">复制 YAML</button><button type="button" class="quiet-button" @click.stop="editFrontmatterSource">在源码中编辑</button></div></footer>
+        </section>
+
+        <section v-if="frontmatter" class="stack shrink-0 border-b border-line" aria-label="Markdown 文档属性">
+          <button
+            class="row gap-2 shrink-0 px-3 h-9 text-left transition-colors duration-120 hover:bg-surface-2"
+            type="button"
+            :aria-expanded="frontmatterExpanded"
+            aria-controls="markdown-frontmatter-details"
+            aria-haspopup="menu"
+            title="展开文档属性；右键或 Shift+F10 打开属性菜单"
+            @click.stop="toggleFrontmatterExpanded"
+            @contextmenu.prevent.stop="openFrontmatterMenu"
+            @keydown="openFrontmatterMenu"
+          >
+            <b class="row gap-1.5 shrink-0 text-[11px] font-semibold text-fg-3"><AppIcon name="json" :size="13" />属性</b>
+            <span v-if="frontmatter.error" class="row gap-1 shrink-0 text-[11px] text-warn"><AppIcon name="warning" :size="12" />YAML 需要检查</span>
+            <span v-else-if="frontmatter.entries.length" class="row gap-1 min-w-0 overflow-hidden">
+              <i v-for="entry in frontmatter.entries.slice(0, 4)" :key="entry.key" class="row gap-1 shrink-0 h-5 px-1.5 rounded-[4px] bg-surface-2 text-[11px] not-italic">
+                <strong class="font-medium text-fg-2">{{ entry.key }}</strong><span class="max-w-24 truncate text-fg-3">{{ entry.summary }}</span>
+              </i>
+              <em v-if="frontmatter.entries.length > 4" class="shrink-0 text-[11px] not-italic text-fg-3">+{{ frontmatter.entries.length - 4 }}</em>
+            </span>
+            <span v-else class="shrink-0 text-[11px] text-fg-3">空属性区</span>
+            <small class="ml-auto shrink-0 text-[11px] text-fg-3">{{ frontmatter.error ? '源码仍完整保留' : `预览已隐藏 YAML` }}</small>
+            <AppIcon name="chevron" :size="13" class="shrink-0 text-fg-3 transition-transform duration-150" :class="frontmatterExpanded ? 'rotate-90' : ''" />
+          </button>
+          <div v-if="frontmatterExpanded" id="markdown-frontmatter-details" class="stack gap-2 px-3 pb-3 max-h-56 overflow-y-auto">
+            <p v-if="frontmatter.error" class="row gap-2 p-2.5 rounded-sm bg-warn-soft" role="status">
+              <AppIcon name="warning" :size="14" class="shrink-0 mt-0.5 text-warn" />
+              <span class="stack gap-0.5 min-w-0">
+                <b class="text-[12px] font-medium text-warn">无法解析这段 YAML</b>
+                <small class="text-[11px] leading-relaxed text-fg-2">{{ frontmatter.error }}。你仍可在源码中原样编辑和保存。</small>
+              </span>
+            </p>
+            <dl v-else-if="frontmatter.entries.length" class="grid gap-px rounded-sm bg-line border border-line overflow-hidden">
+              <div v-for="entry in frontmatter.entries" :key="entry.key" class="row gap-3 px-2.5 py-1.5 bg-surface">
+                <dt class="shrink-0 w-24 truncate text-[11px] font-medium text-fg-2">{{ entry.key }}</dt>
+                <dd class="min-w-0 flex-1 text-[11px] break-words text-fg-3">{{ entry.summary }}</dd>
+              </div>
+            </dl>
+            <p v-else class="row gap-2 p-2.5 rounded-sm bg-surface-2">
+              <AppIcon name="json" :size="14" class="shrink-0 mt-0.5 text-fg-3" />
+              <span class="stack gap-0.5 min-w-0">
+                <b class="text-[12px] font-medium text-fg">当前没有属性</b>
+                <small class="text-[11px] leading-relaxed text-fg-3">分隔符会保留，之后可直接在源码中添加 YAML 键值。</small>
+              </span>
+            </p>
+            <div class="row-between gap-2">
+              <small class="text-[11px] text-fg-3">只读解析 · 不重写原始 Markdown</small>
+              <span class="row gap-1.5 shrink-0">
+                <button type="button" class="btn-default btn-sm" @click.stop="copyFrontmatter('yaml')">复制 YAML</button>
+                <button type="button" class="btn-default btn-sm" @click.stop="editFrontmatterSource">在源码中编辑</button>
+              </span>
+            </div>
           </div>
         </section>
-        <div v-if="draft.sourceAnchor" class="source-anchor"><img v-if="anchorCrop" :src="anchorCrop" alt="来源选区" /><span>↗ 来源仍然系着：第 {{ draft.sourceAnchor.pageIndex + 1 }} 页，区域 {{ draft.sourceAnchor.bbox.map((n) => n.toFixed(2)).join(' · ') }}</span><button @click="returnToSource">回到原资料</button></div>
-        <section v-if="draft.kind === 'question'" class="question-structure-rail" tabindex="0" aria-haspopup="menu" :aria-expanded="Boolean(questionStructureMenu)" :aria-label="`题目结构，已完成 ${currentQuestionStructure.completed} 项，共 ${currentQuestionStructure.total} 项；右键或 Shift 加 F10 打开题目菜单`" @contextmenu.prevent.stop="openQuestionStructureMenu" @keydown="openQuestionStructureMenu">
-          <header><div><span>题目结构</span><b>{{ currentQuestionStructure.completed }} / {{ currentQuestionStructure.total }}</b></div><small>题干、答案、解析与错因保持独立</small></header>
-          <div role="list" aria-label="题目字段完成状态"><button v-for="item in currentQuestionStructure.items" :key="item.key" role="listitem" :class="{ complete: item.complete, optional: !item.required }" :aria-label="`${item.label}；${item.complete ? '已填写' : item.required ? '待补充' : '可选'}`" @click.stop="openQuestionStructure(item.key)"><span><AppIcon :name="item.complete ? 'check' : 'plus'" :size="12" /></span><div><b>{{ item.shortLabel }}</b><small>{{ item.complete ? '已填写' : item.required ? '待补充' : '可选' }}</small></div></button></div>
-          <button class="question-structure-rail__action" @click.stop="openQuestionStructure(currentQuestionStructure.nextField)"><span>{{ questionTypeLabel(draft.questionType) }}</span><b>{{ currentQuestionStructure.nextField ? '继续补充' : '查看结构' }}</b><AppIcon name="arrow-right" :size="13" /></button>
-        </section>
-        <div class="editor-grid" :class="`editor-grid--${mode}`">
+
+        <div v-if="mode === 'edit' || mode === 'split'" class="row gap-0.5 shrink-0 px-2 h-9 border-b border-line overflow-x-auto" role="toolbar" aria-label="Markdown 格式工具">
+          <button type="button" class="btn-tool" title="在当前文档中查找或替换 · Ctrl+F" aria-label="查找或替换，Ctrl+F" @mousedown.prevent @click.stop="openDocumentSearch()">
+            <AppIcon name="search" :size="14" />查找
+          </button>
+          <i class="w-px h-4 mx-1 shrink-0 bg-line" aria-hidden="true" />
+          <button type="button" class="btn-tool" title="配置并插入 Markdown 表格" aria-label="插入表格" @mousedown.prevent @click.stop="openMarkdownInsert('table')">
+            <AppIcon name="table" :size="14" />表格
+          </button>
+          <button type="button" class="btn-tool" title="编写并预览 LaTeX 公式" aria-label="插入公式" @mousedown.prevent @click.stop="openMarkdownInsert('formula')">
+            <AppIcon name="math" :size="14" />公式
+          </button>
+          <template v-for="tool in markdownFormattingTools" :key="tool.command">
+            <i v-if="tool.divider" class="w-px h-4 mx-1 shrink-0 bg-line" aria-hidden="true" />
+            <button
+              type="button"
+              class="btn-tool"
+              :title="`${tool.label} · ${tool.shortcut}`"
+              :aria-label="`${tool.label}，${tool.shortcut}`"
+              @mousedown.prevent
+              @click.stop="applyEditorCommand(tool.command)"
+            >
+              <AppIcon :name="tool.icon" :size="14" />{{ tool.label }}
+            </button>
+          </template>
+          <i class="w-px h-4 mx-1 shrink-0 bg-line" aria-hidden="true" />
+          <button
+            type="button"
+            class="btn-tool"
+            :disabled="imagePasteState === 'saving'"
+            :title="isDesktop() ? '选择本机图片并复制到当前文档资源目录' : '仅桌面版可用'"
+            aria-label="导入本地图片到当前 Markdown"
+            @mousedown.prevent
+            @click.stop="importLocalMarkdownImages"
+          >
+            <AppIcon name="file-image" :size="14" />{{ imagePasteState === 'saving' ? '存入中' : '本地图片' }}
+          </button>
+          <small v-if="imagePasteState === 'idle' && !richPasteMessage" class="ml-auto shrink-0 pl-3 text-[11px] text-fg-3">右键编辑区查看更多</small>
+          <small v-else-if="imagePasteState === 'idle'" class="row gap-1 ml-auto shrink-0 pl-3 text-[11px] text-fg-3" role="status" aria-live="polite">
+            <AppIcon name="clipboard" :size="12" />{{ richPasteMessage }}
+          </small>
+          <small
+            v-else
+            class="row gap-1 ml-auto shrink-0 pl-3 text-[11px]"
+            :class="imagePasteState === 'error' ? 'text-danger' : imagePasteState === 'ready' ? 'text-success' : 'text-accent'"
+            role="status"
+            aria-live="polite"
+          >
+            <i class="w-1.5 h-1.5 rounded-full bg-current" aria-hidden="true" />{{ imagePasteMessage }}
+          </small>
+        </div>
+        <!-- The `editor-grid` / `editor-grid--<mode>` names stay: the reading
+             typography — measure, 1.88 line height, display headings — hangs
+             off them, and rendered Markdown is a content surface that keeps
+             its own stylesheet.
+
+             The column count does not. `.editor-grid` is `1fr 1fr` in every
+             mode, so 编辑, 预览 and 图谱 each rendered one pane into half the
+             width and left the other half empty; in 预览 with the inspector
+             open that squeezed the reading measure down to about ten
+             characters a line. An inline style is the one thing that reliably
+             beats a legacy rule without reordering sheets. -->
+        <div
+          class="editor-grid flex-1 min-h-0"
+          :class="`editor-grid--${mode}`"
+          :style="{ gridTemplateColumns: mode === 'split' ? 'minmax(0,1fr) minmax(0,1fr)' : 'minmax(0,1fr)' }"
+        >
           <div v-if="mode === 'edit' || mode === 'split'" ref="editorDropTarget" class="markdown-editor-source-pane">
             <Suspense>
               <template #default><LargeTextEditor :key="draft.id" ref="editorSurface" :model-value="draft.content" :document-id="draft.id" aria-label="Markdown 正文；右键或 Shift 加 F10 打开格式菜单；也可拖入本地图片" placeholder="在这里开始记录…" :debounce-ms="editorCommitPolicy.delayMs" :focus-on-mount="focusEditorOnMount" :search-request="editorSearchRequest" :scroll-target="outlineEditorTarget" @update:model-value="updateDraftContent" @pending-change="markEditorPending" @focused="focusEditorOnMount = false" @scroll-progress="syncEditorScroll" @context-menu="openEditorContextMenu" @paste-image="pasteClipboardImage" @paste-rich="handleRichPaste" /></template>
@@ -3847,10 +4438,21 @@ onBeforeUnmount(() => {
             <template #fallback><div class="editor-mode-loading" role="status">正在加载思维导图…</div></template>
           </Suspense>
         </div>
-        <footer class="document-statistics-bar" aria-label="Markdown 文档状态">
-          <div><span>MARKDOWN</span><i></i><span>{{ mode === 'edit' ? '源码' : mode === 'split' ? '分屏' : mode === 'mindmap' ? '图谱' : '阅读' }}</span><template v-if="isLargeDocument"><i></i><span :title="`输入即时显示；预览按 ${editorCommitPolicy.label}，自动保存按 ${autoSavePolicy.label}。Ctrl+S 仍会立即同步。`">大文档保护 · {{ editorCommitPolicy.label }}</span></template></div>
+        <footer class="row-between gap-3 shrink-0 relative px-3 h-8 border-t border-line" aria-label="Markdown 文档状态">
+          <span class="row gap-2 min-w-0 text-[11px] text-fg-3">
+            <b class="shrink-0 font-medium text-fg-2">MARKDOWN</b>
+            <i class="w-px h-3 shrink-0 bg-line" aria-hidden="true" />
+            <span class="shrink-0">{{ mode === 'edit' ? '源码' : mode === 'split' ? '分屏' : mode === 'mindmap' ? '图谱' : '阅读' }}</span>
+            <template v-if="isLargeDocument">
+              <i class="w-px h-3 shrink-0 bg-line" aria-hidden="true" />
+              <span class="truncate" :title="`输入即时显示；预览按 ${editorCommitPolicy.label}，自动保存按 ${autoSavePolicy.label}。Ctrl+S 仍会立即同步。`">
+                大文档保护 · {{ editorCommitPolicy.label }}
+              </span>
+            </template>
+          </span>
           <button
             type="button"
+            class="row gap-1.5 shrink-0 h-6 px-2 rounded-sm text-[11px] text-fg-3 transition-colors duration-120 hover:bg-surface-2 hover:text-fg"
             aria-haspopup="menu"
             :aria-expanded="Boolean(documentStatisticsMenu)"
             :aria-busy="documentStatisticsPending"
@@ -3860,258 +4462,872 @@ onBeforeUnmount(() => {
             @keydown="openDocumentStatisticsMenu"
           >
             <template v-if="documentStatistics">
-              <b>{{ documentStatistics.charactersWithoutWhitespace.toLocaleString('zh-CN') }}</b><span>字符</span><i></i><b>{{ documentStatistics.lines.toLocaleString('zh-CN') }}</b><span>行</span><i></i><span>约 {{ documentStatistics.readingMinutes }} 分钟</span>
+              <b class="font-medium tabular-nums text-fg-2">{{ documentStatistics.charactersWithoutWhitespace.toLocaleString('zh-CN') }}</b>字符
+              <i class="w-px h-3 bg-line" aria-hidden="true" />
+              <b class="font-medium tabular-nums text-fg-2">{{ documentStatistics.lines.toLocaleString('zh-CN') }}</b>行
+              <i class="w-px h-3 bg-line" aria-hidden="true" />
+              约 {{ documentStatistics.readingMinutes }} 分钟
             </template>
             <span v-else>{{ documentStatisticsPending ? '正在本机统计…' : '暂无统计' }}</span>
-            <AppIcon name="chevron" :size="12" />
+            <AppIcon name="chevron" :size="12" class="transition-transform duration-150" :class="documentStatisticsExpanded ? '-rotate-90' : ''" />
           </button>
-          <section v-if="documentStatisticsExpanded && documentStatistics" class="document-statistics-popover" aria-label="完整 Markdown 统计">
-            <header><div><b>文档统计</b></div><button aria-label="关闭文档统计" @click.stop="documentStatisticsExpanded = false">×</button></header>
-            <dl>
-              <div><dt>字符</dt><dd>{{ documentStatistics.charactersWithoutWhitespace.toLocaleString('zh-CN') }}<small>不含空格</small></dd></div>
-              <div><dt>中文</dt><dd>{{ documentStatistics.cjkCharacters.toLocaleString('zh-CN') }}<small>字符</small></dd></div>
-              <div><dt>英文 / 数字</dt><dd>{{ documentStatistics.latinWords.toLocaleString('zh-CN') }}<small>词</small></dd></div>
-              <div><dt>结构</dt><dd>{{ documentStatistics.paragraphs }}<small>段 · {{ documentStatistics.headings }} 标题</small></dd></div>
-              <div><dt>源码</dt><dd>{{ documentStatistics.lines.toLocaleString('zh-CN') }}<small>行 · {{ documentStatistics.codeLines }} 代码行</small></dd></div>
-              <div><dt>预计阅读</dt><dd>{{ documentStatistics.readingMinutes }}<small>分钟</small></dd></div>
+          <section v-if="documentStatisticsExpanded && documentStatistics" class="absolute right-3 bottom-9 z-20 w-72 stack panel shadow-lg" aria-label="完整 Markdown 统计" @click.stop>
+            <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
+              <b class="text-[12px] font-semibold text-fg">文档统计</b>
+              <button class="center w-6 h-6 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" aria-label="关闭文档统计" @click.stop="documentStatisticsExpanded = false">
+                <AppIcon name="close" :size="13" />
+              </button>
+            </header>
+            <dl class="grid grid-cols-2 gap-px bg-line">
+              <div v-for="stat in documentStatisticRows" :key="stat.label" class="stack gap-0.5 px-3 py-2 bg-surface">
+                <dt class="text-[11px] text-fg-3">{{ stat.label }}</dt>
+                <dd class="row items-baseline gap-1">
+                  <b class="text-[15px] font-semibold tabular-nums text-fg">{{ stat.value }}</b>
+                  <small class="text-[11px] text-fg-3">{{ stat.unit }}</small>
+                </dd>
+              </div>
             </dl>
-            <footer><span>{{ documentStatisticsPending ? '正在更新…' : 'Worker 已完成 · 内容未上传' }}</span><button @click.stop="copyDocumentStatistics">复制摘要</button></footer>
+            <footer class="row-between gap-2 shrink-0 px-3 h-9 border-t border-line">
+              <small class="min-w-0 truncate text-[11px] text-fg-3">{{ documentStatisticsPending ? '正在更新…' : 'Worker 已完成 · 内容未上传' }}</small>
+              <button class="btn-default btn-sm shrink-0" @click.stop="copyDocumentStatistics">复制摘要</button>
+            </footer>
           </section>
         </footer>
-        <button v-if="!focusMode" class="document-inspector-tab" :class="{ open: inspectorOpen }" :aria-expanded="inspectorOpen" @click="inspectorOpen = !inspectorOpen"><span>{{ inspectorLabel }}</span><b>{{ inspectorOpen ? '×' : '‹' }}</b></button>
-        <aside v-if="!focusMode && inspectorOpen" class="document-inspector" :aria-label="inspectorLabel">
-          <header><div><p class="eyebrow">{{ draft.kind === 'question' ? '题目与复习' : '知识关联' }}</p><h3>{{ inspectorLabel }}</h3></div><button :aria-label="`关闭${inspectorLabel}`" @click="inspectorOpen = false">×</button></header>
-          <section v-if="draft.kind === 'question'" class="question-attachments" :aria-busy="questionAttachmentsLoading || questionAttachmentImporting"><header><div><span>题目附件</span><small>图片、PDF、音频和代码文件只复制到当前 Vault。</small></div><button class="quiet-button" :disabled="questionAttachmentImporting || questionAttachments.length >= 64" @click.stop="addQuestionAttachments"><AppIcon name="attachment" :size="13" />{{ questionAttachmentImporting ? '添加中…' : '＋ 添加' }}</button></header><div v-if="questionAttachmentsLoading" class="question-attachments__loading" role="status"><i></i><i></i><span>正在读取附件摘要…</span></div><div v-else-if="visibleQuestionAttachments.length" class="question-attachments__list"><button v-for="attachment in visibleQuestionAttachments" :key="attachment.id" v-memo="[attachment.id, attachment.name, attachment.size, attachment.available]" :class="{ missing: !attachment.available }" :aria-disabled="!attachment.available" :title="attachment.available ? '在资源管理器中定位；右键查看更多操作' : 'Vault 中的附件文件已经不存在；右键可移除记录'" aria-haspopup="menu" :aria-expanded="questionAttachmentMenu?.attachment.id === attachment.id" @click.stop="revealQuestionAttachment(attachment)" @contextmenu.prevent.stop="openQuestionAttachmentMenu($event, attachment)" @keydown="openQuestionAttachmentMenu($event, attachment)"><span><AppIcon :name="questionAttachmentIcon(attachment)" :size="15" /></span><div><b>{{ attachment.name }}</b><small>{{ attachment.available ? `${formatQuestionAttachmentSize(attachment.size)} · ${attachment.mime}` : '本地文件已经不存在' }}</small></div><i>{{ attachment.available ? '本地' : '缺失' }}</i></button></div><div v-else-if="!questionAttachmentError" class="question-attachments__empty"><AppIcon name="attachment" :size="17" /><span><b>还没有附件</b><small>可一次选择多个文件；不会把文件字节读进编辑页面。</small></span></div><p v-if="questionAttachmentError" class="question-attachments__error" role="alert"><AppIcon name="warning" :size="13" /><span>{{ questionAttachmentError }}</span><button @click.stop="loadQuestionAttachments()">重试</button></p><footer v-if="questionAttachments.length > 6"><button @click.stop="questionAttachmentsExpanded = !questionAttachmentsExpanded">{{ questionAttachmentsExpanded ? '收起附件' : `再显示 ${questionAttachments.length - 6} 个` }}</button><span>{{ questionAttachments.length }} / 64</span></footer></section>
-          <section v-if="draft.questionDetails" ref="questionDetailsSectionElement" class="question-details"><header><span>题目结构</span><small>题目只保存一份；答案与错因可以独立安排复习。</small></header><label class="question-source-field"><span>来源 / 出处</span><input v-model.trim="draft.questionDetails.source" data-question-field="source" aria-label="题目来源或出处" maxlength="2000" placeholder="例如：LeetCode 704、教材第 7 章或课程链接" /><div><small>{{ currentQuestionSource.hint }}</small><button v-if="currentQuestionSource.kind !== 'text'" class="quiet-button" :title="currentQuestionSource.label" @click.stop="openCurrentQuestionSource"><AppIcon :name="currentQuestionSource.kind === 'markdown' ? 'book' : currentQuestionSource.kind === 'file' ? 'folder-open' : 'link'" :size="12" />{{ questionSourceActionLabel(currentQuestionSource) }}</button></div></label><label><span>题干</span><textarea v-model="draft.questionDetails.stem" data-question-field="stem" aria-label="题干" placeholder="把题目或需要回想的条件写在这里…" /></label><label><span>答案 / 结论</span><textarea v-model="draft.questionDetails.answer" data-question-field="answer" aria-label="答案或结论" placeholder="先写最终答案，再补充推导。" /></label><label><span>解析 / 正确思路</span><textarea v-model="draft.questionDetails.explanation" data-question-field="explanation" aria-label="解析或正确思路" placeholder="关键步骤、边界和为什么这样做。" /></label><label><span>当时的错误做法</span><textarea v-model="draft.questionDetails.wrongAnswer" data-question-field="wrongAnswer" aria-label="错误做法" placeholder="记录第一次的思路或答案。" /></label><label><span>错误原因</span><textarea v-model="draft.questionDetails.errorReason" data-question-field="errorReason" aria-label="错误原因" placeholder="例如：遗漏边界、概念混淆、时间复杂度判断失误。" /></label><div class="question-review-facets" aria-label="题目的复习方向"><div><b>复习方向</b><small>每张卡独立计算 FSRS</small></div><div><label v-for="facet in questionReviewFacetChoices" :key="facet" :class="{ active: questionReviewFacetEnabled(draft, facet) }"><input type="checkbox" :checked="questionReviewFacetEnabled(draft, facet)" @change="toggleQuestionReviewFacet(draft, facet)" /><span>{{ questionReviewFacetLabels[facet] }}</span></label></div></div></section>
-          <template v-if="draft.kind === 'question'"><label><span>分类</span><select v-model="draft.subject"><option>算法</option><option>数学</option><option>物理</option><option>计算机</option><option>英语</option><option>未分类</option></select></label><label><span>难度</span><select v-model="draft.difficulty"><option :value="1">1 · 入门</option><option :value="2">2 · 基础</option><option :value="3">3 · 中等</option><option :value="4">4 · 困难</option><option :value="5">5 · 挑战</option></select></label></template>
-          <section v-else class="document-folder-section"><header><div><span>资料夹</span><small>仅组织 Knitspace，不会移动外部 Markdown。</small></div><code>{{ draft.folder ? draft.folder.split('/').length : 0 }}</code></header><label><span class="visually-hidden">资料夹路径</span><input v-model="draft.folder" placeholder="例如：算法 / 图论" @blur="normalizeDraftFolder" /></label></section>
-          <section ref="documentVersionSectionElement" class="document-version-section" :aria-busy="documentVersionsLoading">
-            <header><div><span>版本历史</span><small>{{ isDesktop() ? '连续保存会按 5 分钟合并，最多保留 40 个恢复点。' : '桌面开发版保存后会在这里建立本地恢复点。' }}</small></div><code>{{ documentVersions.length || 'LOCAL' }}</code></header>
-            <div v-if="documentVersionsLoading" class="document-version-section__loading" role="status"><i></i><i></i><span>正在读取版本摘要…</span></div>
-            <div v-else-if="visibleDocumentVersions.length" class="document-version-list">
-              <article v-for="version in visibleDocumentVersions" :key="version.id" v-memo="[version.id, version.savedAt, version.byteSize, version.preview, version.isCurrent]" :class="{ current: version.isCurrent }" tabindex="0" aria-haspopup="menu" :aria-expanded="documentVersionMenu?.version.id === version.id" title="右键或 Shift + F10 可复制、恢复" @contextmenu.prevent.stop="openDocumentVersionMenu($event, version)" @keydown="openDocumentVersionMenu($event, version)">
-                <span><AppIcon :name="version.isCurrent ? 'check' : 'clock'" :size="14" /></span><div><b>{{ formatDocumentVersionTime(version.savedAt) }} <i v-if="version.isCurrent">当前</i></b><small>{{ version.preview || '空白文档' }}</small></div><code>{{ formatDocumentVersionSize(version.byteSize) }}</code>
-                <button v-if="!version.isCurrent" class="quiet-button" @click.stop="restoreDocumentVersion(version)">载入草稿</button>
-              </article>
-            </div>
-            <div v-else-if="!documentVersionsError" class="document-version-section__empty"><AppIcon name="clock" :size="17" /><span><b>{{ isDesktop() ? '还没有可恢复的版本' : '版本历史只保存在桌面 Vault' }}</b><small>{{ isDesktop() ? '保存当前文档后，第一个本地恢复点会自动出现。' : '浏览器预览不会创建或读取你的文档快照。' }}</small></span></div>
-            <p v-if="documentVersionsError" class="document-version-section__error" role="alert"><AppIcon name="warning" :size="13" /><span>{{ documentVersionsError }}</span><button @click.stop="loadDocumentVersions()">重试</button></p>
-            <footer v-if="documentVersions.length > 6"><button @click.stop="documentVersionsExpanded = !documentVersionsExpanded">{{ documentVersionsExpanded ? '收起版本' : `再显示 ${documentVersions.length - 6} 个` }}</button><span>{{ documentVersions.length }} / 40</span></footer>
-          </section>
-          <section class="relation-section">
-            <header><div><span>关联知识</span><small>{{ relatedEntities.length ? `${relatedEntities.length} 条关系已织入资料库` : '把笔记、题目、单词和画布织到一起。' }}</small></div><button class="quiet-button" :aria-expanded="relationComposerOpen" @click="openRelationComposer">{{ relationComposerOpen ? '收起' : '＋ 关联' }}</button></header>
-            <div v-if="relationComposerOpen" class="relation-composer" :aria-busy="relationSearching">
-              <label><span class="visually-hidden">搜索要关联的内容</span><input ref="relationInput" v-model="relationQuery" placeholder="搜索笔记、错题、单词或画布…" /></label>
-              <select v-model="relationType" aria-label="关联类型"><option value="related">相关</option><option value="prerequisite">前置知识</option><option value="variation">变式 / 对比</option></select>
-              <p v-if="relationSearching" role="status">正在查找本地资料与画布摘要…</p>
-              <p v-else-if="relationSearchError" class="relation-composer__error" role="alert">{{ relationSearchError }}</p>
-              <div v-else-if="relationResults.length" class="relation-results">
-                <button v-for="result in relationResults" :key="result.id" v-memo="[result.id, result.title, result.kind, result.subtitle, relationType]" @click="createRelation(result)"><b>{{ result.title }}</b><small>{{ relationKindLabel(result.kind) }} · {{ result.subtitle }}</small></button>
-              </div>
-              <p v-else-if="relationQuery.trim()">没有可关联的结果。</p>
-              <p v-else>输入标题或关键词；这里只读取轻量摘要，不加载画布源图。</p>
-              <p v-if="visualRelationCatalogWarning" class="relation-composer__warning" role="status">{{ visualRelationCatalogWarning }}；笔记、错题和单词仍可搜索。</p>
-            </div>
-            <div v-if="relatedEntities.length" class="relation-list"><button v-for="item in relatedEntities" :key="`${item.relation.fromId}:${item.relation.toId}:${item.relation.relationType}`" v-memo="[item.relation.fromId, item.relation.toId, item.relation.relationType, item.title, item.subtitle]" aria-haspopup="menu" :aria-expanded="relationMenu?.relation === item.relation" @click="openRelated(item.id, item.kind)" @contextmenu.prevent.stop="openRelationMenu($event, item.relation, item.title, item.kind)" @keydown="openRelationMenuFromKeyboard($event, item.relation, item.title, item.kind)"><span>{{ relationLabel[item.relation.relationType] }}<i v-if="item.inbound">来自</i></span><b>{{ item.title }}</b><small>{{ relationKindLabel(item.kind) }} · {{ item.subtitle }}</small></button></div>
-            <p v-else-if="!relationComposerOpen" class="relation-empty">还没有关系。可关联一条笔记、错题、单词或视觉画布。</p>
-          </section>
-          <section v-if="markdownOutline.length || outlinePending" class="markdown-outline-section"><header><div><span>{{ isHugeDocument ? '本地大纲' : '文档大纲' }}</span><small>{{ outlinePending ? '正在从本地 Markdown 建立索引…' : `${markdownOutline.length} 个章节${isHugeDocument ? ' · 不加载全文预览' : ' · 已渲染'}` }}</small></div><code>{{ isHugeDocument ? 'LOCAL' : '⌘' }}</code></header><nav ref="outlineListElement" class="markdown-outline" aria-label="当前文档大纲" @scroll.passive="handleOutlineListScroll"><div class="markdown-outline__spacer" :style="{ height: `${outlineWindow.before}px` }" aria-hidden="true"></div><button v-for="item in visibleMarkdownOutline" :key="`${item.index}:${item.label}`" v-memo="[item.index, item.level, item.label, item.sourceLine]" :class="`markdown-outline__item--${item.level}`" :title="isHugeDocument && !fullLargePreviewRequested ? `在源码中定位至第 ${item.sourceLine ?? 1} 行：${item.label}` : `跳至：${item.label}`" :aria-posinset="item.index + 1" :aria-setsize="markdownOutline.length" @click="focusMarkdownOutline(item)"><span>H{{ item.level }}</span><b>{{ item.label }}</b></button><div class="markdown-outline__spacer" :style="{ height: `${outlineWindow.after}px` }" aria-hidden="true"></div></nav></section>
-          <section class="wiki-links-section"><header><div><span>文内链接</span><small>{{ wikiLinks.length ? `${wikiLinks.length} 处 Markdown 链接` : '用 [[笔记标题]] 把知识点连起来。' }}</small></div><code>[[…]]</code></header><div v-if="wikiLinks.length" class="wiki-links-list"><button v-for="link in wikiLinks" :key="`${link.start}:${link.end}`" aria-haspopup="menu" :aria-expanded="wikiContextMenu?.title === link.target && wikiContextMenu?.heading === link.heading" @click="openWikiLink(link.target, link.heading)" @contextmenu.prevent.stop="openWikiContext(link.target, link.heading, $event.clientX, $event.clientY, $event.currentTarget as HTMLElement)" @keydown="openWikiContextFromKeyboard($event, link.target, link.heading)"><span>{{ link.heading ? '段落' : '笔记' }}</span><b>{{ link.label }}</b><small>{{ link.target }}<template v-if="link.heading"> · {{ link.heading }}</template></small></button></div><p v-else class="relation-empty">输入 [[笔记标题]]，预览中即可点击，右键还能新建目标或建立关系。</p></section>
-          <section class="wiki-links-section wiki-links-section--backlinks"><header><div><span>回链</span><small>{{ backlinksLoading ? '正在从本地资料库查找…' : backlinks.length ? `${backlinks.length} 条笔记提到了当前内容` : '还没有其他笔记链接到这里。' }}</small></div><code>{{ backlinks.length }}</code></header><div v-if="backlinks.length" class="wiki-links-list"><button v-for="backlink in backlinks" :key="backlink.id" aria-haspopup="menu" :aria-expanded="wikiContextMenu?.title === backlink.title && !wikiContextMenu?.heading" @click="openBacklink(backlink)" @contextmenu.prevent.stop="openBacklinkContext($event, backlink)" @keydown="openWikiContextFromKeyboard($event, backlink.title)"><span>{{ backlink.kind === 'question' ? '错题' : '笔记' }}</span><b>{{ backlink.title }}</b><small>{{ backlink.subject }}<template v-if="backlink.tags.length"> · {{ backlink.tags.slice(0, 2).join(' · ') }}</template></small></button></div></section>
-          <div class="inspector-tags"><span>{{ draft.kind === 'question' ? '知识点' : '标签' }}</span><div><TagPill v-for="tag in draft.tags" :key="tag" :label="tag" /></div></div>
-          <div class="inspector-note"><b>本地保存</b><p>内容、关系、复习状态和来源锚点只保存在当前资料库。</p></div>
-          <footer><button class="quiet-button danger" @click="remove">删除这条{{ draft.kind === 'question' ? '错题' : '笔记' }}</button><button class="primary-button" :disabled="documentSaveInProgress" @click="save()">{{ documentSaveInProgress ? '保存中…' : '保存更改' }}</button></footer>
-        </aside>
         <AiAssistPanel v-if="!focusMode" :document="draft" @insert="insertAi" />
       </section>
-      <section v-else class="panel detail-empty"><div><span class="detail-empty__mark"><AppIcon :name="isNotes ? 'book' : 'review'" :size="25" /></span><p class="eyebrow">{{ isNotes ? '本地 Markdown 库' : '本地复习库' }}</p><b>{{ isNotes ? '还没有笔记' : '还没有错题' }}</b><p>{{ isNotes ? '新建一条笔记，或打开已有 Markdown；内容始终留在当前资料库。' : '从一条错题开始，或把已有题单一次整理成答案、解析与错因。' }}</p><div class="detail-empty__actions"><button class="primary-button" @click="isNotes ? createNote() : createQuestion()">{{ isNotes ? '新建笔记' : '新建错题' }}</button><button v-if="isNotes" class="quiet-button" aria-haspopup="menu" :aria-expanded="Boolean(noteStarterMenu)" @click.stop="openNoteStarterMenu">从模板开始</button><button v-if="isNotes" class="quiet-button" @click="importMarkdown">打开 Markdown</button><button v-else class="quiet-button" @click="openQuestionImport"><AppIcon name="inbox" :size="13" />批量导入题目</button></div><small>{{ isNotes ? '支持标准 .md 文件、相对图片和 Obsidian 风格双链。' : 'CSV、TSV 与 TXT 会先在本机预览；保存后按 FSRS 节奏进入复习。' }}</small></div></section>
+      <section v-else class="pane h-full min-h-0 center">
+        <div class="stack items-center gap-3 max-w-100 px-6 text-center">
+          <span class="center w-12 h-12 rounded-lg bg-accent-soft text-accent"><AppIcon :name="isNotes ? 'book' : 'review'" :size="24" /></span>
+          <div class="stack gap-1.5">
+            <strong class="text-[15px] font-semibold text-fg">{{ isNotes ? '还没有笔记' : '还没有错题' }}</strong>
+            <p class="text-[12px] leading-relaxed text-fg-3">
+              {{ isNotes ? '新建一条笔记，或打开已有 Markdown；内容始终留在当前资料库。' : '从一条错题开始，或把已有题单一次整理成答案、解析与错因。' }}
+            </p>
+          </div>
+          <div class="row flex-wrap justify-center gap-2">
+            <button class="btn-primary" @click="isNotes ? createNote() : createQuestion()">{{ isNotes ? '新建笔记' : '新建错题' }}</button>
+            <button v-if="isNotes" class="btn-default" aria-haspopup="menu" :aria-expanded="Boolean(noteStarterMenu)" @click.stop="openNoteStarterMenu">从模板开始</button>
+            <button v-if="isNotes" class="btn-default" @click="importMarkdown">打开 Markdown</button>
+            <button v-else class="btn-default" @click="openQuestionImport"><AppIcon name="inbox" :size="14" />批量导入题目</button>
+          </div>
+          <small class="text-[11px] leading-relaxed text-fg-3">
+            {{ isNotes ? '支持标准 .md 文件、相对图片和 Obsidian 风格双链。' : 'CSV、TSV 与 TXT 会先在本机预览；保存后按 FSRS 节奏进入复习。' }}
+          </small>
+        </div>
+      </section>
+      <!-- ── Inspector ─────────────────────────────────────────────────────
+           A real column, not an overlay. It used to slide over the right side
+           of the document you were reading, so consulting a backlink meant
+           covering the sentence that made you look it up.
+
+           Three of its blocks are gone rather than restyled: the category and
+           difficulty selects, and the tag list, are all in the editor header
+           now, and a second copy of a control is not extra information. -->
+      <aside v-if="draft && !focusMode && inspectorOpen" class="pane h-full min-h-0" :aria-label="inspectorLabel">
+        <header class="pane-head">
+          <span class="row gap-2 min-w-0">
+            <b class="text-[13px] font-semibold text-fg">{{ inspectorLabel }}</b>
+          </span>
+          <button class="center w-7 h-7 shrink-0 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" :aria-label="`关闭${inspectorLabel}`" @click="inspectorOpen = false">
+            <AppIcon name="close" :size="14" />
+          </button>
+        </header>
+
+        <div class="flex-1 min-h-0 overflow-y-auto">
+          <section v-if="draft.kind === 'question'" class="stack gap-2 p-3 border-b border-line" :aria-busy="questionAttachmentsLoading || questionAttachmentImporting">
+            <div class="row-between gap-2">
+              <span class="row gap-2 text-[11px] font-semibold text-fg-3">
+                附件<span class="chip h-4.5 px-1.5 text-[11px] tabular-nums">{{ questionAttachments.length }}</span>
+              </span>
+              <button class="btn-tool" :disabled="questionAttachmentImporting || questionAttachments.length >= 64" @click.stop="addQuestionAttachments">
+                <AppIcon name="attachment" :size="13" />{{ questionAttachmentImporting ? '添加中…' : '添加' }}
+              </button>
+            </div>
+            <p v-if="questionAttachmentsLoading" class="text-[11px] text-fg-3" role="status">正在读取附件摘要…</p>
+            <div v-else-if="visibleQuestionAttachments.length" class="stack gap-0.5">
+              <button
+                v-for="attachment in visibleQuestionAttachments"
+                :key="attachment.id"
+                v-memo="[attachment.id, attachment.name, attachment.size, attachment.available]"
+                class="row gap-2 px-2 py-1.5 rounded-sm text-left transition-colors duration-120 hover:bg-surface-2"
+                :class="attachment.available ? '' : 'opacity-60'"
+                :aria-disabled="!attachment.available"
+                :title="attachment.available ? '在资源管理器中定位；右键查看更多操作' : 'Vault 中的附件文件已经不存在；右键可移除记录'"
+                aria-haspopup="menu"
+                :aria-expanded="questionAttachmentMenu?.attachment.id === attachment.id"
+                @click.stop="revealQuestionAttachment(attachment)"
+                @contextmenu.prevent.stop="openQuestionAttachmentMenu($event, attachment)"
+                @keydown="openQuestionAttachmentMenu($event, attachment)"
+              >
+                <span class="center w-7 h-7 shrink-0 rounded-sm bg-surface-2" :class="attachment.available ? 'text-fg-2' : 'text-danger'">
+                  <AppIcon :name="questionAttachmentIcon(attachment)" :size="14" />
+                </span>
+                <span class="stack gap-0.5 min-w-0 flex-1">
+                  <b class="text-[12px] font-normal truncate text-fg">{{ attachment.name }}</b>
+                  <small class="text-[11px] truncate" :class="attachment.available ? 'text-fg-3' : 'text-danger'">
+                    {{ attachment.available ? `${formatQuestionAttachmentSize(attachment.size)} · ${attachment.mime}` : '本地文件已经不存在' }}
+                  </small>
+                </span>
+              </button>
+            </div>
+            <p v-else-if="!questionAttachmentError" class="text-[11px] leading-relaxed text-fg-3">
+              还没有附件。可一次选择多个图片、PDF、音频或代码文件，只复制进当前 Vault，不会把字节读进编辑页面。
+            </p>
+            <p v-if="questionAttachmentError" class="row gap-2 p-2 rounded-sm bg-danger-soft text-[11px] text-danger" role="alert">
+              <AppIcon name="warning" :size="13" class="shrink-0 mt-0.5" />
+              <span class="min-w-0 flex-1 leading-relaxed">{{ questionAttachmentError }}</span>
+              <button class="shrink-0 underline underline-offset-2" @click.stop="loadQuestionAttachments()">重试</button>
+            </p>
+            <div v-if="questionAttachments.length > 6" class="row-between gap-2">
+              <button class="btn-tool" @click.stop="questionAttachmentsExpanded = !questionAttachmentsExpanded">
+                {{ questionAttachmentsExpanded ? '收起附件' : `再显示 ${questionAttachments.length - 6} 个` }}
+              </button>
+              <small class="text-[11px] tabular-nums text-fg-3">{{ questionAttachments.length }} / 64</small>
+            </div>
+          </section>
+
+          <section v-if="draft.questionDetails" ref="questionDetailsSectionElement" class="stack gap-2.5 p-3 border-b border-line">
+            <div class="stack gap-0.5">
+              <h3 class="text-[11px] font-semibold text-fg-3">题目结构</h3>
+              <p class="text-[11px] leading-relaxed text-fg-3">题目只保存一份；答案与错因可以各自安排复习。</p>
+            </div>
+            <label class="stack gap-1.5">
+              <span class="text-[12px] text-fg-3">来源 / 出处</span>
+              <input
+                v-model.trim="draft.questionDetails.source"
+                class="field h-8 text-[12px]"
+                data-question-field="source"
+                aria-label="题目来源或出处"
+                maxlength="2000"
+                placeholder="例如：LeetCode 704、教材第 7 章或课程链接"
+              />
+              <span class="row-between gap-2">
+                <small class="min-w-0 truncate text-[11px] text-fg-3">{{ currentQuestionSource.hint }}</small>
+                <button v-if="currentQuestionSource.kind !== 'text'" class="btn-tool shrink-0" :title="currentQuestionSource.label" @click.stop="openCurrentQuestionSource">
+                  <AppIcon :name="currentQuestionSource.kind === 'markdown' ? 'book' : currentQuestionSource.kind === 'file' ? 'folder-open' : 'link'" :size="12" />
+                  {{ questionSourceActionLabel(currentQuestionSource) }}
+                </button>
+              </span>
+            </label>
+            <label v-for="field in questionDetailFields" :key="field.key" class="stack gap-1.5">
+              <span class="text-[12px] text-fg-3">{{ field.label }}</span>
+              <textarea
+                v-model="draft.questionDetails[field.key]"
+                class="field-area min-h-16 text-[12px]"
+                :data-question-field="field.key"
+                :aria-label="field.label"
+                :placeholder="field.placeholder"
+              />
+            </label>
+            <div class="stack gap-2 p-2.5 rounded-sm bg-surface-2" aria-label="题目的复习方向">
+              <span class="stack gap-0.5">
+                <b class="text-[11px] font-medium text-fg">复习方向</b>
+                <small class="text-[11px] text-fg-3">每张卡独立计算 FSRS 间隔</small>
+              </span>
+              <div class="row flex-wrap gap-1.5">
+                <label
+                  v-for="facet in questionReviewFacetChoices"
+                  :key="facet"
+                  class="row gap-1.5 h-7 px-2.5 rounded-full border text-[11px] cursor-pointer transition-colors duration-120"
+                  :class="questionReviewFacetEnabled(draft, facet) ? 'border-accent bg-accent-soft text-accent' : 'border-line text-fg-2 hover:border-line-strong hover:text-fg'"
+                >
+                  <input type="checkbox" class="visually-hidden" :checked="questionReviewFacetEnabled(draft, facet)" @change="toggleQuestionReviewFacet(draft, facet)" />
+                  <AppIcon :name="questionReviewFacetEnabled(draft, facet) ? 'check' : 'plus'" :size="11" />
+                  {{ questionReviewFacetLabels[facet] }}
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section v-if="draft.kind !== 'question'" class="stack gap-2 p-3 border-b border-line">
+            <div class="row-between gap-2">
+              <h3 class="text-[11px] font-semibold text-fg-3">资料夹</h3>
+              <small class="text-[11px] tabular-nums text-fg-3">{{ draft.folder ? draft.folder.split('/').length : 0 }} 层</small>
+            </div>
+            <input v-model="draft.folder" class="field h-8 text-[12px]" aria-label="资料夹路径" placeholder="例如：算法 / 图论" @blur="normalizeDraftFolder" />
+            <p class="text-[11px] leading-relaxed text-fg-3">只组织 Knitspace 内的文档，不会移动你磁盘上的外部 Markdown。</p>
+          </section>
+
+          <section ref="documentVersionSectionElement" class="stack gap-2 p-3 border-b border-line" :aria-busy="documentVersionsLoading">
+            <div class="row-between gap-2">
+              <h3 class="text-[11px] font-semibold text-fg-3">版本历史</h3>
+              <small class="text-[11px] tabular-nums text-fg-3">{{ documentVersions.length || '本地' }}</small>
+            </div>
+            <p v-if="documentVersionsLoading" class="text-[11px] text-fg-3" role="status">正在读取版本摘要…</p>
+            <div v-else-if="visibleDocumentVersions.length" class="stack gap-0.5">
+              <article
+                v-for="version in visibleDocumentVersions"
+                :key="version.id"
+                v-memo="[version.id, version.savedAt, version.byteSize, version.preview, version.isCurrent]"
+                class="row gap-2 px-2 py-1.5 rounded-sm transition-colors duration-120"
+                :class="version.isCurrent ? 'bg-accent-soft' : 'hover:bg-surface-2'"
+                tabindex="0"
+                aria-haspopup="menu"
+                :aria-expanded="documentVersionMenu?.version.id === version.id"
+                title="右键或 Shift + F10 可复制、恢复"
+                @contextmenu.prevent.stop="openDocumentVersionMenu($event, version)"
+                @keydown="openDocumentVersionMenu($event, version)"
+              >
+                <AppIcon :name="version.isCurrent ? 'check' : 'clock'" :size="13" class="shrink-0 mt-1" :class="version.isCurrent ? 'text-accent' : 'text-fg-3'" />
+                <span class="stack gap-0.5 min-w-0 flex-1">
+                  <b class="row gap-1.5 text-[11px] font-medium" :class="version.isCurrent ? 'text-accent' : 'text-fg'">
+                    {{ formatDocumentVersionTime(version.savedAt) }}
+                    <i v-if="version.isCurrent" class="not-italic font-normal text-fg-3">当前</i>
+                  </b>
+                  <small class="text-[11px] truncate text-fg-3">{{ version.preview || '空白文档' }}</small>
+                </span>
+                <small class="shrink-0 text-[11px] tabular-nums text-fg-3">{{ formatDocumentVersionSize(version.byteSize) }}</small>
+                <button v-if="!version.isCurrent" class="btn-tool shrink-0" @click.stop="restoreDocumentVersion(version)">载入</button>
+              </article>
+            </div>
+            <p v-else-if="!documentVersionsError" class="text-[11px] leading-relaxed text-fg-3">
+              {{ isDesktop()
+                ? '还没有恢复点。保存一次后，第一个本地版本会出现在这里；连续保存按 5 分钟合并，最多保留 40 个。'
+                : '版本历史只保存在桌面 Vault；浏览器预览不会创建或读取你的文档快照。' }}
+            </p>
+            <p v-if="documentVersionsError" class="row gap-2 p-2 rounded-sm bg-danger-soft text-[11px] text-danger" role="alert">
+              <AppIcon name="warning" :size="13" class="shrink-0 mt-0.5" />
+              <span class="min-w-0 flex-1 leading-relaxed">{{ documentVersionsError }}</span>
+              <button class="shrink-0 underline underline-offset-2" @click.stop="loadDocumentVersions()">重试</button>
+            </p>
+            <div v-if="documentVersions.length > 6" class="row-between gap-2">
+              <button class="btn-tool" @click.stop="documentVersionsExpanded = !documentVersionsExpanded">
+                {{ documentVersionsExpanded ? '收起版本' : `再显示 ${documentVersions.length - 6} 个` }}
+              </button>
+              <small class="text-[11px] tabular-nums text-fg-3">{{ documentVersions.length }} / 40</small>
+            </div>
+          </section>
+
+          <section class="stack gap-2 p-3 border-b border-line">
+            <div class="row-between gap-2">
+              <h3 class="text-[11px] font-semibold text-fg-3">关联知识</h3>
+              <button class="btn-tool" :aria-expanded="relationComposerOpen" @click="openRelationComposer">
+                {{ relationComposerOpen ? '收起' : '＋ 关联' }}
+              </button>
+            </div>
+            <div v-if="relationComposerOpen" class="stack gap-2 p-2.5 rounded-sm bg-surface-2" :aria-busy="relationSearching">
+              <input ref="relationInput" v-model="relationQuery" class="field h-8 text-[12px]" aria-label="搜索要关联的内容" placeholder="搜索笔记、错题、单词或画布…" />
+              <select v-model="relationType" class="field h-8 text-[12px]" aria-label="关联类型">
+                <option value="related">相关</option>
+                <option value="prerequisite">前置知识</option>
+                <option value="variation">变式 / 对比</option>
+              </select>
+              <p v-if="relationSearching" class="text-[11px] text-fg-3" role="status">正在查找本地资料与画布摘要…</p>
+              <p v-else-if="relationSearchError" class="text-[11px] text-danger" role="alert">{{ relationSearchError }}</p>
+              <div v-else-if="relationResults.length" class="stack gap-0.5 max-h-56 overflow-y-auto">
+                <button
+                  v-for="result in relationResults"
+                  :key="result.id"
+                  v-memo="[result.id, result.title, result.kind, result.subtitle, relationType]"
+                  class="stack gap-0.5 px-2 py-1.5 rounded-sm text-left transition-colors duration-120 hover:bg-surface-3"
+                  @click="createRelation(result)"
+                >
+                  <b class="text-[12px] font-normal truncate text-fg">{{ result.title }}</b>
+                  <small class="text-[11px] truncate text-fg-3">{{ relationKindLabel(result.kind) }} · {{ result.subtitle }}</small>
+                </button>
+              </div>
+              <p v-else-if="relationQuery.trim()" class="text-[11px] text-fg-3">没有可关联的结果。</p>
+              <p v-else class="text-[11px] leading-relaxed text-fg-3">输入标题或关键词；这里只读取轻量摘要，不加载画布源图。</p>
+              <p v-if="visualRelationCatalogWarning" class="text-[11px] leading-relaxed text-warn" role="status">{{ visualRelationCatalogWarning }}；笔记、错题和单词仍可搜索。</p>
+            </div>
+            <div v-if="relatedEntities.length" class="stack gap-0.5">
+              <button
+                v-for="item in relatedEntities"
+                :key="`${item.relation.fromId}:${item.relation.toId}:${item.relation.relationType}`"
+                v-memo="[item.relation.fromId, item.relation.toId, item.relation.relationType, item.title, item.subtitle]"
+                class="row gap-2 px-2 py-1.5 rounded-sm text-left transition-colors duration-120 hover:bg-surface-2"
+                aria-haspopup="menu"
+                :aria-expanded="relationMenu?.relation === item.relation"
+                @click="openRelated(item.id, item.kind)"
+                @contextmenu.prevent.stop="openRelationMenu($event, item.relation, item.title, item.kind)"
+                @keydown="openRelationMenuFromKeyboard($event, item.relation, item.title, item.kind)"
+              >
+                <span class="chip shrink-0 h-5 px-1.5 text-[11px]">
+                  {{ relationLabel[item.relation.relationType] }}<i v-if="item.inbound" class="not-italic text-fg-3">·来自</i>
+                </span>
+                <span class="stack gap-0.5 min-w-0 flex-1">
+                  <b class="text-[12px] font-normal truncate text-fg">{{ item.title }}</b>
+                  <small class="text-[11px] truncate text-fg-3">{{ relationKindLabel(item.kind) }} · {{ item.subtitle }}</small>
+                </span>
+              </button>
+            </div>
+            <p v-else-if="!relationComposerOpen" class="text-[11px] leading-relaxed text-fg-3">还没有关系。可以关联一条笔记、错题、单词或视觉画布。</p>
+          </section>
+
+          <section v-if="markdownOutline.length || outlinePending" class="stack gap-2 p-3 border-b border-line">
+            <div class="row-between gap-2">
+              <h3 class="text-[11px] font-semibold text-fg-3">{{ isHugeDocument ? '本地大纲' : '文档大纲' }}</h3>
+              <small class="text-[11px] tabular-nums text-fg-3">{{ outlinePending ? '索引中…' : `${markdownOutline.length} 节` }}</small>
+            </div>
+            <!-- Windowed: the row height here is `OUTLINE_ROW_HEIGHT`. -->
+            <nav ref="outlineListElement" class="stack max-h-72 overflow-y-auto" aria-label="当前文档大纲" @scroll.passive="handleOutlineListScroll">
+              <div :style="{ height: `${outlineWindow.before}px` }" aria-hidden="true"></div>
+              <button
+                v-for="item in visibleMarkdownOutline"
+                :key="`${item.index}:${item.label}`"
+                v-memo="[item.index, item.level, item.label, item.sourceLine]"
+                class="row gap-2 shrink-0 h-[31px] pr-2 rounded-sm text-left text-fg-2 transition-colors duration-120 hover:bg-surface-2 hover:text-fg"
+                :style="{ paddingLeft: `${(item.level - 1) * 10 + 8}px` }"
+                :title="isHugeDocument && !fullLargePreviewRequested ? `在源码中定位至第 ${item.sourceLine ?? 1} 行：${item.label}` : `跳至：${item.label}`"
+                :aria-posinset="item.index + 1"
+                :aria-setsize="markdownOutline.length"
+                @click="focusMarkdownOutline(item)"
+              >
+                <span class="shrink-0 w-4.5 text-[11px] tabular-nums text-fg-3">H{{ item.level }}</span>
+                <b class="min-w-0 flex-1 truncate text-[12px] font-normal">{{ item.label }}</b>
+              </button>
+              <div :style="{ height: `${outlineWindow.after}px` }" aria-hidden="true"></div>
+            </nav>
+          </section>
+
+          <section class="stack gap-2 p-3 border-b border-line">
+            <div class="row-between gap-2">
+              <h3 class="text-[11px] font-semibold text-fg-3">文内链接</h3>
+              <small class="text-[11px] tabular-nums text-fg-3">{{ wikiLinks.length }}</small>
+            </div>
+            <div v-if="wikiLinks.length" class="stack gap-0.5">
+              <button
+                v-for="link in wikiLinks"
+                :key="`${link.start}:${link.end}`"
+                class="row gap-2 px-2 py-1.5 rounded-sm text-left transition-colors duration-120 hover:bg-surface-2"
+                aria-haspopup="menu"
+                :aria-expanded="wikiContextMenu?.title === link.target && wikiContextMenu?.heading === link.heading"
+                @click="openWikiLink(link.target, link.heading)"
+                @contextmenu.prevent.stop="openWikiContext(link.target, link.heading, $event.clientX, $event.clientY, $event.currentTarget as HTMLElement)"
+                @keydown="openWikiContextFromKeyboard($event, link.target, link.heading)"
+              >
+                <span class="chip shrink-0 h-5 px-1.5 text-[11px]">{{ link.heading ? '段落' : '笔记' }}</span>
+                <span class="stack gap-0.5 min-w-0 flex-1">
+                  <b class="text-[12px] font-normal truncate text-fg">{{ link.label }}</b>
+                  <small class="text-[11px] truncate text-fg-3">{{ link.target }}<template v-if="link.heading"> · {{ link.heading }}</template></small>
+                </span>
+              </button>
+            </div>
+            <p v-else class="text-[11px] leading-relaxed text-fg-3">输入 <code class="font-mono text-fg-2">[[笔记标题]]</code>，预览中即可点击；右键还能新建目标或建立关系。</p>
+          </section>
+
+          <section class="stack gap-2 p-3 border-b border-line">
+            <div class="row-between gap-2">
+              <h3 class="text-[11px] font-semibold text-fg-3">回链</h3>
+              <small class="text-[11px] tabular-nums text-fg-3">{{ backlinksLoading ? '查找中…' : backlinks.length }}</small>
+            </div>
+            <div v-if="backlinks.length" class="stack gap-0.5">
+              <button
+                v-for="backlink in backlinks"
+                :key="backlink.id"
+                class="row gap-2 px-2 py-1.5 rounded-sm text-left transition-colors duration-120 hover:bg-surface-2"
+                aria-haspopup="menu"
+                :aria-expanded="wikiContextMenu?.title === backlink.title && !wikiContextMenu?.heading"
+                @click="openBacklink(backlink)"
+                @contextmenu.prevent.stop="openBacklinkContext($event, backlink)"
+                @keydown="openWikiContextFromKeyboard($event, backlink.title)"
+              >
+                <span class="chip shrink-0 h-5 px-1.5 text-[11px]">{{ backlink.kind === 'question' ? '错题' : '笔记' }}</span>
+                <span class="stack gap-0.5 min-w-0 flex-1">
+                  <b class="text-[12px] font-normal truncate text-fg">{{ backlink.title }}</b>
+                  <small class="text-[11px] truncate text-fg-3">
+                    {{ backlink.subject }}<template v-if="backlink.tags.length"> · {{ backlink.tags.slice(0, 2).join(' · ') }}</template>
+                  </small>
+                </span>
+              </button>
+            </div>
+            <p v-else class="text-[11px] leading-relaxed text-fg-3">{{ backlinksLoading ? '正在从本地资料库查找…' : '还没有其他笔记链接到这里。' }}</p>
+          </section>
+
+          <!-- The AI panel's floating button sits over the bottom-right of
+               the window, so the column keeps a lane clear of it. -->
+          <p class="row gap-2 p-3 pb-14 text-[11px] leading-relaxed text-fg-3">
+            <AppIcon name="shield" :size="13" class="shrink-0 mt-0.5 text-success" />
+            内容、关系、复习状态和来源锚点只保存在当前资料库，不会离开这台设备。
+          </p>
+        </div>
+
+      </aside>
     </div>
-    <div v-if="noteStarterMenu" ref="noteStarterMenuElement" class="note-starter-menu" role="menu" aria-label="新建学习笔记模板" :style="{ left: noteStarterMenu.x + 'px', top: noteStarterMenu.y + 'px' }" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, noteStarterMenuElement, () => closeNoteStarterMenu(true))">
-      <p>从模板开始 <small>普通 Markdown · 可随时删改</small></p>
-      <button v-for="template in noteStarterTemplates" :key="template.id" role="menuitem" @click="createNoteFromTemplate(template)"><span><b>{{ template.label }}</b><small>{{ template.description }}</small></span><i>{{ template.subject }}</i></button>
-    </div>
-    <div v-if="previewSelectionMenu" ref="previewSelectionMenuElement" class="document-context-menu preview-selection-context-menu" :style="{ left: `${previewSelectionMenu.x}px`, top: `${previewSelectionMenu.y}px` }" role="menu" aria-label="阅读选区操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, previewSelectionMenuElement, () => closePreviewSelectionMenu(true))">
-      <p><span>{{ previewSelectionSummary(previewSelectionMenu.text) }}</span><small>{{ previewSelectionMenu.text.length.toLocaleString('zh-CN') }} 字</small></p>
-      <button role="menuitem" @click="copyPreviewSelection('markdown')"><span><AppIcon name="file-text" :size="14" />复制为 Markdown</span><kbd>Ctrl+Shift+C</kbd></button>
-      <button role="menuitem" @click="copyPreviewSelection('text')"><span><AppIcon name="duplicate" :size="14" />复制无格式文字</span><kbd>Ctrl+C</kbd></button>
-      <button role="menuitem" @click="copyPreviewSelection('html')"><span><AppIcon name="code" :size="14" />复制为 HTML 代码</span></button>
-      <button role="menuitem" @click="openPreviewSelectionInCodeImage"><span><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd>选区</kbd></button>
-      <button role="menuitem" @click="pinPreviewSelectionAsSnippet"><span><AppIcon name="star" :size="14" />固定为常用片段</span><kbd>本地</kbd></button>
-      <button class="separator" role="menuitem" @click="createNoteFromPreviewSelection"><span><AppIcon name="book" :size="14" />从选区创建笔记</span></button>
-      <button role="menuitem" @click="createQuestionFromPreviewSelection"><span><AppIcon name="review" :size="14" />从选区创建题目</span></button>
-      <button class="separator" role="menuitem" @click="openPreviewSelectionInAi('summarize')"><span><AppIcon name="sparkle" :size="14" />提炼选区要点</span><kbd>AI 草稿</kbd></button>
-      <button role="menuitem" @click="openPreviewSelectionInAi('rewrite')"><span><AppIcon name="sparkle" :size="14" />交给 AI 改写</span></button>
-    </div>
-    <div v-if="documentMenu" ref="documentMenuElement" class="document-context-menu" :style="{ left: `${documentMenu.x}px`, top: `${documentMenu.y}px` }" role="menu" @click.stop @keydown="handleDocumentMenuKeydown">
-      <p>{{ documentMenu.document.title }}</p>
-      <template v-if="documentMenu.document.id === selectedId && crashDraft"><button role="menuitem" @click="closeDocumentMenu(); restoreCrashDraft()">恢复异常退出草稿</button><button role="menuitem" @click="closeDocumentMenu(); discardCrashDraft()">放弃恢复点</button></template>
-      <button role="menuitem" @click="pick(documentMenu.document); closeDocumentMenu()">在此打开</button>
-      <button v-if="documentMenu.document.kind === 'question'" role="menuitem" @click="openQuestionStructureFromDocument(documentMenu.document)">编辑题目结构 <kbd>题干 / 答案 / 错因</kbd></button>
-      <button role="menuitem" @click="openDocumentSearch(documentMenu.document)">在文档中查找 <kbd>Ctrl+F</kbd></button>
-      <button role="menuitem" @click="openDocumentInFocus(documentMenu.document)">{{ focusMode && selectedId === documentMenu.document.id ? '退出专注阅读' : '专注阅读此文档' }}</button>
-      <button v-if="mode === 'split' && selectedId === documentMenu.document.id" role="menuitem" @click="toggleSplitScrollSync">{{ splitScrollSync ? '关闭分屏滚动联动' : '开启分屏滚动联动' }}</button>
-      <button role="menuitem" @click="copyDocumentWikiLink(documentMenu.document)">复制双链 [[{{ documentMenu.document.title }}]]</button>
-      <button role="menuitem" @click="copyWholeDocumentMarkdown(documentMenu.document)">复制整篇 Markdown</button>
-      <button role="menuitem" :disabled="Boolean(documentOutput)" @click="exportDocumentHtml(documentMenu.document)">导出可打印 HTML… <kbd>Ctrl+Shift+E</kbd></button>
-      <button role="menuitem" @click="openVersionHistory(documentMenu.document)">查看版本历史 <kbd>本地</kbd></button>
-      <button role="menuitem" @click="toggleDocumentFavorite(documentMenu.document)">{{ store.isContentFavorite(documentMenu.document.kind, documentMenu.document.id) ? '取消收藏' : '加入收藏' }}</button>
-      <button v-if="store.isContentRecent(documentMenu.document.kind, documentMenu.document.id)" role="menuitem" @click="removeDocumentFromRecents(documentMenu.document)">从最近使用移除</button>
-      <button role="menuitem" @click="duplicateDocument(documentMenu.document)">创建独立副本</button>
-      <button v-if="folderFilter && !isInsideFolder(documentMenu.document, folderFilter)" role="menuitem" @click="moveDocumentToFolder(documentMenu.document, folderFilter)">移至“{{ folderFilter }}”</button>
-      <button v-if="documentMenu.document.folder" role="menuitem" @click="moveDocumentToFolder(documentMenu.document)">移至收件箱</button>
-      <button role="menuitem" @click="saveAsMarkdown(documentMenu.document); closeDocumentMenu()">另存为并关联 Markdown…</button>
-      <button v-if="documentMenu.document.externalFile" role="menuitem" @click="reloadExternalMarkdown(documentMenu.document); closeDocumentMenu()">载入外部文件版本</button>
-      <button v-if="documentMenu.document.externalFile" role="menuitem" @click="unlinkExternalMarkdown(documentMenu.document); closeDocumentMenu()">断开外部文件关联</button>
-      <button class="danger" role="menuitem" @click="removeDocument(documentMenu.document); closeDocumentMenu()">删除文档</button>
-    </div>
-    <section v-if="questionStructureMenu && draft?.kind === 'question'" ref="questionStructureMenuElement" class="document-context-menu question-structure-context-menu" :style="{ left: `${questionStructureMenu.x}px`, top: `${questionStructureMenu.y}px` }" role="menu" aria-label="题目结构操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, questionStructureMenuElement, () => closeQuestionStructureMenu(true))">
-      <p>{{ draft.title }}<small>{{ currentQuestionStructure.completed }} / {{ currentQuestionStructure.total }} 已填写</small></p>
-      <button role="menuitem" @click="openQuestionStructure('stem')">编辑题干</button>
-      <button role="menuitem" @click="openQuestionStructure('source')">补充来源 / 出处</button>
-      <button v-if="currentQuestionSource.raw" role="menuitem" @click="copyCurrentQuestionSource">复制来源 / 出处</button>
-      <button v-if="currentQuestionSource.kind !== 'text'" role="menuitem" @click="openCurrentQuestionSource">{{ questionSourceActionLabel(currentQuestionSource) }}</button>
-      <button role="menuitem" @click="openQuestionStructure('answer')">编辑答案与解析</button>
-      <button role="menuitem" @click="openQuestionStructure('wrongAnswer')">记录错误做法与错因</button>
-      <button role="menuitem" @click="toggleCurrentQuestionReview('answer')">{{ questionReviewFacetEnabled(draft, 'answer') ? '关闭答案回忆卡' : '启用答案回忆卡' }}</button>
-      <button role="menuitem" @click="toggleCurrentQuestionReview('error')">{{ questionReviewFacetEnabled(draft, 'error') ? '关闭错因复盘卡' : '启用错因复盘卡' }}</button>
-      <button role="menuitem" :disabled="!questionReviewCards(draft).length" @click="openCurrentQuestionReview">去复习当前题型</button>
-    </section>
-    <div v-if="documentVersionMenu" ref="documentVersionMenuElement" class="document-context-menu document-version-context-menu" :style="{ left: `${documentVersionMenu.x}px`, top: `${documentVersionMenu.y}px` }" role="menu" aria-label="文档版本操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, documentVersionMenuElement, () => closeDocumentVersionMenu(true))">
-      <p>{{ formatDocumentVersionTime(documentVersionMenu.version.savedAt) }}<small>{{ formatDocumentVersionSize(documentVersionMenu.version.byteSize) }}</small></p>
-      <button v-if="!documentVersionMenu.version.isCurrent" role="menuitem" @click="restoreDocumentVersion(documentVersionMenu.version)">载入为未保存草稿</button>
-      <button role="menuitem" @click="copyDocumentVersion(documentVersionMenu.version)">复制这个版本的 Markdown</button>
-    </div>
-    <div v-if="editorContextMenu" ref="editorContextMenuElement" class="markdown-editor-context-menu markdown-editor-context-menu--typora" :class="{ 'submenus-left': editorContextMenu.submenusLeft }" :style="{ left: `${editorContextMenu.x}px`, top: `${editorContextMenu.y}px` }" role="menu" aria-label="Markdown 编辑操作" @click.stop @contextmenu.prevent @keydown.stop="handleEditorContextMenuKeydown">
-      <header class="markdown-menu-context" aria-hidden="true">
-        <b><AppIcon :name="editorContextIcon(editorContextMenu.context)" :size="14" /></b>
-        <span><strong>{{ editorContextMenu.context.label }}</strong><small :title="editorContextMenu.context.detail">{{ editorContextMenu.context.detail }}</small></span>
-        <kbd>L{{ editorContextMenu.context.line }}</kbd>
-      </header>
-      <div class="markdown-menu-icon-grid markdown-menu-icon-grid--clipboard" role="group" aria-label="剪贴板快捷操作">
-        <button role="menuitem" :disabled="!editorContextMenu.hasSelection" title="剪切" aria-label="剪切选中文字" @click="runEditorClipboard('cut')"><AppIcon name="cut" :size="16" /></button>
-        <button role="menuitem" :disabled="!editorContextMenu.hasSelection" title="复制" aria-label="复制选中文字" @click="runEditorClipboard('copy')"><AppIcon name="duplicate" :size="16" /></button>
-        <button role="menuitem" title="粘贴并保留 Markdown 格式" aria-label="粘贴并保留 Markdown 格式" @click="runEditorClipboard('paste-rich')"><AppIcon name="clipboard" :size="16" /></button>
-        <button role="menuitem" :disabled="!editorContextMenu.hasSelection" title="删除" aria-label="删除选中文字" @click="deleteEditorSelection"><AppIcon name="trash" :size="16" /></button>
+    <!-- ── Context menus ───────────────────────────────────────────────────
+         Fifteen of them, and they had grown four class names — `.document-
+         context-menu`, `.relation-context-menu`, `.wiki-context-menu`,
+         `.note-starter-menu` — with four paddings, four radii and three hover
+         colours. They now share the `menu-panel` / `menu-title` / `menu-item`
+         shortcuts.
+
+         All teleported: the workspace clips its own overflow and the page
+         root animates on entry, either of which can trap a fixed element. -->
+    <Teleport to="body">
+      <div
+        v-if="noteStarterMenu"
+        ref="noteStarterMenuElement"
+        class="menu-panel w-72"
+        role="menu"
+        aria-label="新建学习笔记模板"
+        :style="{ left: `${noteStarterMenu.x}px`, top: `${noteStarterMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, noteStarterMenuElement, () => closeNoteStarterMenu(true))"
+      >
+        <p class="menu-title">从模板开始<small class="font-normal">普通 Markdown · 可随时删改</small></p>
+        <button v-for="template in noteStarterTemplates" :key="template.id" class="menu-item" role="menuitem" @click="createNoteFromTemplate(template)">
+          <span class="stack gap-0.5 min-w-0">
+            <b class="font-medium">{{ template.label }}</b>
+            <small class="text-[11px] text-fg-3">{{ template.description }}</small>
+          </span>
+          <i class="shrink-0 not-italic text-[11px] text-fg-3">{{ template.subject }}</i>
+        </button>
       </div>
-      <button v-if="editorContextMenu.context.kind === 'wiki-link'" class="markdown-menu-row markdown-menu-context-action" role="menuitem" @click="openEditorContextWikiMenu"><span><AppIcon name="book" :size="14" />打开或创建这条双链</span><kbd>[[…]]</kbd></button>
-      <button v-else-if="editorContextMenu.context.target" class="markdown-menu-row markdown-menu-context-action" role="menuitem" @click="copyEditorContextTarget"><span><AppIcon name="duplicate" :size="14" />复制{{ editorContextMenu.context.kind === 'image' ? '图片路径' : '链接地址' }}</span><kbd>当前项</kbd></button>
-      <button v-else-if="editorContextMenu.context.kind === 'inline-code'" class="markdown-menu-row markdown-menu-context-action" role="menuitem" @click="openEditorContextCodeImage"><span><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd>行内</kbd></button>
-      <button v-else-if="editorContextMenu.context.kind === 'heading'" class="markdown-menu-row markdown-menu-context-action" role="menuitem" @click="copyEditorContextHeadingLink"><span><AppIcon name="link" :size="14" />复制当前段落双链</span><kbd>[[#]]</kbd></button>
-      <div class="markdown-menu-branch" data-editor-submenu="clipboard" :class="{ open: editorContextSubmenu === 'clipboard' }" @mouseenter="setEditorContextSubmenu('clipboard')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-clipboard" :aria-expanded="editorContextSubmenu === 'clipboard'" @click="openEditorContextSubmenu('clipboard')"><span>复制 / 粘贴…</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-clipboard" class="markdown-menu-submenu" role="menu" aria-label="复制和粘贴选项">
-          <button role="menuitem" @click="runEditorHistory('undo')"><span>撤销</span><kbd>Ctrl+Z</kbd></button>
-          <button role="menuitem" @click="runEditorHistory('redo')"><span>重做</span><kbd>Ctrl+Y</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('markdown')"><span>复制为 Markdown</span><kbd>Ctrl+Shift+C</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('html')"><span>复制为 HTML 代码</span></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('plain')"><span>复制内容并简化格式</span></button>
-          <button class="separator" role="menuitem" @click="runEditorClipboard('paste-rich')"><span>粘贴并保留 Markdown 格式</span><kbd>Ctrl+V</kbd></button>
-          <button role="menuitem" @click="runEditorClipboard('paste')"><span>粘贴为纯文本</span><kbd>Ctrl+Shift+V</kbd></button>
-          <button role="menuitem" :disabled="imagePasteState === 'saving'" @click="pasteClipboardImage"><span>粘贴剪贴板图片</span><kbd>本地</kbd></button>
-          <button class="separator" role="menuitem" @click="runEditorHistory('select-all')"><span>全选当前文档</span><kbd>Ctrl+A</kbd></button>
-        </section>
+
+      <div
+        v-if="previewSelectionMenu"
+        ref="previewSelectionMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="阅读选区操作"
+        :style="{ left: `${previewSelectionMenu.x}px`, top: `${previewSelectionMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, previewSelectionMenuElement, () => closePreviewSelectionMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate font-normal text-fg-2">{{ previewSelectionSummary(previewSelectionMenu.text) }}</span>
+          <small class="shrink-0 font-normal tabular-nums">{{ previewSelectionMenu.text.length.toLocaleString('zh-CN') }} 字</small>
+        </p>
+        <button class="menu-item" role="menuitem" @click="copyPreviewSelection('markdown')"><span class="row gap-2"><AppIcon name="file-text" :size="14" />复制为 Markdown</span><kbd class="kbd">Ctrl+Shift+C</kbd></button>
+        <button class="menu-item" role="menuitem" @click="copyPreviewSelection('text')"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制无格式文字</span><kbd class="kbd">Ctrl+C</kbd></button>
+        <button class="menu-item" role="menuitem" @click="copyPreviewSelection('html')"><span class="row gap-2"><AppIcon name="code" :size="14" />复制为 HTML 代码</span></button>
+        <button class="menu-item" role="menuitem" @click="openPreviewSelectionInCodeImage"><span class="row gap-2"><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd class="kbd">选区</kbd></button>
+        <button class="menu-item" role="menuitem" @click="pinPreviewSelectionAsSnippet"><span class="row gap-2"><AppIcon name="star" :size="14" />固定为常用片段</span><kbd class="kbd">本地</kbd></button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="createNoteFromPreviewSelection"><span class="row gap-2"><AppIcon name="book" :size="14" />从选区创建笔记</span></button>
+        <button class="menu-item" role="menuitem" @click="createQuestionFromPreviewSelection"><span class="row gap-2"><AppIcon name="review" :size="14" />从选区创建题目</span></button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="openPreviewSelectionInAi('summarize')"><span class="row gap-2"><AppIcon name="sparkle" :size="14" />提炼选区要点</span><kbd class="kbd">AI 草稿</kbd></button>
+        <button class="menu-item" role="menuitem" @click="openPreviewSelectionInAi('rewrite')"><span class="row gap-2"><AppIcon name="sparkle" :size="14" />交给 AI 改写</span></button>
       </div>
-      <div class="markdown-menu-icon-grid markdown-menu-icon-grid--format" role="group" aria-label="高频 Markdown 格式">
-        <button role="menuitem" title="粗体 · Ctrl+B" aria-label="切换粗体" @click="applyEditorCommand('bold')"><AppIcon name="bold" :size="15" /></button>
-        <button role="menuitem" title="斜体 · Ctrl+I" aria-label="切换斜体" @click="applyEditorCommand('italic')"><AppIcon name="italic" :size="15" /></button>
-        <button role="menuitem" title="行内代码 · Ctrl+E" aria-label="切换行内代码" @click="applyEditorCommand('inline-code')"><AppIcon name="inline-code" :size="15" /></button>
-        <button role="menuitem" title="链接 · Ctrl+Shift+L" aria-label="插入链接" @click="applyEditorCommand('link')"><AppIcon name="link" :size="15" /></button>
-        <button role="menuitem" title="引用" aria-label="切换引用" @click="applyEditorCommand('quote')"><AppIcon name="quote" :size="15" /></button>
-        <button role="menuitem" title="有序列表" aria-label="切换有序列表" @click="applyEditorCommand('numbered-list')"><AppIcon name="sort" :size="15" /></button>
-        <button role="menuitem" title="无序列表" aria-label="切换无序列表" @click="applyEditorCommand('bullet-list')"><AppIcon name="list" :size="15" /></button>
-        <button role="menuitem" title="任务列表" aria-label="切换任务列表" @click="applyEditorCommand('task-list')"><AppIcon name="task" :size="15" /></button>
+
+      <div
+        v-if="documentMenu"
+        ref="documentMenuElement"
+        class="menu-panel w-68 max-h-[calc(100vh-24px)] overflow-y-auto"
+        role="menu"
+        :style="{ left: `${documentMenu.x}px`, top: `${documentMenu.y}px` }"
+        @click.stop
+        @keydown="handleDocumentMenuKeydown"
+      >
+        <p class="menu-title"><span class="min-w-0 truncate">{{ documentMenu.document.title }}</span></p>
+        <template v-if="documentMenu.document.id === selectedId && crashDraft">
+          <button class="menu-item" role="menuitem" @click="closeDocumentMenu(); restoreCrashDraft()">恢复异常退出草稿</button>
+          <button class="menu-item" role="menuitem" @click="closeDocumentMenu(); discardCrashDraft()">放弃恢复点</button>
+          <i class="menu-sep" aria-hidden="true" />
+        </template>
+        <button class="menu-item" role="menuitem" @click="pick(documentMenu.document); closeDocumentMenu()">在此打开</button>
+        <button v-if="documentMenu.document.kind === 'question'" class="menu-item" role="menuitem" @click="openQuestionStructureFromDocument(documentMenu.document)">
+          编辑题目结构<kbd class="kbd">题干 / 答案 / 错因</kbd>
+        </button>
+        <button class="menu-item" role="menuitem" @click="openDocumentSearch(documentMenu.document)">在文档中查找<kbd class="kbd">Ctrl+F</kbd></button>
+        <button class="menu-item" role="menuitem" @click="openDocumentInFocus(documentMenu.document)">{{ focusMode && selectedId === documentMenu.document.id ? '退出专注阅读' : '专注阅读此文档' }}</button>
+        <button v-if="mode === 'split' && selectedId === documentMenu.document.id" class="menu-item" role="menuitem" @click="toggleSplitScrollSync">{{ splitScrollSync ? '关闭分屏滚动联动' : '开启分屏滚动联动' }}</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="copyDocumentWikiLink(documentMenu.document)"><span class="min-w-0 truncate">复制双链 [[{{ documentMenu.document.title }}]]</span></button>
+        <button class="menu-item" role="menuitem" @click="copyWholeDocumentMarkdown(documentMenu.document)">复制整篇 Markdown</button>
+        <button class="menu-item" role="menuitem" :disabled="Boolean(documentOutput)" @click="exportDocumentHtml(documentMenu.document)">导出可打印 HTML…<kbd class="kbd">Ctrl+Shift+E</kbd></button>
+        <button class="menu-item" role="menuitem" @click="openVersionHistory(documentMenu.document)">查看版本历史<kbd class="kbd">本地</kbd></button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="toggleDocumentFavorite(documentMenu.document)">{{ store.isContentFavorite(documentMenu.document.kind, documentMenu.document.id) ? '取消收藏' : '加入收藏' }}</button>
+        <button v-if="store.isContentRecent(documentMenu.document.kind, documentMenu.document.id)" class="menu-item" role="menuitem" @click="removeDocumentFromRecents(documentMenu.document)">从最近使用移除</button>
+        <button class="menu-item" role="menuitem" @click="duplicateDocument(documentMenu.document)">创建独立副本</button>
+        <button v-if="folderFilter && !isInsideFolder(documentMenu.document, folderFilter)" class="menu-item" role="menuitem" @click="moveDocumentToFolder(documentMenu.document, folderFilter)">
+          <span class="min-w-0 truncate">移至“{{ folderFilter }}”</span>
+        </button>
+        <button v-if="documentMenu.document.folder" class="menu-item" role="menuitem" @click="moveDocumentToFolder(documentMenu.document)">移至收件箱</button>
+        <button class="menu-item" role="menuitem" @click="saveAsMarkdown(documentMenu.document); closeDocumentMenu()">另存为并关联 Markdown…</button>
+        <button v-if="documentMenu.document.externalFile" class="menu-item" role="menuitem" @click="reloadExternalMarkdown(documentMenu.document); closeDocumentMenu()">载入外部文件版本</button>
+        <button v-if="documentMenu.document.externalFile" class="menu-item" role="menuitem" @click="unlinkExternalMarkdown(documentMenu.document); closeDocumentMenu()">断开外部文件关联</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item menu-item-danger" role="menuitem" @click="removeDocument(documentMenu.document); closeDocumentMenu()">删除文档</button>
       </div>
-      <div class="markdown-menu-branch markdown-menu-branch--code separator" data-editor-submenu="code" :class="{ open: editorContextSubmenu === 'code' }" @mouseenter="setEditorContextSubmenu('code')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-code" :aria-expanded="editorContextSubmenu === 'code'" @click="openEditorContextSubmenu('code')"><span>代码块</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-code" class="markdown-menu-submenu" role="menu" aria-label="代码块语言">
-          <template v-if="editorContextMenu.context.kind === 'code'">
-            <button role="menuitem" @click="copyEditorContextCode"><span><AppIcon name="duplicate" :size="14" />复制当前代码块</span><kbd>{{ editorContextMenu.context.language || '纯文本' }}</kbd></button>
-            <button class="separator" role="menuitem" :disabled="!editorContextMenu.context.text" @click="openEditorContextCodeImage"><span><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd>当前块</kbd></button>
+
+      <section
+        v-if="questionStructureMenu && draft?.kind === 'question'"
+        ref="questionStructureMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="题目结构操作"
+        :style="{ left: `${questionStructureMenu.x}px`, top: `${questionStructureMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, questionStructureMenuElement, () => closeQuestionStructureMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ draft.title }}</span>
+          <small class="shrink-0 font-normal tabular-nums">{{ currentQuestionStructure.completed }} / {{ currentQuestionStructure.total }}</small>
+        </p>
+        <button class="menu-item" role="menuitem" @click="openQuestionStructure('stem')">编辑题干</button>
+        <button class="menu-item" role="menuitem" @click="openQuestionStructure('source')">补充来源 / 出处</button>
+        <button v-if="currentQuestionSource.raw" class="menu-item" role="menuitem" @click="copyCurrentQuestionSource">复制来源 / 出处</button>
+        <button v-if="currentQuestionSource.kind !== 'text'" class="menu-item" role="menuitem" @click="openCurrentQuestionSource">{{ questionSourceActionLabel(currentQuestionSource) }}</button>
+        <button class="menu-item" role="menuitem" @click="openQuestionStructure('answer')">编辑答案与解析</button>
+        <button class="menu-item" role="menuitem" @click="openQuestionStructure('wrongAnswer')">记录错误做法与错因</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="toggleCurrentQuestionReview('answer')">{{ questionReviewFacetEnabled(draft, 'answer') ? '关闭答案回忆卡' : '启用答案回忆卡' }}</button>
+        <button class="menu-item" role="menuitem" @click="toggleCurrentQuestionReview('error')">{{ questionReviewFacetEnabled(draft, 'error') ? '关闭错因复盘卡' : '启用错因复盘卡' }}</button>
+        <button class="menu-item" role="menuitem" :disabled="!questionReviewCards(draft).length" @click="openCurrentQuestionReview">去复习当前题型</button>
+      </section>
+
+      <div
+        v-if="documentVersionMenu"
+        ref="documentVersionMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="文档版本操作"
+        :style="{ left: `${documentVersionMenu.x}px`, top: `${documentVersionMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, documentVersionMenuElement, () => closeDocumentVersionMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ formatDocumentVersionTime(documentVersionMenu.version.savedAt) }}</span>
+          <small class="shrink-0 font-normal tabular-nums">{{ formatDocumentVersionSize(documentVersionMenu.version.byteSize) }}</small>
+        </p>
+        <button v-if="!documentVersionMenu.version.isCurrent" class="menu-item" role="menuitem" @click="restoreDocumentVersion(documentVersionMenu.version)">载入为未保存草稿</button>
+        <button class="menu-item" role="menuitem" @click="copyDocumentVersion(documentVersionMenu.version)">复制这个版本的 Markdown</button>
+      </div>
+
+      <!-- The editor menu keeps `markdown-menu-*` on its structural parts:
+           the roving-focus keyboard handler queries them by class, and the
+           flyouts need real CSS (a scoped block below) rather than utilities. -->
+      <div
+        v-if="editorContextMenu"
+        ref="editorContextMenuElement"
+        class="markdown-editor-context-menu menu-panel w-60 overflow-visible! py-1.5"
+        :class="{ 'submenus-left': editorContextMenu.submenusLeft }"
+        :style="{ left: `${editorContextMenu.x}px`, top: `${editorContextMenu.y}px` }"
+        role="menu"
+        aria-label="Markdown 编辑操作"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleEditorContextMenuKeydown"
+      >
+        <header class="row gap-2 px-3 pb-2 mb-1 border-b border-line" aria-hidden="true">
+          <b class="center w-6 h-6 shrink-0 rounded-sm bg-surface-2 text-fg-2"><AppIcon :name="editorContextIcon(editorContextMenu.context)" :size="13" /></b>
+          <span class="stack gap-0.5 min-w-0 flex-1">
+            <strong class="text-[12px] font-medium truncate text-fg">{{ editorContextMenu.context.label }}</strong>
+            <small class="text-[11px] truncate text-fg-3" :title="editorContextMenu.context.detail">{{ editorContextMenu.context.detail }}</small>
+          </span>
+          <kbd class="kbd shrink-0">L{{ editorContextMenu.context.line }}</kbd>
+        </header>
+
+        <div class="markdown-menu-icon-grid grid grid-cols-4 gap-1 px-2 pb-2 border-b border-line" role="group" aria-label="剪贴板快捷操作">
+          <button class="center h-8 rounded-sm border border-line text-fg-2 transition-colors duration-120 hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft hover:not-disabled:text-accent disabled:opacity-40 disabled:cursor-not-allowed" role="menuitem" :disabled="!editorContextMenu.hasSelection" title="剪切" aria-label="剪切选中文字" @click="runEditorClipboard('cut')"><AppIcon name="cut" :size="15" /></button>
+          <button class="center h-8 rounded-sm border border-line text-fg-2 transition-colors duration-120 hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft hover:not-disabled:text-accent disabled:opacity-40 disabled:cursor-not-allowed" role="menuitem" :disabled="!editorContextMenu.hasSelection" title="复制" aria-label="复制选中文字" @click="runEditorClipboard('copy')"><AppIcon name="duplicate" :size="15" /></button>
+          <button class="center h-8 rounded-sm border border-line text-fg-2 transition-colors duration-120 hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft hover:not-disabled:text-accent disabled:opacity-40 disabled:cursor-not-allowed" role="menuitem" title="粘贴并保留 Markdown 格式" aria-label="粘贴并保留 Markdown 格式" @click="runEditorClipboard('paste-rich')"><AppIcon name="clipboard" :size="15" /></button>
+          <button class="center h-8 rounded-sm border border-line text-fg-2 transition-colors duration-120 hover:not-disabled:border-danger hover:not-disabled:bg-danger-soft hover:not-disabled:text-danger disabled:opacity-40 disabled:cursor-not-allowed" role="menuitem" :disabled="!editorContextMenu.hasSelection" title="删除" aria-label="删除选中文字" @click="deleteEditorSelection"><AppIcon name="trash" :size="15" /></button>
+        </div>
+
+        <button v-if="editorContextMenu.context.kind === 'wiki-link'" class="markdown-menu-row markdown-menu-context-action menu-item" role="menuitem" @click="openEditorContextWikiMenu"><span class="row gap-2"><AppIcon name="book" :size="14" />打开或创建这条双链</span><kbd class="kbd">[[…]]</kbd></button>
+        <button v-else-if="editorContextMenu.context.target" class="markdown-menu-row markdown-menu-context-action menu-item" role="menuitem" @click="copyEditorContextTarget"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制{{ editorContextMenu.context.kind === 'image' ? '图片路径' : '链接地址' }}</span><kbd class="kbd">当前项</kbd></button>
+        <button v-else-if="editorContextMenu.context.kind === 'inline-code'" class="markdown-menu-row markdown-menu-context-action menu-item" role="menuitem" @click="openEditorContextCodeImage"><span class="row gap-2"><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd class="kbd">行内</kbd></button>
+        <button v-else-if="editorContextMenu.context.kind === 'heading'" class="markdown-menu-row markdown-menu-context-action menu-item" role="menuitem" @click="copyEditorContextHeadingLink"><span class="row gap-2"><AppIcon name="link" :size="14" />复制当前段落双链</span><kbd class="kbd">[[#]]</kbd></button>
+
+        <div class="markdown-menu-branch" data-editor-submenu="clipboard" :class="{ open: editorContextSubmenu === 'clipboard' }" @mouseenter="setEditorContextSubmenu('clipboard')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-clipboard" :aria-expanded="editorContextSubmenu === 'clipboard'" @click="openEditorContextSubmenu('clipboard')"><span>复制 / 粘贴…</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-clipboard" class="markdown-menu-submenu" role="menu" aria-label="复制和粘贴选项">
+            <button class="menu-item" role="menuitem" @click="runEditorHistory('undo')"><span>撤销</span><kbd class="kbd">Ctrl+Z</kbd></button>
+            <button class="menu-item" role="menuitem" @click="runEditorHistory('redo')"><span>重做</span><kbd class="kbd">Ctrl+Y</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('markdown')"><span>复制为 Markdown</span><kbd class="kbd">Ctrl+Shift+C</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('html')"><span>复制为 HTML 代码</span></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="copyEditorFormat('plain')"><span>复制内容并简化格式</span></button>
+            <i class="menu-sep" aria-hidden="true" />
+            <button class="menu-item" role="menuitem" @click="runEditorClipboard('paste-rich')"><span>粘贴并保留 Markdown 格式</span><kbd class="kbd">Ctrl+V</kbd></button>
+            <button class="menu-item" role="menuitem" @click="runEditorClipboard('paste')"><span>粘贴为纯文本</span><kbd class="kbd">Ctrl+Shift+V</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="imagePasteState === 'saving'" @click="pasteClipboardImage"><span>粘贴剪贴板图片</span><kbd class="kbd">本地</kbd></button>
+            <i class="menu-sep" aria-hidden="true" />
+            <button class="menu-item" role="menuitem" @click="runEditorHistory('select-all')"><span>全选当前文档</span><kbd class="kbd">Ctrl+A</kbd></button>
+          </section>
+        </div>
+
+        <div class="markdown-menu-icon-grid grid grid-cols-4 gap-1 px-2 py-2 border-y border-line" role="group" aria-label="高频 Markdown 格式">
+          <button v-for="quick in editorQuickFormats" :key="quick.command" class="center h-8 rounded-sm border border-line text-fg-2 transition-colors duration-120 hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft hover:not-disabled:text-accent" role="menuitem" :title="quick.title" :aria-label="quick.aria" @click="applyEditorCommand(quick.command)">
+            <AppIcon :name="quick.icon" :size="15" />
+          </button>
+        </div>
+
+        <div class="markdown-menu-branch markdown-menu-branch--code" data-editor-submenu="code" :class="{ open: editorContextSubmenu === 'code' }" @mouseenter="setEditorContextSubmenu('code')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-code" :aria-expanded="editorContextSubmenu === 'code'" @click="openEditorContextSubmenu('code')"><span>代码块</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-code" class="markdown-menu-submenu" role="menu" aria-label="代码块语言">
+            <template v-if="editorContextMenu.context.kind === 'code'">
+              <button class="menu-item" role="menuitem" @click="copyEditorContextCode"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制当前代码块</span><kbd class="kbd">{{ editorContextMenu.context.language || '纯文本' }}</kbd></button>
+              <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.context.text" @click="openEditorContextCodeImage"><span class="row gap-2"><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd class="kbd">当前块</kbd></button>
+              <i class="menu-sep" aria-hidden="true" />
+            </template>
+            <button v-for="language in codeBlockLanguages" :key="language.value || 'plain'" class="menu-item" role="menuitem" @click="insertEditorCodeBlock(language.value)">
+              <span>{{ language.label }}</span><code v-if="language.value" class="shrink-0 font-mono text-[11px] text-fg-3">{{ language.value }}</code>
+            </button>
+          </section>
+        </div>
+
+        <div class="markdown-menu-branch markdown-menu-branch--insert" data-editor-submenu="insert" :class="{ open: editorContextSubmenu === 'insert' }" @mouseenter="setEditorContextSubmenu('insert')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-insert" :aria-expanded="editorContextSubmenu === 'insert'" @click="openEditorContextSubmenu('insert')"><span>插入</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-insert" class="markdown-menu-submenu" role="menu" aria-label="Markdown 插入项">
+            <button class="menu-item" role="menuitem" :disabled="imagePasteState === 'saving'" @click="importLocalMarkdownImages"><span class="row gap-2"><AppIcon name="file-image" :size="14" />本地图片…</span><kbd class="kbd">最多 12 张</kbd></button>
+            <button class="menu-item" role="menuitem" @click="pasteClipboardImage"><span class="row gap-2"><AppIcon name="file-image" :size="14" />剪贴板图片</span><kbd class="kbd">本地</kbd></button>
+            <button class="menu-item" role="menuitem" @click="applyEditorCommand('link')"><span class="row gap-2"><AppIcon name="link" :size="14" />链接</span></button>
+            <button class="menu-item" role="menuitem" @click="openMarkdownInsert('table')"><span class="row gap-2"><AppIcon name="table" :size="14" />表格…</span><kbd class="kbd">配置尺寸</kbd></button>
+            <button class="menu-item" role="menuitem" @click="insertEditorSnippet('\n\n---\n\n')"><span class="row gap-2"><AppIcon name="rule" :size="14" />分隔线</span></button>
+            <button class="menu-item" role="menuitem" @click="openMarkdownInsert('formula')"><span class="row gap-2"><AppIcon name="math" :size="14" />公式…</span><kbd class="kbd">即时预览</kbd></button>
+            <button class="menu-item" role="menuitem" @click="insertEditorSnippet('[[笔记标题]]')"><span class="row gap-2"><AppIcon name="book" :size="14" />笔记双链</span></button>
+          </section>
+        </div>
+
+        <div class="markdown-menu-branch markdown-menu-branch--tools" data-editor-submenu="tools" :class="{ open: editorContextSubmenu === 'tools' }" @mouseenter="setEditorContextSubmenu('tools')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-tools" :aria-expanded="editorContextSubmenu === 'tools'" @click="openEditorContextSubmenu('tools')"><span>常用工具</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-tools" class="markdown-menu-submenu" role="menu" aria-label="选区常用工具">
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInCodeImage"><span class="row gap-2"><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd class="kbd">仅选区</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInAi('rewrite')"><span class="row gap-2"><AppIcon name="sparkle" :size="14" />交给 AI 改写</span><kbd class="kbd">需确认配置</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="pinSelectionAsSnippet"><span class="row gap-2"><AppIcon name="star" :size="14" />固定为常用片段</span><kbd class="kbd">本地</kbd></button>
+          </section>
+        </div>
+
+        <div class="markdown-menu-branch markdown-menu-branch--study" data-editor-submenu="study" :class="{ open: editorContextSubmenu === 'study' }" @mouseenter="setEditorContextSubmenu('study')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-study" :aria-expanded="editorContextSubmenu === 'study'" @click="openEditorContextSubmenu('study')"><span>学习工具</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-study" class="markdown-menu-submenu" role="menu" aria-label="选区学习工具">
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="createNoteFromSelection"><span class="row gap-2"><AppIcon name="book" :size="14" />从选区创建笔记</span><kbd class="kbd">本地</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="createQuestionFromSelection"><span class="row gap-2"><AppIcon name="review" :size="14" />从选区创建题目</span><kbd class="kbd">进入错题库</kbd></button>
+            <button class="menu-item" role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInAi('summarize')"><span class="row gap-2"><AppIcon name="sparkle" :size="14" />提炼选区要点</span><kbd class="kbd">AI 草稿</kbd></button>
+          </section>
+        </div>
+
+        <div class="markdown-menu-branch markdown-menu-branch--document" data-editor-submenu="document" :class="{ open: editorContextSubmenu === 'document' }" @mouseenter="setEditorContextSubmenu('document')" @mouseleave="leaveEditorContextSubmenu">
+          <button class="markdown-menu-row menu-item" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-document" :aria-expanded="editorContextSubmenu === 'document'" @click="openEditorContextSubmenu('document')"><span>文档操作</span><AppIcon name="arrow-right" :size="14" /></button>
+          <section id="markdown-editor-menu-document" class="markdown-menu-submenu" role="menu" aria-label="文档操作">
+            <template v-if="crashDraft">
+              <button class="menu-item" role="menuitem" @click="closeEditorContextMenu(); restoreCrashDraft()"><span>恢复异常退出草稿</span><kbd class="kbd">本地</kbd></button>
+              <button class="menu-item" role="menuitem" @click="closeEditorContextMenu(); discardCrashDraft()"><span>放弃恢复点</span></button>
+              <i class="menu-sep" aria-hidden="true" />
+            </template>
+            <button class="menu-item" role="menuitem" @click="openDocumentSearch()"><span>在当前文档中查找</span><kbd class="kbd">Ctrl+F</kbd></button>
+            <button class="menu-item" role="menuitem" @click="copyCurrentDocumentWikiLink"><span>复制当前文档双链</span></button>
+            <button class="menu-item" role="menuitem" @click="copyWholeDocumentMarkdown()"><span>复制整篇 Markdown</span></button>
+            <button class="menu-item" role="menuitem" :disabled="Boolean(documentOutput)" @click="exportDocumentHtml()"><span>导出可打印 HTML…</span><kbd class="kbd">Ctrl+Shift+E</kbd></button>
+            <button class="menu-item" role="menuitem" @click="openVersionHistory()"><span>查看版本历史</span><kbd class="kbd">本地</kbd></button>
+            <button class="menu-item" role="menuitem" @click="openSplitFromEditorMenu"><span>切换为分屏编辑</span><kbd class="kbd">Alt+2</kbd></button>
+            <button class="menu-item" role="menuitem" @click="openFocusFromEditorMenu"><span>{{ focusMode ? '退出专注阅读' : '进入专注阅读' }}</span><kbd class="kbd">Ctrl+Shift+F</kbd></button>
+          </section>
+        </div>
+      </div>
+
+      <div
+        v-if="externalFileMenu && draft?.externalFile"
+        ref="externalFileMenuElement"
+        class="menu-panel w-68"
+        role="menu"
+        aria-label="外部 Markdown 文件操作"
+        :style="{ left: `${externalFileMenu.x}px`, top: `${externalFileMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, externalFileMenuElement, () => closeExternalFileMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ draft.externalFile.name }}</span>
+          <small class="shrink-0 font-normal">{{ externalFileWatchMode === 'native' ? '本机实时监听' : externalFileWatchMode === 'poll' ? '低频检查' : '外部 Markdown' }}</small>
+        </p>
+        <button v-if="externalFileChanged" class="menu-item" role="menuitem" @click="openExternalConflictReview(draft)"><span class="row gap-2"><AppIcon name="diff" :size="14" />比较并处理版本</span><kbd class="kbd">推荐</kbd></button>
+        <button class="menu-item" role="menuitem" @click="recheckExternalMarkdown"><span class="row gap-2"><AppIcon name="refresh" :size="14" />立即检查磁盘变化</span></button>
+        <button class="menu-item" role="menuitem" @click="revealExternalMarkdown"><span class="row gap-2"><AppIcon name="folder" :size="14" />在资源管理器中显示</span></button>
+        <button class="menu-item" role="menuitem" @click="copyExternalMarkdownPath"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制完整路径</span></button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="closeExternalFileMenu(); saveAsMarkdown(draft)"><span class="row gap-2"><AppIcon name="download" :size="14" />另存为并重新关联…</span></button>
+        <button class="menu-item" role="menuitem" @click="closeExternalFileMenu(); unlinkExternalMarkdown(draft)"><span class="row gap-2"><AppIcon name="link" :size="14" />断开文件关联</span></button>
+      </div>
+
+      <div
+        v-if="managedVaultMenu && managedVaultAlert && draft"
+        ref="managedVaultMenuElement"
+        class="menu-panel w-68"
+        role="menu"
+        aria-label="Vault Markdown 变化操作"
+        :style="{ left: `${managedVaultMenu.x}px`, top: `${managedVaultMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, managedVaultMenuElement, () => closeManagedVaultMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ draft.title }}</span>
+          <small class="shrink-0 font-normal" :class="managedVaultAlert.status === 'missing' ? 'text-danger' : 'text-warn'">
+            {{ managedVaultAlert.status === 'missing' ? 'Vault 文件缺失' : '检测到磁盘修改' }}
+          </small>
+        </p>
+        <button v-if="managedVaultAlert.status === 'pending'" class="menu-item" role="menuitem" @click="openManagedVaultConflict"><span class="row gap-2"><AppIcon name="diff" :size="14" />比较并处理版本</span><kbd class="kbd">推荐</kbd></button>
+        <button v-else class="menu-item" role="menuitem" @click="recreateManagedVaultMarkdown"><span class="row gap-2"><AppIcon name="refresh" :size="14" />用当前版本重新创建</span></button>
+        <button class="menu-item" role="menuitem" @click="openManagedVaultVersionHistory"><span class="row gap-2"><AppIcon name="clock" :size="14" />查看版本历史</span></button>
+        <button class="menu-item" role="menuitem" @click="copyManagedVaultDocumentId"><span class="row gap-2"><AppIcon name="duplicate" :size="14" />复制文档 ID</span></button>
+      </div>
+
+      <div
+        v-if="frontmatterMenu && frontmatter"
+        ref="frontmatterMenuElement"
+        class="menu-panel w-60"
+        role="menu"
+        aria-label="文档属性操作"
+        :style="{ left: `${frontmatterMenu.x}px`, top: `${frontmatterMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, frontmatterMenuElement, () => closeFrontmatterMenu(true))"
+      >
+        <p class="menu-title">
+          文档属性
+          <small class="shrink-0 font-normal">{{ frontmatter.error ? 'YAML 需要检查' : `${frontmatter.entries.length}${frontmatter.truncated ? '+' : ''} 项` }}</small>
+        </p>
+        <button class="menu-item" role="menuitem" @click="copyFrontmatter('yaml')">复制 YAML 原文</button>
+        <button class="menu-item" role="menuitem" :disabled="!frontmatter.json" @click="copyFrontmatter('json')">复制为 JSON</button>
+        <button class="menu-item" role="menuitem" @click="editFrontmatterSource">在源码中编辑</button>
+        <button class="menu-item" role="menuitem" @click="toggleFrontmatterExpanded">{{ frontmatterExpanded ? '收起属性' : '展开全部属性' }}</button>
+      </div>
+
+      <div
+        v-if="relationMenu"
+        ref="relationMenuElement"
+        class="menu-panel w-56"
+        role="menu"
+        aria-label="关联知识操作"
+        :style="{ left: `${relationMenu.x}px`, top: `${relationMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, relationMenuElement, () => closeRelationMenu(true))"
+      >
+        <p class="menu-title"><span class="min-w-0 truncate">{{ relationMenu.title }}</span></p>
+        <button class="menu-item" role="menuitem" @click="openRelated(relationMenu.relation.fromId === draft?.id ? relationMenu.relation.toId : relationMenu.relation.fromId, relationMenu.kind); closeRelationMenu()">打开关联内容</button>
+        <button class="menu-item menu-item-danger" role="menuitem" @click="removeRelation(relationMenu.relation, relationMenu.title)">移除关联</button>
+      </div>
+
+      <div
+        v-if="wikiContextMenu"
+        ref="wikiContextMenuElement"
+        class="menu-panel"
+        :class="wikiContextMenu.externalEligible ? 'w-76' : 'w-60'"
+        role="menu"
+        aria-label="双链操作"
+        :style="{ left: `${wikiContextMenu.x}px`, top: `${wikiContextMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, wikiContextMenuElement, () => closeWikiContextMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ wikiContextMenu.title }}<small v-if="wikiContextMenu.heading" class="font-normal"> · {{ wikiContextMenu.heading }}</small></span>
+          <small v-if="wikiContextMenu.externalEligible" class="shrink-0 font-normal">外部工作区</small>
+        </p>
+        <template v-if="wikiContextMenu.target">
+          <button class="menu-item" role="menuitem" @click="openWikiLink(wikiContextMenu.title, wikiContextMenu.heading); closeWikiContextMenu()">打开知识库内容</button>
+          <button v-if="draft && wikiContextMenu.target.id !== draft.id" class="menu-item" role="menuitem" @click="relateWikiTarget">与当前内容建立关联</button>
+        </template>
+        <template v-else-if="wikiContextMenu.externalEligible">
+          <button v-if="wikiContextMenu.resolving" class="menu-item" role="menuitem" disabled>正在工作区查找精确文件…</button>
+          <button
+            v-for="candidate in wikiContextMenu.externalCandidates.slice(0, 6)"
+            :key="candidate.relativePath"
+            v-memo="[candidate.relativePath, wikiContextMenu.heading]"
+            class="menu-item"
+            role="menuitem"
+            :title="candidate.relativePath"
+            @click="openExternalWikiCandidate(candidate, wikiContextMenu?.heading)"
+          >
+            <span class="stack gap-0.5 min-w-0">
+              打开外部 Markdown
+              <small class="text-[11px] truncate font-mono text-fg-3">{{ candidate.relativePath }}</small>
+            </span>
+          </button>
+          <button v-if="wikiContextMenu.externalCandidates.length > 6" class="menu-item" role="menuitem" disabled>另有 {{ wikiContextMenu.externalCandidates.length - 6 }} 个同名文件，请使用路径双链</button>
+          <button v-if="wikiContextMenu.resolutionError" class="menu-item" role="menuitem" disabled>查找失败 · {{ wikiContextMenu.resolutionError }}</button>
+          <template v-if="!wikiContextMenu.resolving">
+            <i class="menu-sep" aria-hidden="true" />
+            <button class="menu-item" role="menuitem" @click="createWikiNote"><span class="min-w-0 truncate">改为新建内部笔记“{{ wikiContextMenu.title }}”</span></button>
           </template>
-          <button v-for="language in codeBlockLanguages" :key="language.value || 'plain'" role="menuitem" @click="insertEditorCodeBlock(language.value)"><span>{{ language.label }}</span><code v-if="language.value">{{ language.value }}</code></button>
-        </section>
+        </template>
+        <button v-else class="menu-item" role="menuitem" @click="createWikiNote"><span class="min-w-0 truncate">新建“{{ wikiContextMenu.title }}”笔记</span></button>
       </div>
-      <div class="markdown-menu-branch markdown-menu-branch--insert" data-editor-submenu="insert" :class="{ open: editorContextSubmenu === 'insert' }" @mouseenter="setEditorContextSubmenu('insert')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-insert" :aria-expanded="editorContextSubmenu === 'insert'" @click="openEditorContextSubmenu('insert')"><span>插入</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-insert" class="markdown-menu-submenu" role="menu" aria-label="Markdown 插入项">
-          <button role="menuitem" :disabled="imagePasteState === 'saving'" @click="importLocalMarkdownImages"><span><AppIcon name="file-image" :size="14" />本地图片…</span><kbd>最多 12 张</kbd></button>
-          <button role="menuitem" @click="pasteClipboardImage"><span><AppIcon name="file-image" :size="14" />剪贴板图片</span><kbd>本地</kbd></button>
-          <button role="menuitem" @click="applyEditorCommand('link')"><span><AppIcon name="link" :size="14" />链接</span></button>
-          <button role="menuitem" @click="openMarkdownInsert('table')"><span><AppIcon name="table" :size="14" />表格…</span><kbd>配置尺寸</kbd></button>
-          <button role="menuitem" @click="insertEditorSnippet('\n\n---\n\n')"><span><AppIcon name="rule" :size="14" />分隔线</span></button>
-          <button role="menuitem" @click="openMarkdownInsert('formula')"><span><AppIcon name="math" :size="14" />公式…</span><kbd>即时预览</kbd></button>
-          <button role="menuitem" @click="insertEditorSnippet('[[笔记标题]]')"><span><AppIcon name="book" :size="14" />笔记双链</span></button>
-        </section>
+
+      <div
+        v-if="headingContextMenu"
+        ref="headingContextMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="段落操作"
+        :style="{ left: `${headingContextMenu.x}px`, top: `${headingContextMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, headingContextMenuElement, () => closeHeadingContextMenu(true))"
+      >
+        <p class="menu-title"><span class="min-w-0 truncate">段落 · {{ headingContextMenu.heading }}</span></p>
+        <button class="menu-item" role="menuitem" @click="copyHeadingWikiLink"><span class="min-w-0 truncate">复制段落双链 [[{{ draft?.title }}#{{ headingContextMenu.heading }}]]</span></button>
+        <button class="menu-item" role="menuitem" @click="copyHeadingTitle">复制段落标题</button>
       </div>
-      <div class="markdown-menu-branch markdown-menu-branch--tools separator" data-editor-submenu="tools" :class="{ open: editorContextSubmenu === 'tools' }" @mouseenter="setEditorContextSubmenu('tools')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-tools" :aria-expanded="editorContextSubmenu === 'tools'" @click="openEditorContextSubmenu('tools')"><span>常用工具</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-tools" class="markdown-menu-submenu" role="menu" aria-label="选区常用工具">
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInCodeImage"><span><AppIcon name="terminal" :size="14" />生成代码分享图</span><kbd>仅选区</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInAi('rewrite')"><span><AppIcon name="sparkle" :size="14" />交给 AI 改写</span><kbd>需确认配置</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="pinSelectionAsSnippet"><span><AppIcon name="star" :size="14" />固定为常用片段</span><kbd>本地</kbd></button>
-        </section>
+
+      <div
+        v-if="questionAttachmentMenu"
+        ref="questionAttachmentMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="题目附件操作"
+        :style="{ left: `${questionAttachmentMenu.x}px`, top: `${questionAttachmentMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, questionAttachmentMenuElement, () => closeQuestionAttachmentMenu(true))"
+      >
+        <p class="menu-title">
+          <span class="min-w-0 truncate">{{ questionAttachmentMenu.attachment.name }}</span>
+          <small class="shrink-0 font-normal tabular-nums">{{ formatQuestionAttachmentSize(questionAttachmentMenu.attachment.size) }}</small>
+        </p>
+        <button class="menu-item" role="menuitem" :disabled="!questionAttachmentMenu.attachment.available" @click="revealQuestionAttachment(questionAttachmentMenu.attachment)">在资源管理器中查看</button>
+        <button class="menu-item" role="menuitem" @click="copyQuestionAttachmentName(questionAttachmentMenu.attachment)">复制附件名称</button>
+        <button class="menu-item menu-item-danger" role="menuitem" @click="removeQuestionAttachment(questionAttachmentMenu.attachment)">从题目中移除</button>
       </div>
-      <div class="markdown-menu-branch markdown-menu-branch--study" data-editor-submenu="study" :class="{ open: editorContextSubmenu === 'study' }" @mouseenter="setEditorContextSubmenu('study')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-study" :aria-expanded="editorContextSubmenu === 'study'" @click="openEditorContextSubmenu('study')"><span>学习工具</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-study" class="markdown-menu-submenu" role="menu" aria-label="选区学习工具">
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="createNoteFromSelection"><span><AppIcon name="book" :size="14" />从选区创建笔记</span><kbd>本地</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="createQuestionFromSelection"><span><AppIcon name="review" :size="14" />从选区创建题目</span><kbd>进入错题库</kbd></button>
-          <button role="menuitem" :disabled="!editorContextMenu.hasSelection" @click="openSelectionInAi('summarize')"><span><AppIcon name="sparkle" :size="14" />提炼选区要点</span><kbd>AI 草稿</kbd></button>
-        </section>
+
+      <div
+        v-if="documentStatisticsMenu"
+        ref="documentStatisticsMenuElement"
+        class="menu-panel w-60"
+        role="menu"
+        aria-label="文档统计操作"
+        :style="{ left: `${documentStatisticsMenu.x}px`, top: `${documentStatisticsMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, documentStatisticsMenuElement, () => closeDocumentStatisticsMenu(true))"
+      >
+        <p class="menu-title">文档统计<small class="shrink-0 font-normal">{{ documentStatisticsPending ? '正在更新' : '本机 Worker' }}</small></p>
+        <button class="menu-item" role="menuitem" @click="documentStatisticsExpanded = !documentStatisticsExpanded; closeDocumentStatisticsMenu(true)">{{ documentStatisticsExpanded ? '收起完整统计' : '查看完整统计' }}</button>
+        <button class="menu-item" role="menuitem" :disabled="!documentStatistics" @click="copyDocumentStatistics">复制统计摘要</button>
+        <button class="menu-item" role="menuitem" @click="scheduleDocumentStatistics(true); closeDocumentStatisticsMenu(true)">立即重新统计</button>
       </div>
-      <div class="markdown-menu-branch markdown-menu-branch--document" data-editor-submenu="document" :class="{ open: editorContextSubmenu === 'document' }" @mouseenter="setEditorContextSubmenu('document')" @mouseleave="leaveEditorContextSubmenu">
-        <button class="markdown-menu-row" role="menuitem" aria-haspopup="menu" aria-controls="markdown-editor-menu-document" :aria-expanded="editorContextSubmenu === 'document'" @click="openEditorContextSubmenu('document')"><span>文档操作</span><AppIcon name="arrow-right" :size="14" /></button>
-        <section id="markdown-editor-menu-document" class="markdown-menu-submenu" role="menu" aria-label="文档操作">
-          <template v-if="crashDraft"><button role="menuitem" @click="closeEditorContextMenu(); restoreCrashDraft()"><span>恢复异常退出草稿</span><kbd>本地</kbd></button><button class="separator" role="menuitem" @click="closeEditorContextMenu(); discardCrashDraft()"><span>放弃恢复点</span></button></template>
-          <button role="menuitem" @click="openDocumentSearch()"><span>在当前文档中查找</span><kbd>Ctrl+F</kbd></button>
-          <button role="menuitem" @click="copyCurrentDocumentWikiLink"><span>复制当前文档双链</span></button>
-          <button role="menuitem" @click="copyWholeDocumentMarkdown()"><span>复制整篇 Markdown</span></button>
-          <button role="menuitem" :disabled="Boolean(documentOutput)" @click="exportDocumentHtml()"><span>导出可打印 HTML…</span><kbd>Ctrl+Shift+E</kbd></button>
-          <button role="menuitem" @click="openVersionHistory()"><span>查看版本历史</span><kbd>本地</kbd></button>
-          <button role="menuitem" @click="openSplitFromEditorMenu"><span>切换为分屏编辑</span><kbd>Alt+2</kbd></button>
-          <button role="menuitem" @click="openFocusFromEditorMenu"><span>{{ focusMode ? '退出专注阅读' : '进入专注阅读' }}</span><kbd>Ctrl+Shift+F</kbd></button>
-        </section>
+
+      <div
+        v-if="largePreviewMenu"
+        ref="largePreviewMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        aria-label="大文档阅读操作"
+        :style="{ left: `${largePreviewMenu.x}px`, top: `${largePreviewMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown($event, largePreviewMenuElement, () => closeLargePreviewMenu(true))"
+      >
+        <p class="menu-title">
+          大文档阅读
+          <small class="shrink-0 font-normal">
+            {{ previewPending
+              ? (previewRenderProgress?.total ? `${previewRenderPercent}% · 渐进载入` : 'Worker 分析中')
+              : fullLargePreviewRequested ? '完整阅读模式' : '轻量保护模式' }}
+          </small>
+        </p>
+        <button v-if="!fullLargePreviewRequested" class="menu-item" role="menuitem" @click="requestFullLargePreview">渐进加载完整预览</button>
+        <button v-else class="menu-item" role="menuitem" @click="cancelFullLargePreview">{{ previewPending ? '停止加载' : '返回轻量模式' }}</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="returnLargeDocumentToSource">返回源码模式</button>
       </div>
-    </div>
-    <div v-if="externalFileMenu && draft?.externalFile" ref="externalFileMenuElement" class="document-context-menu external-file-context-menu" :style="{ left: `${externalFileMenu.x}px`, top: `${externalFileMenu.y}px` }" role="menu" aria-label="外部 Markdown 文件操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, externalFileMenuElement, () => closeExternalFileMenu(true))">
-      <p>{{ draft.externalFile.name }}<small>{{ externalFileWatchMode === 'native' ? '本机实时监听' : externalFileWatchMode === 'poll' ? '低频检查' : '外部 Markdown' }}</small></p>
-      <button v-if="externalFileChanged" role="menuitem" @click="openExternalConflictReview(draft)"><span><AppIcon name="diff" :size="14" />比较并处理版本</span><kbd>推荐</kbd></button>
-      <button role="menuitem" @click="recheckExternalMarkdown"><span><AppIcon name="refresh" :size="14" />立即检查磁盘变化</span></button>
-      <button role="menuitem" @click="revealExternalMarkdown"><span><AppIcon name="folder" :size="14" />在资源管理器中显示</span></button>
-      <button role="menuitem" @click="copyExternalMarkdownPath"><span><AppIcon name="duplicate" :size="14" />复制完整路径</span></button>
-      <button role="menuitem" @click="closeExternalFileMenu(); saveAsMarkdown(draft)"><span><AppIcon name="download" :size="14" />另存为并重新关联…</span></button>
-      <button role="menuitem" @click="closeExternalFileMenu(); unlinkExternalMarkdown(draft)"><span><AppIcon name="link" :size="14" />断开文件关联</span></button>
-    </div>
-    <div v-if="managedVaultMenu && managedVaultAlert && draft" ref="managedVaultMenuElement" class="document-context-menu managed-vault-menu" :style="{ left: `${managedVaultMenu.x}px`, top: `${managedVaultMenu.y}px` }" role="menu" aria-label="Vault Markdown 变化操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, managedVaultMenuElement, () => closeManagedVaultMenu(true))">
-      <p>{{ draft.title }}<small>{{ managedVaultAlert.status === 'missing' ? 'Vault 文件缺失' : '检测到磁盘修改' }}</small></p>
-      <button v-if="managedVaultAlert.status === 'pending'" role="menuitem" @click="openManagedVaultConflict"><span><AppIcon name="diff" :size="14" />比较并处理版本</span><kbd>推荐</kbd></button>
-      <button v-else role="menuitem" @click="recreateManagedVaultMarkdown"><span><AppIcon name="refresh" :size="14" />用当前版本重新创建</span></button>
-      <button role="menuitem" @click="openManagedVaultVersionHistory"><span><AppIcon name="clock" :size="14" />查看版本历史</span></button>
-      <button role="menuitem" @click="copyManagedVaultDocumentId"><span><AppIcon name="duplicate" :size="14" />复制文档 ID</span></button>
-    </div>
+    </Teleport>
+
     <ExternalMarkdownConflictDialog v-if="externalConflict" :title="externalConflict.current.title" :file-name="externalConflict.disk.name" :preview="externalConflict.preview" :busy="externalConflictBusy" :error="externalConflictError" @decision="resolveExternalConflict" />
     <ExternalMarkdownConflictDialog v-if="managedVaultConflict" managed-vault :title="managedVaultConflict.current.title" file-name="Vault Markdown" :preview="managedVaultConflict.preview" :busy="managedVaultConflictBusy" :error="managedVaultConflictError" @decision="resolveManagedVaultConflict" />
     <UnsavedChangesDialog v-if="unsavedPrompt" :item-label="draft?.title || '未命名文档'" :target-label="unsavedPrompt.targetLabel" item-kind="文档" @decision="resolveUnsavedDecision" />
     <MarkdownInsertDialog v-if="markdownInsertPanel" :initial-panel="markdownInsertPanel.panel" :initial-formula-recognition="markdownInsertPanel.recognizeFormula" :selected-text="markdownInsertPanel.selectedText" @close="closeMarkdownInsert()" @insert="insertStructuredMarkdown" />
     <QuestionImportDialog v-if="questionImportOpen" @cancel="closeQuestionImport" @complete="completeQuestionImport" />
-    <div v-if="frontmatterMenu && frontmatter" ref="frontmatterMenuElement" class="relation-context-menu markdown-frontmatter-context-menu" :style="{ left: `${frontmatterMenu.x}px`, top: `${frontmatterMenu.y}px` }" role="menu" aria-label="文档属性操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, frontmatterMenuElement, () => closeFrontmatterMenu(true))"><p>文档属性<small>{{ frontmatter.error ? 'YAML 需要检查' : `${frontmatter.entries.length}${frontmatter.truncated ? '+' : ''} 项` }}</small></p><button role="menuitem" @click="copyFrontmatter('yaml')">复制 YAML 原文</button><button role="menuitem" :disabled="!frontmatter.json" @click="copyFrontmatter('json')">复制为 JSON</button><button role="menuitem" @click="editFrontmatterSource">在源码中编辑</button><button role="menuitem" @click="toggleFrontmatterExpanded">{{ frontmatterExpanded ? '收起属性' : '展开全部属性' }}</button></div>
-    <div v-if="relationMenu" ref="relationMenuElement" class="relation-context-menu" :style="{ left: `${relationMenu.x}px`, top: `${relationMenu.y}px` }" role="menu" aria-label="关联知识操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, relationMenuElement, () => closeRelationMenu(true))"><p>{{ relationMenu.title }}</p><button role="menuitem" @click="openRelated(relationMenu.relation.fromId === draft?.id ? relationMenu.relation.toId : relationMenu.relation.fromId, relationMenu.kind); closeRelationMenu()">打开关联内容</button><button class="danger" role="menuitem" @click="removeRelation(relationMenu.relation, relationMenu.title)">移除关联</button></div>
-    <div v-if="wikiContextMenu" ref="wikiContextMenuElement" class="wiki-context-menu" :class="{ 'wiki-context-menu--external': wikiContextMenu.externalEligible }" :style="{ left: `${wikiContextMenu.x}px`, top: `${wikiContextMenu.y}px` }" role="menu" aria-label="双链操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, wikiContextMenuElement, () => closeWikiContextMenu(true))">
-      <p>{{ wikiContextMenu.title }}<small v-if="wikiContextMenu.heading"> · {{ wikiContextMenu.heading }}</small><small v-if="wikiContextMenu.externalEligible">外部工作区</small></p>
-      <template v-if="wikiContextMenu.target"><button role="menuitem" @click="openWikiLink(wikiContextMenu.title, wikiContextMenu.heading); closeWikiContextMenu()">打开知识库内容</button><button v-if="draft && wikiContextMenu.target.id !== draft.id" role="menuitem" @click="relateWikiTarget">与当前内容建立关联</button></template>
-      <template v-else-if="wikiContextMenu.externalEligible">
-        <button v-if="wikiContextMenu.resolving" role="menuitem" disabled>正在工作区查找精确文件…</button>
-        <button v-for="candidate in wikiContextMenu.externalCandidates.slice(0, 6)" :key="candidate.relativePath" v-memo="[candidate.relativePath, wikiContextMenu.heading]" class="wiki-context-menu__external" role="menuitem" :title="candidate.relativePath" @click="openExternalWikiCandidate(candidate, wikiContextMenu?.heading)"><span>打开外部 Markdown</span><small>{{ candidate.relativePath }}</small></button>
-        <button v-if="wikiContextMenu.externalCandidates.length > 6" role="menuitem" disabled>另有 {{ wikiContextMenu.externalCandidates.length - 6 }} 个同名文件，请使用路径双链</button>
-        <button v-if="wikiContextMenu.resolutionError" role="menuitem" disabled>查找失败 · {{ wikiContextMenu.resolutionError }}</button>
-        <button v-if="!wikiContextMenu.resolving" class="wiki-context-menu__internal" role="menuitem" @click="createWikiNote">改为新建内部笔记“{{ wikiContextMenu.title }}”</button>
-      </template>
-      <button v-else role="menuitem" @click="createWikiNote">新建“{{ wikiContextMenu.title }}”笔记</button>
-    </div>
-    <div v-if="headingContextMenu" ref="headingContextMenuElement" class="markdown-heading-context-menu" :style="{ left: `${headingContextMenu.x}px`, top: `${headingContextMenu.y}px` }" role="menu" aria-label="段落操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, headingContextMenuElement, () => closeHeadingContextMenu(true))"><p>段落 · {{ headingContextMenu.heading }}</p><button role="menuitem" @click="copyHeadingWikiLink">复制段落双链 [[{{ draft?.title }}#{{ headingContextMenu.heading }}]]</button><button role="menuitem" @click="copyHeadingTitle">复制段落标题</button></div>
-    <div v-if="questionAttachmentMenu" ref="questionAttachmentMenuElement" class="relation-context-menu question-attachment-context-menu" :style="{ left: `${questionAttachmentMenu.x}px`, top: `${questionAttachmentMenu.y}px` }" role="menu" aria-label="题目附件操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, questionAttachmentMenuElement, () => closeQuestionAttachmentMenu(true))"><p>{{ questionAttachmentMenu.attachment.name }}<small>{{ formatQuestionAttachmentSize(questionAttachmentMenu.attachment.size) }}</small></p><button role="menuitem" :disabled="!questionAttachmentMenu.attachment.available" @click="revealQuestionAttachment(questionAttachmentMenu.attachment)">在资源管理器中查看</button><button role="menuitem" @click="copyQuestionAttachmentName(questionAttachmentMenu.attachment)">复制附件名称</button><button class="danger" role="menuitem" @click="removeQuestionAttachment(questionAttachmentMenu.attachment)">从题目中移除</button></div>
-    <div v-if="documentStatisticsMenu" ref="documentStatisticsMenuElement" class="relation-context-menu document-statistics-menu" :style="{ left: `${documentStatisticsMenu.x}px`, top: `${documentStatisticsMenu.y}px` }" role="menu" aria-label="文档统计操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, documentStatisticsMenuElement, () => closeDocumentStatisticsMenu(true))"><p>文档统计<small>{{ documentStatisticsPending ? '正在更新' : '本机 Worker' }}</small></p><button role="menuitem" @click="documentStatisticsExpanded = !documentStatisticsExpanded; closeDocumentStatisticsMenu(true)">{{ documentStatisticsExpanded ? '收起完整统计' : '查看完整统计' }}</button><button role="menuitem" :disabled="!documentStatistics" @click="copyDocumentStatistics">复制统计摘要</button><button role="menuitem" @click="scheduleDocumentStatistics(true); closeDocumentStatisticsMenu(true)">立即重新统计</button></div>
-    <div v-if="largePreviewMenu" ref="largePreviewMenuElement" class="relation-context-menu large-preview-context-menu" :style="{ left: `${largePreviewMenu.x}px`, top: `${largePreviewMenu.y}px` }" role="menu" aria-label="大文档阅读操作" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown($event, largePreviewMenuElement, () => closeLargePreviewMenu(true))"><p>大文档阅读<small>{{ previewPending ? (previewRenderProgress?.total ? `${previewRenderPercent}% · 渐进载入` : 'Worker 分析中') : fullLargePreviewRequested ? '完整阅读模式' : '轻量保护模式' }}</small></p><button v-if="!fullLargePreviewRequested" role="menuitem" @click="requestFullLargePreview">渐进加载完整预览</button><button v-else role="menuitem" @click="cancelFullLargePreview">{{ previewPending ? '停止加载' : '返回轻量模式' }}</button><button class="separator" role="menuitem" @click="returnLargeDocumentToSource">返回源码模式</button></div>
   </div>
 </template>
 
@@ -4124,14 +5340,30 @@ onBeforeUnmount(() => {
 :global(.document-focus-mode .workspace-content){height:100%}
 :global(.has-desktop-titlebar.document-focus-mode .workspace){height:calc(100vh - 34px)}
 :global(.has-desktop-titlebar.document-focus-mode .workspace-content){height:100%}
-.external-markdown-bar:focus-visible{position:relative;z-index:1;outline:2px solid color-mix(in srgb,var(--green) 44%,transparent);outline-offset:-2px}
-.external-markdown-bar>button:not(.quiet-button):hover,.external-markdown-bar>button:not(.quiet-button):focus-visible{color:var(--warn);text-decoration:underline;text-underline-offset:3px}
-.external-file-context-menu{width:270px}.external-file-context-menu>p{display:grid;gap:2px}.external-file-context-menu>p small{overflow:hidden;color:var(--muted);font:8.5px var(--font-mono);text-overflow:ellipsis;white-space:nowrap}.external-file-context-menu>button span{display:inline-flex;min-width:0;align-items:center;gap:8px}
-.managed-vault-alert{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;margin:0 14px 10px;padding:10px 11px;border:1px solid var(--warn-soft);border-radius:10px;color:var(--warn);background:linear-gradient(110deg,var(--surface-2),var(--surface));box-shadow:0 5px 18px var(--warn-soft)}
-.managed-vault-alert>span{display:grid;width:32px;height:32px;place-items:center;border-radius:9px;color:var(--warn);background:var(--surface-2)}.managed-vault-alert>div:nth-child(2){display:grid;min-width:0;gap:3px}.managed-vault-alert b{color:var(--warn);font:720 11px/1.35 var(--font-ui)}.managed-vault-alert small{color:var(--fg-2);font:9.5px/1.5 var(--font-ui)}.managed-vault-alert>div:last-child{display:flex;align-items:center;gap:6px}.managed-vault-alert button{min-height:31px;white-space:nowrap}.managed-vault-alert.is-missing{border-color:var(--danger-soft);background:linear-gradient(110deg,var(--surface-2),var(--surface))}.managed-vault-alert.is-missing>span{color:var(--danger);background:var(--surface-2)}.managed-vault-alert:focus-visible{outline:2px solid var(--warn);outline-offset:2px}
-.managed-vault-menu{width:270px}.managed-vault-menu>p{display:grid;gap:2px}.managed-vault-menu>p small{color:var(--muted);font:8.5px var(--font-mono)}.managed-vault-menu>button span{display:inline-flex;align-items:center;gap:8px}
 .markdown-preview--deferred:focus-visible{outline:3px solid color-mix(in srgb,var(--green) 38%,transparent);outline-offset:-5px}
-.markdown-render-status{z-index:3;display:grid;grid-template-columns:minmax(0,auto) auto;align-items:center;gap:6px 11px;min-width:min(310px,calc(100% - 32px));max-width:390px;padding:8px 9px 8px 12px;border-radius:12px}.markdown-render-status>div{display:grid;min-width:0;gap:2px}.markdown-render-status>div span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.markdown-render-status>div small{color:var(--reading-muted,var(--muted));font:600 9px/1.35 var(--font-ui)}.markdown-render-status--ready{border-color:var(--accent-soft);background:var(--surface)}.markdown-render-status__track{grid-column:1/-1;display:block;height:3px;overflow:hidden;border-radius:99px;background:var(--accent-soft)}.markdown-render-status__track>i{display:block;height:100%;border-radius:inherit;background:var(--green);transition:width 120ms ease-out}.markdown-render-status .quiet-button{grid-column:2;grid-row:1;min-height:29px;padding-inline:10px;border-color:var(--accent-soft);color:var(--green-strong);background:var(--surface);box-shadow:var(--shadow-xs);font-size:9px}.markdown-render-status .quiet-button:hover,.markdown-render-status .quiet-button:focus-visible{border-color:var(--accent);background:var(--green-bg)}.markdown-render-status:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:2px}
+.markdown-render-status{z-index:3;display:grid;grid-template-columns:minmax(0,auto) auto;align-items:center;gap:6px 11px;min-width:min(310px,calc(100% - 32px));max-width:390px;padding:8px 9px 8px 12px;border-radius:12px}.markdown-render-status>div{display:grid;min-width:0;gap:2px}.markdown-render-status>div span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.markdown-render-status>div small{color:var(--reading-muted,var(--muted));font:600 11px/1.35 var(--font-family-ui)}.markdown-render-status--ready{border-color:var(--accent-soft);background:var(--surface)}.markdown-render-status__track{grid-column:1/-1;display:block;height:3px;overflow:hidden;border-radius:99px;background:var(--accent-soft)}.markdown-render-status__track>i{display:block;height:100%;border-radius:inherit;background:var(--green);transition:width 120ms ease-out}.markdown-render-status .quiet-button{grid-column:2;grid-row:1;min-height:29px;padding-inline:10px;border-color:var(--accent-soft);color:var(--green-strong);background:var(--surface);box-shadow:var(--shadow-xs);font-size:11px}.markdown-render-status .quiet-button:hover,.markdown-render-status .quiet-button:focus-visible{border-color:var(--accent);background:var(--green-bg)}.markdown-render-status:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){.markdown-render-status__track>i{transition:none}}
-@media(max-width:860px){.managed-vault-alert{grid-template-columns:34px minmax(0,1fr);margin-inline:10px}.managed-vault-alert>div:last-child{grid-column:1/-1;justify-content:flex-end}}
+
+/* The editor's context menu is the only one with flyouts. Utilities cannot
+   express "reveal a panel that hangs off my right edge, or my left edge when
+   there is no room", so that part stays real CSS. Everything visible inside
+   it — panel, rows, separators — uses the shared menu shortcuts. */
+.markdown-menu-branch{position:relative}
+.markdown-menu-submenu{
+  position:absolute;top:-6px;left:calc(100% - 2px);z-index:1;
+  display:flex;flex-direction:column;width:250px;
+  max-height:min(360px,calc(100vh - 24px));overflow-y:auto;overscroll-behavior:contain;
+  padding:4px 0;visibility:hidden;opacity:0;
+  border:1px solid var(--line);border-radius:10px;background:var(--surface);
+  box-shadow:var(--shadow-lg);transform:translateX(-4px);pointer-events:none;
+  transition:opacity .12s ease,transform .12s ease,visibility .12s;
+}
+.markdown-menu-branch--code>.markdown-menu-submenu,
+.markdown-menu-branch--insert>.markdown-menu-submenu,
+.markdown-menu-branch--tools>.markdown-menu-submenu,
+.markdown-menu-branch--study>.markdown-menu-submenu,
+.markdown-menu-branch--document>.markdown-menu-submenu{top:auto;bottom:-6px}
+.markdown-editor-context-menu.submenus-left .markdown-menu-submenu{right:calc(100% - 2px);left:auto;transform:translateX(4px)}
+.markdown-menu-branch:hover>.markdown-menu-submenu,
+.markdown-menu-branch.open>.markdown-menu-submenu{visibility:visible;opacity:1;transform:translateX(0);pointer-events:auto}
 </style>

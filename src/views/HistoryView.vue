@@ -35,7 +35,9 @@ let contextMenuTrigger: HTMLElement | undefined
 let searchTimer: number | undefined
 let scrollFrame: number | undefined
 
-const historyRowHeight = 166
+// Must match the row height in the template; the virtual window
+// computes its offsets from it.
+const historyRowHeight = 96
 const historyOverscan = 5
 const jobs = computed(() => filterHistoryJobs(store.jobs, { query: appliedQuery.value, status: status.value, kind: kind.value }))
 const activities = computed(() => filterHistoryActivities(store.activities, appliedQuery.value, activityKind.value))
@@ -257,59 +259,210 @@ onBeforeUnmount(() => {
       </template>
     </PageHeader>
 
-    <nav class="history-view-switch" aria-label="历史记录视图">
-      <button :class="{ active: activeView === 'jobs' }" :aria-current="activeView === 'jobs' ? 'page' : undefined" @click="selectView('jobs')"><AppIcon name="clock" :size="15" /><span><b>处理记录</b><small>{{ store.jobs.length }} 条任务与输出</small></span></button>
-      <button :class="{ active: activeView === 'activity' }" :aria-current="activeView === 'activity' ? 'page' : undefined" @click="selectView('activity')"><AppIcon name="sort" :size="15" /><span><b>操作日志</b><small>{{ store.activities.length }} 条本地活动</small></span></button>
+    <!-- Two records, one page. A segmented switch says they are alternatives;
+         the old pair of full-width cards read as two separate features. -->
+    <nav class="row gap-0.5 p-0.5 mb-3 w-fit rounded-sm bg-surface-2 border border-line" aria-label="历史记录视图">
+      <button
+        v-for="view in ([['jobs', 'clock', '处理记录', `${store.jobs.length} 条`], ['activity', 'sort', '操作日志', `${store.activities.length} 条`]] as const)"
+        :key="view[0]"
+        class="row gap-1.5 h-8 px-3 rounded-[4px] text-[13px] transition-colors"
+        :class="activeView === view[0] ? 'bg-surface text-fg font-medium shadow-sm' : 'text-fg-3 hover:text-fg'"
+        :aria-current="activeView === view[0] ? 'page' : undefined"
+        @click="selectView(view[0])"
+      >
+        <AppIcon :name="view[1]" :size="15" />{{ view[2] }}
+        <span class="text-[12px] tabular-nums opacity-70">{{ view[3] }}</span>
+      </button>
     </nav>
 
-    <section class="history-toolbar panel" :aria-busy="searchPending">
-      <label class="history-search"><span class="visually-hidden">搜索{{ activeView === 'jobs' ? '处理历史' : '操作日志' }}</span><input v-model="query" class="search-input" :placeholder="activeView === 'jobs' ? '搜索工具、输入或输出文件…' : '搜索操作或详情…'" /></label>
-      <template v-if="activeView === 'jobs'"><select v-model="status" aria-label="按状态筛选"><option v-for="option in statusOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select><select v-model="kind" aria-label="按类型筛选"><option v-for="option in kindOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></template>
-      <select v-else v-model="activityKind" aria-label="按活动类型筛选"><option v-for="option in activityKindOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select>
-      <span aria-live="polite">{{ activeView === 'jobs' ? jobs.length : activities.length }} 条记录{{ searchPending ? ' · 正在筛选' : '' }}</span>
-      <button v-if="hasActiveFilters" class="quiet-button history-clear-filters" @click="clearFilters">清除筛选</button>
+    <section class="row gap-2 flex-wrap mb-3 p-2 panel" :aria-busy="searchPending">
+      <label class="row gap-2 flex-1 min-w-60 h-9 px-3 rounded-sm bg-well border border-line focus-within:border-accent">
+        <AppIcon name="search" :size="15" class="shrink-0 text-fg-3" />
+        <span class="sr-only">搜索{{ activeView === 'jobs' ? '处理历史' : '操作日志' }}</span>
+        <input
+          v-model="query"
+          class="flex-1 min-w-0 bg-transparent border-0 outline-none text-[13px]"
+          :placeholder="activeView === 'jobs' ? '搜索工具、输入或输出文件…' : '搜索操作或详情…'"
+        />
+      </label>
+      <template v-if="activeView === 'jobs'">
+        <select v-model="status" class="field w-28" aria-label="按状态筛选">
+          <option v-for="option in statusOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </select>
+        <select v-model="kind" class="field w-28" aria-label="按类型筛选">
+          <option v-for="option in kindOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </select>
+      </template>
+      <select v-else v-model="activityKind" class="field w-32" aria-label="按活动类型筛选">
+        <option v-for="option in activityKindOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+      </select>
+      <span class="row px-2 text-[12px] tabular-nums text-fg-3" aria-live="polite">
+        {{ activeView === 'jobs' ? jobs.length : activities.length }} 条{{ searchPending ? ' · 筛选中' : '' }}
+      </span>
+      <button v-if="hasActiveFilters" class="btn-ghost btn-sm" @click="clearFilters">清除筛选</button>
     </section>
 
-    <section v-if="activeView === 'jobs' && jobs.length" class="history-results">
-      <div class="history-batch-bar" :class="{ active: selectionMode }">
-        <button class="quiet-button" @click="selectionMode ? clearSelection() : selectionMode = true">{{ selectionMode ? '退出选择' : '批量管理' }}</button>
-        <template v-if="selectionMode"><button class="quiet-button" :disabled="!selectableJobs.length" @click="toggleSelectAll">{{ allFilteredSelected ? '取消全选' : `全选可清理项 · ${selectableJobs.length}` }}</button><span aria-live="polite">已选 {{ selectedCount }} 条</span><button class="quiet-button danger" :disabled="!selectedCount" @click="removeSelected">删除所选</button></template>
-        <small v-else>右键单条处理记录，可恢复参数、打开或复制输出路径</small>
-      </div>
-      <div ref="historyViewport" class="history-list" aria-label="处理历史记录" @scroll.passive="handleHistoryScroll">
-      <div class="history-list__spacer" :style="{ height: `${windowedHistory.height}px` }">
-        <div class="history-list__window" :style="{ transform: `translateY(${windowedHistory.offset}px)` }">
-          <article v-for="job in visibleJobs" :key="job.id" v-memo="[job.id, job.status, job.progress, job.detail, job.completedAt, job.outputs, job.outputNames, selectionMode, selectedJobIds.has(job.id)]" class="history-card panel" :class="{ selected: selectedJobIds.has(job.id) }" tabindex="0" aria-haspopup="menu" :aria-expanded="contextMenu?.job.id === job.id" :aria-selected="selectionMode ? selectedJobIds.has(job.id) : undefined" :aria-label="`${job.label}，${statusLabel(job.status)}；右键或 Shift 加 F10 打开操作`" @click="selectionMode && !['queued', 'running'].includes(job.status) ? toggleSelected(job.id) : undefined" @contextmenu.stop="openContext($event, job)" @keydown="handleHistoryCardKeydown($event, job)">
-            <button v-if="selectionMode" class="history-select" :disabled="['queued', 'running'].includes(job.status)" :aria-label="selectedJobIds.has(job.id) ? `取消选择 ${job.label}` : `选择 ${job.label}`" @click.stop="toggleSelected(job.id)"><AppIcon :name="selectedJobIds.has(job.id) ? 'check' : 'plus'" :size="13" /></button>
-            <div class="history-status" :class="job.status"><i></i><span>{{ statusLabel(job.status) }}</span><small>{{ formatTime(job.completedAt || job.createdAt) }}</small></div>
-            <div class="history-content"><p class="eyebrow">{{ job.kind.toUpperCase() }} · {{ job.toolId || '本地工具' }}</p><h3>{{ job.label }}</h3><div class="file-flow"><span><b>输入</b>{{ historyJobSummary(job, 'input') }}</span><i>→</i><span><b>输出</b>{{ historyJobSummary(job, 'output') }}</span></div></div>
-            <div class="history-actions"><button class="quiet-button" :disabled="!job.retryable && !job.route" @click.stop="rerun(job.id)">恢复参数</button><button class="quiet-button" :disabled="!historyOutputPath(job)" @click.stop="reveal(historyOutputPath(job))">打开位置</button><button class="quiet-button" :disabled="!historyOutputPath(job)" @click.stop="saveAs(historyOutputPath(job), historyOutputName(job))">{{ historyOutputCount(job) > 1 ? '另存首个' : '另存为' }}</button><button class="icon-button" :disabled="!historyOutputPath(job)" :title="historyOutputCount(job) > 1 ? `复制全部 ${historyOutputCount(job)} 个输出路径` : '复制输出路径'" :aria-label="historyOutputCount(job) > 1 ? `复制全部 ${historyOutputCount(job)} 个输出路径` : '复制输出路径'" @click.stop="copyOutputs(job)"><AppIcon name="duplicate" :size="14" /></button><button class="icon-button danger" title="删除记录" aria-label="删除历史记录" @click.stop="remove(job.id)"><AppIcon name="trash" :size="14" /></button></div>
-          </article>
+    <section v-if="activeView === 'jobs' && jobs.length" class="pane">
+      <header class="pane-head">
+        <div class="row gap-2 min-w-0">
+          <button class="btn-ghost btn-sm" @click="selectionMode ? clearSelection() : selectionMode = true">
+            {{ selectionMode ? '退出选择' : '批量管理' }}
+          </button>
+          <template v-if="selectionMode">
+            <button class="btn-ghost btn-sm" :disabled="!selectableJobs.length" @click="toggleSelectAll">
+              {{ allFilteredSelected ? '取消全选' : `全选可清理项 · ${selectableJobs.length}` }}
+            </button>
+            <span class="text-[12px] tabular-nums text-fg-3" aria-live="polite">已选 {{ selectedCount }} 条</span>
+          </template>
+        </div>
+        <button v-if="selectionMode" class="btn-danger btn-sm" :disabled="!selectedCount" @click="removeSelected">删除所选</button>
+        <small v-else class="text-[11px] text-fg-3 truncate">右键单条记录可恢复参数、打开或复制输出路径</small>
+      </header>
+
+      <!-- Virtualised: the spacer holds the full scroll height, the window is
+           translated to the visible slice. `historyRowHeight` in the script
+           has to match the row height set here. -->
+      <div
+        ref="historyViewport"
+        class="overflow-y-auto h-[calc(100vh-var(--titlebar-h)-23rem)] min-h-80"
+        aria-label="处理历史记录"
+        @scroll.passive="handleHistoryScroll"
+      >
+        <div class="relative" :style="{ height: `${windowedHistory.height}px` }">
+          <div class="absolute inset-x-0 top-0" :style="{ transform: `translateY(${windowedHistory.offset}px)` }">
+            <article
+              v-for="job in visibleJobs"
+              :key="job.id"
+              v-memo="[job.id, job.status, job.progress, job.detail, job.completedAt, job.outputs, job.outputNames, selectionMode, selectedJobIds.has(job.id)]"
+              class="group row gap-3 h-24 px-3 border-b border-line transition-colors"
+              :class="selectedJobIds.has(job.id) ? 'bg-accent-soft' : 'hover:bg-surface-2'"
+              tabindex="0"
+              aria-haspopup="menu"
+              :aria-expanded="contextMenu?.job.id === job.id"
+              :aria-selected="selectionMode ? selectedJobIds.has(job.id) : undefined"
+              :aria-label="`${job.label}，${statusLabel(job.status)}；右键或 Shift 加 F10 打开操作`"
+              @click="selectionMode && !['queued', 'running'].includes(job.status) ? toggleSelected(job.id) : undefined"
+              @contextmenu.stop="openContext($event, job)"
+              @keydown="handleHistoryCardKeydown($event, job)"
+            >
+              <button
+                v-if="selectionMode"
+                class="center w-5 h-5 shrink-0 rounded-[4px] border transition-colors"
+                :class="selectedJobIds.has(job.id) ? 'border-accent bg-accent text-white' : 'border-line-strong text-transparent'"
+                :disabled="['queued', 'running'].includes(job.status)"
+                :aria-label="selectedJobIds.has(job.id) ? `取消选择 ${job.label}` : `选择 ${job.label}`"
+                @click.stop="toggleSelected(job.id)"
+              >
+                <AppIcon name="check" :size="12" />
+              </button>
+
+              <div class="stack gap-1 w-20 shrink-0">
+                <span
+                  class="row gap-1.5 text-[12px] font-medium"
+                  :class="job.status === 'succeeded' ? 'text-success'
+                    : job.status === 'failed' ? 'text-danger'
+                      : job.status === 'running' ? 'text-accent'
+                        : job.status === 'cancelled' ? 'text-warn' : 'text-fg-3'"
+                >
+                  <i class="w-1.5 h-1.5 rounded-full bg-current shrink-0" />{{ statusLabel(job.status) }}
+                </span>
+                <small class="text-[11px] tabular-nums text-fg-3">{{ formatTime(job.completedAt || job.createdAt) }}</small>
+              </div>
+
+              <div class="stack gap-1 min-w-0 flex-1">
+                <p class="text-[11px] text-fg-3 truncate">{{ job.kind.toUpperCase() }} · {{ job.toolId || '本地工具' }}</p>
+                <h3 class="text-[13px] font-medium text-fg truncate">{{ job.label }}</h3>
+                <p class="row gap-2 text-[11px] text-fg-3 min-w-0">
+                  <span class="truncate max-w-60"><b class="font-normal text-fg-2">输入</b> {{ historyJobSummary(job, 'input') }}</span>
+                  <AppIcon name="arrow-right" :size="11" class="shrink-0" />
+                  <span class="truncate max-w-60"><b class="font-normal text-fg-2">输出</b> {{ historyJobSummary(job, 'output') }}</span>
+                </p>
+              </div>
+
+              <!-- Six buttons on every row is a wall. They stay in the DOM for
+                   the keyboard and appear on hover for the mouse; the same
+                   actions are on the context menu either way. -->
+              <div class="row gap-1 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                <button class="btn-default btn-sm" :disabled="!job.retryable && !job.route" @click.stop="rerun(job.id)">恢复参数</button>
+                <button class="btn-ghost btn-sm" :disabled="!historyOutputPath(job)" @click.stop="reveal(historyOutputPath(job))">打开位置</button>
+                <button class="btn-ghost btn-sm" :disabled="!historyOutputPath(job)" @click.stop="saveAs(historyOutputPath(job), historyOutputName(job))">
+                  {{ historyOutputCount(job) > 1 ? '另存首个' : '另存为' }}
+                </button>
+                <button
+                  class="btn-ghost btn-sm btn-icon"
+                  :disabled="!historyOutputPath(job)"
+                  :title="historyOutputCount(job) > 1 ? `复制全部 ${historyOutputCount(job)} 个输出路径` : '复制输出路径'"
+                  :aria-label="historyOutputCount(job) > 1 ? `复制全部 ${historyOutputCount(job)} 个输出路径` : '复制输出路径'"
+                  @click.stop="copyOutputs(job)"
+                >
+                  <AppIcon name="duplicate" :size="14" />
+                </button>
+                <button class="btn-ghost btn-sm btn-icon hover:text-danger" title="删除记录" aria-label="删除历史记录" @click.stop="remove(job.id)">
+                  <AppIcon name="trash" :size="14" />
+                </button>
+              </div>
+            </article>
+          </div>
         </div>
       </div>
-      </div>
     </section>
-    <EmptyState v-else-if="activeView === 'jobs' && store.jobs.length && hasActiveFilters" icon="search" title="没有匹配的处理记录" description="试试清除搜索或放宽状态、类型筛选。" action="清除筛选" @action="clearFilters" />
+
+    <EmptyState v-else-if="activeView === 'jobs' && store.jobs.length && hasActiveFilters" icon="search" title="没有匹配的处理记录" description="试试清除搜索，或放宽状态与类型筛选。" action="清除筛选" @action="clearFilters" />
     <EmptyState v-else-if="activeView === 'jobs'" icon="clock" title="还没有处理记录" description="拖入一份 PDF、图片或文本，完成后的参数与输出会出现在这里。" action="开始第一次处理" @action="router.push('/tools')" />
 
-    <section v-else-if="activities.length" class="activity-ledger panel" aria-label="操作日志">
-      <article v-for="item in activities" :key="item.id" v-memo="[item.id, item.title, item.detail, item.route]" :class="{ actionable: item.route }" :role="item.route ? 'link' : undefined" :tabindex="item.route ? 0 : undefined" :aria-label="item.route ? `${item.title}；打开相关页面` : undefined" @click="item.route ? router.push(item.route) : undefined" @keydown.enter="item.route ? router.push(item.route) : undefined" @keydown.space.prevent="item.route ? router.push(item.route) : undefined">
-        <b>{{ item.kind.toUpperCase() }}</b><span><strong>{{ item.title }}</strong><small>{{ item.detail || 'Knitspace 本地操作' }}</small></span><time>{{ formatTime(item.createdAt) }}</time><AppIcon v-if="item.route" name="arrow-right" :size="14" />
+    <section v-else-if="activities.length" class="pane" aria-label="操作日志">
+      <article
+        v-for="item in activities"
+        :key="item.id"
+        v-memo="[item.id, item.title, item.detail, item.route]"
+        class="row gap-3 px-4 py-3 border-b border-line last:border-b-0"
+        :class="item.route ? 'cursor-pointer hover:bg-surface-2' : ''"
+        :role="item.route ? 'link' : undefined"
+        :tabindex="item.route ? 0 : undefined"
+        :aria-label="item.route ? `${item.title}；打开相关页面` : undefined"
+        @click="item.route ? router.push(item.route) : undefined"
+        @keydown.enter="item.route ? router.push(item.route) : undefined"
+        @keydown.space.prevent="item.route ? router.push(item.route) : undefined"
+      >
+        <b class="center w-14 h-6 shrink-0 rounded-full bg-surface-2 text-[10px] font-semibold tracking-wide text-fg-3">{{ item.kind.toUpperCase() }}</b>
+        <span class="stack gap-0.5 min-w-0 flex-1">
+          <strong class="text-[13px] font-medium text-fg truncate">{{ item.title }}</strong>
+          <small class="text-[11px] text-fg-3 truncate">{{ item.detail || 'Knitspace 本地操作' }}</small>
+        </span>
+        <time class="text-[11px] tabular-nums text-fg-3 shrink-0">{{ formatTime(item.createdAt) }}</time>
+        <AppIcon v-if="item.route" name="arrow-right" :size="14" class="shrink-0 text-fg-3" />
       </article>
     </section>
-    <EmptyState v-else-if="store.activities.length && hasActiveFilters" icon="search" title="没有匹配的操作日志" description="日志仍保存在本机；清除搜索或切换活动类型即可查看。" action="清除筛选" @action="clearFilters" />
-    <EmptyState v-else icon="sort" title="还没有操作日志" description="打开工具、处理资料或生成输出后，最近活动会安全保存在本机。" />
+
+    <EmptyState v-else-if="store.activities.length && hasActiveFilters" icon="search" title="没有匹配的操作日志" description="日志仍在本机；清除搜索或换个活动类型即可查看。" action="清除筛选" @action="clearFilters" />
+    <EmptyState v-else icon="sort" title="还没有操作日志" description="打开工具、处理资料或生成输出后，最近活动会保存在本机。" />
 
     <Teleport to="body">
-      <section v-if="contextMenu" ref="contextMenuElement" class="history-context-menu" role="menu" :aria-label="`${contextMenu.job.label} 操作`" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleContextKeydown">
-        <p>{{ contextMenu.job.label }}</p>
-        <button role="menuitem" :disabled="!contextMenu.job.retryable && !contextMenu.job.route" @click="contextRerun">恢复上次参数</button>
-        <button role="menuitem" :disabled="!historyOutputPath(contextMenu.job)" @click="contextReveal">打开输出位置</button>
-        <button role="menuitem" :disabled="!historyOutputPath(contextMenu.job)" @click="contextSaveAs">{{ historyOutputCount(contextMenu.job) > 1 ? '另存首个输出…' : '另存为…' }}</button>
-        <button role="menuitem" :disabled="!historyOutputPath(contextMenu.job)" @click="contextCopy">{{ historyOutputCount(contextMenu.job) > 1 ? `复制全部 ${historyOutputCount(contextMenu.job)} 个输出路径` : '复制输出路径' }}</button>
-        <button role="menuitem" :disabled="['queued', 'running'].includes(contextMenu.job.status)" @click="contextToggleSelection">{{ selectedJobIds.has(contextMenu.job.id) ? '取消选择此记录' : '选择此记录' }}</button>
-        <button role="menuitem" class="danger" @click="contextRemove">删除历史记录</button>
-      </section>
+      <div
+        v-if="contextMenu"
+        ref="contextMenuElement"
+        class="fixed z-[120] w-60 p-1 rounded-md bg-surface border border-line-strong shadow-lg"
+        role="menu"
+        :aria-label="`${contextMenu.job.label} 操作`"
+        :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextKeydown"
+      >
+        <p class="px-2.5 py-1.5 text-[11px] text-fg-3 truncate">{{ contextMenu.job.label }}</p>
+        <button class="nav-item w-full" role="menuitem" :disabled="!contextMenu.job.retryable && !contextMenu.job.route" @click="contextRerun">恢复上次参数</button>
+        <button class="nav-item w-full" role="menuitem" :disabled="!historyOutputPath(contextMenu.job)" @click="contextReveal">打开输出位置</button>
+        <button class="nav-item w-full" role="menuitem" :disabled="!historyOutputPath(contextMenu.job)" @click="contextSaveAs">
+          {{ historyOutputCount(contextMenu.job) > 1 ? '另存首个输出…' : '另存为…' }}
+        </button>
+        <button class="nav-item w-full" role="menuitem" :disabled="!historyOutputPath(contextMenu.job)" @click="contextCopy">
+          {{ historyOutputCount(contextMenu.job) > 1 ? `复制全部 ${historyOutputCount(contextMenu.job)} 个输出路径` : '复制输出路径' }}
+        </button>
+        <button class="nav-item w-full" role="menuitem" :disabled="['queued', 'running'].includes(contextMenu.job.status)" @click="contextToggleSelection">
+          {{ selectedJobIds.has(contextMenu.job.id) ? '取消选择此记录' : '选择此记录' }}
+        </button>
+        <button class="nav-item w-full hover:bg-danger-soft hover:text-danger" role="menuitem" @click="contextRemove">删除历史记录</button>
+      </div>
     </Teleport>
   </div>
 </template>

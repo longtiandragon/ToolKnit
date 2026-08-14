@@ -217,104 +217,122 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <div class="markdown-insert-backdrop" @mousedown.self="$emit('close')">
-      <section ref="dialog" class="markdown-insert-dialog" role="dialog" aria-modal="true" aria-labelledby="markdown-insert-title" @mousedown.stop @keydown="handleKeydown">
-        <header>
-          <div>
-            <p>Markdown 构建器</p>
-            <h2 id="markdown-insert-title">插入表格或公式</h2>
-            <span>生成的是标准 Markdown，可继续交给 Typora 或 Obsidian 打开。</span>
+    <div class="fixed inset-0 z-150 center p-4 bg-[var(--scrim)] backdrop-blur-[3px]" @mousedown.self="$emit('close')">
+      <section ref="dialog" class="stack w-full max-w-200 max-h-[88vh] panel shadow-lg overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="markdown-insert-title" @mousedown.stop @keydown="handleKeydown">
+        <header class="row-between items-start gap-4 shrink-0 px-5 pt-4 pb-3">
+          <div class="stack gap-1 min-w-0">
+            <p class="text-[11px] font-semibold text-fg-3">Markdown 构建器</p>
+            <h2 id="markdown-insert-title" class="text-[16px] font-semibold text-fg">插入表格或公式</h2>
+            <span class="text-[12px] leading-relaxed text-fg-3">生成的是标准 Markdown，可继续交给 Typora 或 Obsidian 打开。</span>
           </div>
-          <button class="markdown-insert-close" type="button" aria-label="关闭插入器" @click="$emit('close')">×</button>
+          <button class="btn-ghost btn-icon w-8 h-8 shrink-0 text-[18px]" type="button" aria-label="关闭插入器" @click="$emit('close')">×</button>
         </header>
 
-        <nav class="markdown-insert-tabs" role="tablist" aria-label="插入类型">
-          <button data-dialog-initial type="button" role="tab" :aria-selected="panel === 'table'" :class="{ active: panel === 'table' }" @click="setPanel('table')"><AppIcon name="table" :size="15" />表格</button>
-          <button type="button" role="tab" :aria-selected="panel === 'formula'" :class="{ active: panel === 'formula' }" @click="setPanel('formula')"><AppIcon name="math" :size="15" />公式</button>
+        <nav class="row gap-1 shrink-0 px-5 pb-3 border-b border-line" role="tablist" aria-label="插入类型">
+          <button data-dialog-initial type="button" role="tab" class="btn btn-sm" :aria-selected="panel === 'table'" :class="panel === 'table' ? 'bg-accent-soft text-accent' : 'text-fg-2 hover:bg-surface-2 hover:text-fg'" @click="setPanel('table')"><AppIcon name="table" :size="15" />表格</button>
+          <button type="button" role="tab" class="btn btn-sm" :aria-selected="panel === 'formula'" :class="panel === 'formula' ? 'bg-accent-soft text-accent' : 'text-fg-2 hover:bg-surface-2 hover:text-fg'" @click="setPanel('formula')"><AppIcon name="math" :size="15" />公式</button>
         </nav>
 
-        <div v-if="panel === 'table'" class="markdown-insert-body markdown-table-builder" role="tabpanel">
-          <div class="markdown-table-controls">
-            <label><span>列数</span><div class="markdown-stepper"><button type="button" aria-label="减少列数" @click="changeDimension('columns', -1)">−</button><input v-model.number="columns" type="number" min="1" max="8" aria-label="表格列数" @change="normalizeDimensions" /><button type="button" aria-label="增加列数" @click="changeDimension('columns', 1)">＋</button></div></label>
-            <label><span>内容行</span><div class="markdown-stepper"><button type="button" aria-label="减少内容行" @click="changeDimension('rows', -1)">−</button><input v-model.number="rows" type="number" min="1" max="12" aria-label="表格内容行数" @change="normalizeDimensions" /><button type="button" aria-label="增加内容行" @click="changeDimension('rows', 1)">＋</button></div></label>
-            <label class="markdown-table-header-toggle"><input v-model="fillHeader" type="checkbox" /><span><b>填写表头</b><small>关闭后保留空白表头，仍兼容 GFM。</small></span></label>
-            <fieldset><legend>列对齐</legend><div class="markdown-segments"><button v-for="item in [{ value: 'default', label: '默认' }, { value: 'left', label: '左' }, { value: 'center', label: '居中' }, { value: 'right', label: '右' }]" :key="item.value" type="button" :aria-pressed="alignment === item.value" :class="{ active: alignment === item.value }" @click="alignment = item.value as MarkdownTableAlignment">{{ item.label }}</button></div></fieldset>
+        <!-- Controls on the left, the thing being built on the right. Both
+             panels keep that split so switching tabs does not move the eye. -->
+        <div v-if="panel === 'table'" class="grid gap-5 flex-1 min-h-0 overflow-y-auto p-5 grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(240px,0.9fr)]" role="tabpanel">
+          <div class="stack content-start gap-3.5 min-w-0">
+            <label class="stack gap-1.5">
+              <span class="text-[12px] font-medium text-fg-2">列数</span>
+              <div class="row w-36 h-9 rounded-sm bg-well border border-line overflow-hidden">
+                <button type="button" class="center w-9 h-full shrink-0 text-[15px] text-fg-2 transition-colors hover:bg-surface-2 hover:text-fg" aria-label="减少列数" @click="changeDimension('columns', -1)">−</button>
+                <input v-model.number="columns" type="number" min="1" max="8" class="min-w-0 flex-1 h-full px-1 bg-transparent border-x border-line text-center font-mono text-[12px] text-fg focus:outline-none [&::-webkit-inner-spin-button]:appearance-none" aria-label="表格列数" @change="normalizeDimensions" />
+                <button type="button" class="center w-9 h-full shrink-0 text-[15px] text-fg-2 transition-colors hover:bg-surface-2 hover:text-fg" aria-label="增加列数" @click="changeDimension('columns', 1)">＋</button>
+              </div>
+            </label>
+            <label class="stack gap-1.5">
+              <span class="text-[12px] font-medium text-fg-2">内容行</span>
+              <div class="row w-36 h-9 rounded-sm bg-well border border-line overflow-hidden">
+                <button type="button" class="center w-9 h-full shrink-0 text-[15px] text-fg-2 transition-colors hover:bg-surface-2 hover:text-fg" aria-label="减少内容行" @click="changeDimension('rows', -1)">−</button>
+                <input v-model.number="rows" type="number" min="1" max="12" class="min-w-0 flex-1 h-full px-1 bg-transparent border-x border-line text-center font-mono text-[12px] text-fg focus:outline-none [&::-webkit-inner-spin-button]:appearance-none" aria-label="表格内容行数" @change="normalizeDimensions" />
+                <button type="button" class="center w-9 h-full shrink-0 text-[15px] text-fg-2 transition-colors hover:bg-surface-2 hover:text-fg" aria-label="增加内容行" @click="changeDimension('rows', 1)">＋</button>
+              </div>
+            </label>
+            <label class="row items-start gap-2.5 px-3 py-2.5 rounded-md bg-surface-2 border border-line cursor-pointer">
+              <input v-model="fillHeader" type="checkbox" class="shrink-0 mt-0.5 w-4 h-4 accent-[var(--accent-solid)]" />
+              <span class="stack gap-0.5 min-w-0"><b class="text-[12px] font-medium text-fg">填写表头</b><small class="text-[11px] leading-snug text-fg-3">关闭后保留空白表头，仍兼容 GFM。</small></span>
+            </label>
+            <fieldset class="min-w-0 m-0 p-0 border-0">
+              <legend class="text-[12px] font-medium text-fg-2">列对齐</legend>
+              <div class="row gap-0.5 w-max max-w-full mt-1.5 p-0.5 rounded-sm bg-well border border-line">
+                <button
+                  v-for="item in [{ value: 'default', label: '默认' }, { value: 'left', label: '左' }, { value: 'center', label: '居中' }, { value: 'right', label: '右' }]"
+                  :key="item.value"
+                  type="button"
+                  class="h-7 px-2.5 rounded-[4px] text-[12px] transition-colors"
+                  :aria-pressed="alignment === item.value"
+                  :class="alignment === item.value ? 'bg-surface text-fg font-medium shadow-sm' : 'text-fg-3 hover:text-fg'"
+                  @click="alignment = item.value as MarkdownTableAlignment"
+                >{{ item.label }}</button>
+              </div>
+            </fieldset>
           </div>
-          <div class="markdown-table-preview" aria-label="表格结构预览">
-            <header><span>结构预览</span><code>{{ columns }} × {{ rows + 1 }}</code></header>
-            <div class="markdown-table-preview__grid" :style="{ gridTemplateColumns: `repeat(${columns}, minmax(22px, 1fr))` }">
-              <i v-for="column in columns" :key="`head-${column}`" class="head">{{ fillHeader ? column : '' }}</i>
-              <i v-for="cell in tableCells" :key="cell"></i>
+          <div class="stack content-start gap-3 min-w-0 p-4 rounded-md bg-surface-2 border border-line" aria-label="表格结构预览">
+            <header class="row-between gap-2"><span class="text-[11px] font-semibold text-fg-3">结构预览</span><code class="font-mono text-[11px] font-semibold text-accent">{{ columns }} × {{ rows + 1 }}</code></header>
+            <div class="grid gap-[3px] min-h-33 content-center" :style="{ gridTemplateColumns: `repeat(${columns}, minmax(22px, 1fr))` }">
+              <i v-for="column in columns" :key="`head-${column}`" class="center min-h-5.5 rounded-[3px] bg-accent-soft border border-accent not-italic font-mono text-[11px] font-semibold text-accent">{{ fillHeader ? column : '' }}</i>
+              <i v-for="cell in tableCells" :key="cell" class="min-h-5.5 rounded-[3px] bg-surface border border-line"></i>
             </div>
-            <small>最多 8 列、12 行，避免误操作生成超大表格。</small>
+            <small class="text-[11px] leading-relaxed text-fg-3">最多 8 列、12 行，避免误操作生成超大表格。</small>
           </div>
         </div>
 
-        <div v-else class="markdown-insert-body markdown-formula-builder" role="tabpanel">
-          <section class="formula-vision-card" :class="{ open: formulaVisionOpen }">
-            <button class="formula-vision-toggle" type="button" :aria-expanded="formulaVisionOpen" @click="formulaVisionOpen = !formulaVisionOpen">
-              <span><AppIcon name="file-image" :size="15" /><b>从公式图片生成草稿</b><small>可选 AI · 发送前再次确认</small></span><i>{{ formulaVisionOpen ? '−' : '＋' }}</i>
+        <div v-else class="grid gap-5 flex-1 min-h-0 overflow-y-auto p-5 grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(240px,0.9fr)]" role="tabpanel">
+          <!-- Recognition is optional and it leaves the machine, so it stays
+               folded away above the editor rather than beside it. -->
+          <section class="stack md:col-span-2 min-w-0 overflow-hidden rounded-md bg-surface-2 border" :class="formulaVisionOpen ? 'border-accent' : 'border-line'">
+            <button class="row-between gap-3 w-full h-11 px-3 text-left transition-colors hover:bg-surface-3" type="button" :aria-expanded="formulaVisionOpen" @click="formulaVisionOpen = !formulaVisionOpen">
+              <span class="row gap-2 min-w-0"><AppIcon name="file-image" :size="15" class="shrink-0 text-fg-3" /><b class="text-[12px] font-medium text-fg">从公式图片生成草稿</b><small class="pl-2 border-l border-line text-[11px] text-fg-3">可选 AI · 发送前再次确认</small></span>
+              <i class="shrink-0 not-italic text-[15px] text-fg-3">{{ formulaVisionOpen ? '−' : '＋' }}</i>
             </button>
-            <div v-if="formulaVisionOpen" class="formula-vision-body">
-              <input ref="formulaImageInput" class="formula-vision-input" type="file" accept="image/png,image/jpeg,image/webp" @change="chooseFormulaImage" />
-              <button v-if="!formulaImage" class="formula-image-picker" type="button" :disabled="formulaImageBusy" @click="selectFormulaImage">
-                <AppIcon name="file-image" :size="20" /><span><b>{{ formulaImageBusy ? '正在后台准备图片…' : '选择公式截图' }}</b><small>PNG / JPG / WebP，原图不超过 12 MB</small></span>
+            <div v-if="formulaVisionOpen" class="grid gap-2.5 p-3 border-t border-line grid-cols-1 md:grid-cols-[minmax(210px,0.9fr)_minmax(240px,1.1fr)]">
+              <input ref="formulaImageInput" class="hidden" type="file" accept="image/png,image/jpeg,image/webp" @change="chooseFormulaImage" />
+              <button v-if="!formulaImage" class="row gap-2.5 min-h-21 p-2.5 rounded-md bg-surface border border-dashed border-line text-left transition-colors hover:border-accent hover:bg-accent-soft disabled:opacity-45 disabled:cursor-not-allowed" type="button" :disabled="formulaImageBusy" @click="selectFormulaImage">
+                <AppIcon name="file-image" :size="20" class="shrink-0 text-fg-3" /><span class="stack gap-1 min-w-0"><b class="text-[12px] font-medium text-fg truncate">{{ formulaImageBusy ? '正在后台准备图片…' : '选择公式截图' }}</b><small class="text-[11px] leading-snug text-fg-3">PNG / JPG / WebP，原图不超过 12 MB</small></span>
               </button>
-              <button v-else class="formula-image-preview" type="button" aria-label="公式图片预览；右键可重新选择或移除" aria-haspopup="menu" :aria-expanded="Boolean(imageMenu)" @click="selectFormulaImage" @contextmenu="openImageMenu" @keydown="handleImagePreviewKeydown">
-                <img :src="formulaImage.dataUrl" alt="当前确认后将发送给识别服务的公式图片" />
-                <span><b>{{ formulaImage.name }}</b><small>实际发送：{{ formulaImage.width }} × {{ formulaImage.height }} JPEG · {{ formatFormulaImageSize(formulaImage.sentSize) }}</small></span>
+              <button v-else class="row gap-2.5 min-h-21 p-2.5 rounded-md bg-surface border border-dashed border-line text-left transition-colors hover:border-accent" type="button" aria-label="公式图片预览；右键可重新选择或移除" aria-haspopup="menu" :aria-expanded="Boolean(imageMenu)" @click="selectFormulaImage" @contextmenu="openImageMenu" @keydown="handleImagePreviewKeydown">
+                <img :src="formulaImage.dataUrl" alt="当前确认后将发送给识别服务的公式图片" class="shrink-0 w-19 h-15 object-contain rounded-sm bg-well border border-line" />
+                <span class="stack gap-1 min-w-0"><b class="text-[12px] font-medium text-fg truncate">{{ formulaImage.name }}</b><small class="text-[11px] leading-snug text-fg-3">实际发送：{{ formulaImage.width }} × {{ formulaImage.height }} JPEG · {{ formatFormulaImageSize(formulaImage.sentSize) }}</small></span>
               </button>
-              <div class="formula-vision-control">
-                <label v-if="store.aiProfiles.length"><span>识别服务</span><select v-model="formulaProfileId" aria-label="公式图片识别服务"><option v-for="profile in store.aiProfiles" :key="profile.id" :value="profile.id">{{ profile.label }} · {{ profile.model }}</option></select></label>
-                <p v-else>尚未配置兼容服务。<RouterLink to="/settings?section=ai">前往 AI 服务与凭据</RouterLink></p>
-                <button class="primary-button" type="button" :disabled="!formulaImage || !formulaProfile || formulaImageBusy || formulaVisionRunning" @click="recognizeFormula"><AppIcon name="sparkle" :size="13" />{{ formulaVisionRunning ? '正在识别…' : '确认发送并生成草稿' }}</button>
+              <div class="stack justify-center gap-2 min-w-0">
+                <label v-if="store.aiProfiles.length" class="stack gap-1.5"><span class="text-[12px] font-medium text-fg-2">识别服务</span><select v-model="formulaProfileId" class="field w-full h-8 text-[12px]" aria-label="公式图片识别服务"><option v-for="profile in store.aiProfiles" :key="profile.id" :value="profile.id">{{ profile.label }} · {{ profile.model }}</option></select></label>
+                <p v-else class="text-[11px] leading-relaxed text-fg-3">尚未配置兼容服务。<RouterLink to="/settings?section=ai" class="text-accent hover:underline underline-offset-2">前往 AI 服务与凭据</RouterLink></p>
+                <button class="btn-primary btn-sm" type="button" :disabled="!formulaImage || !formulaProfile || formulaImageBusy || formulaVisionRunning" @click="recognizeFormula"><AppIcon name="sparkle" :size="13" />{{ formulaVisionRunning ? '正在识别…' : '确认发送并生成草稿' }}</button>
               </div>
-              <p class="formula-vision-privacy"><AppIcon name="shield" :size="13" />预览就是将发送的图片；不会附带笔记正文、文件路径或其他资料。服务需要支持图片输入。</p>
-              <p v-if="formulaVisionError" class="formula-vision-error" role="alert">{{ formulaVisionError }}</p>
+              <p class="row items-start gap-1.5 md:col-span-2 px-2.5 py-2 rounded-sm bg-accent-soft text-[11px] leading-relaxed text-fg-2"><AppIcon name="shield" :size="13" class="shrink-0 mt-0.5 text-accent" />预览就是将发送的图片；不会附带笔记正文、文件路径或其他资料。服务需要支持图片输入。</p>
+              <p v-if="formulaVisionError" class="md:col-span-2 px-2.5 py-2 rounded-sm bg-danger-soft text-[11px] leading-relaxed text-danger" role="alert">{{ formulaVisionError }}</p>
             </div>
           </section>
-          <div class="markdown-formula-editor">
-            <div class="markdown-segments markdown-formula-mode" role="group" aria-label="公式显示方式"><button type="button" :class="{ active: formulaMode === 'inline' }" :aria-pressed="formulaMode === 'inline'" @click="formulaMode = 'inline'">行内公式</button><button type="button" :class="{ active: formulaMode === 'block' }" :aria-pressed="formulaMode === 'block'" @click="formulaMode = 'block'">独立公式块</button></div>
-            <label><span>LaTeX 源码</span><textarea ref="formulaInput" v-model="formulaSource" rows="6" maxlength="4000" spellcheck="false" placeholder="例如：\\frac{a}{b}" /></label>
-            <div class="markdown-formula-snippets" aria-label="常用公式片段"><button v-for="snippet in formulaSnippets" :key="snippet.label" type="button" :title="snippet.source" @click="insertFormulaSnippet(snippet.source)">{{ snippet.label }}</button></div>
+          <div class="stack content-start gap-3 min-w-0">
+            <div class="row gap-0.5 w-max max-w-full p-0.5 rounded-sm bg-well border border-line" role="group" aria-label="公式显示方式">
+              <button type="button" class="h-7 px-2.5 rounded-[4px] text-[12px] transition-colors" :class="formulaMode === 'inline' ? 'bg-surface text-fg font-medium shadow-sm' : 'text-fg-3 hover:text-fg'" :aria-pressed="formulaMode === 'inline'" @click="formulaMode = 'inline'">行内公式</button>
+              <button type="button" class="h-7 px-2.5 rounded-[4px] text-[12px] transition-colors" :class="formulaMode === 'block' ? 'bg-surface text-fg font-medium shadow-sm' : 'text-fg-3 hover:text-fg'" :aria-pressed="formulaMode === 'block'" @click="formulaMode = 'block'">独立公式块</button>
+            </div>
+            <label class="stack gap-1.5"><span class="text-[12px] font-medium text-fg-2">LaTeX 源码</span><textarea ref="formulaInput" v-model="formulaSource" class="field-area w-full min-h-33 font-mono text-[12px] text-accent" rows="6" maxlength="4000" spellcheck="false" placeholder="例如：\\frac{a}{b}" /></label>
+            <div class="row flex-wrap gap-1.5" aria-label="常用公式片段"><button v-for="snippet in formulaSnippets" :key="snippet.label" type="button" class="btn-default btn-sm" :title="snippet.source" @click="insertFormulaSnippet(snippet.source)">{{ snippet.label }}</button></div>
           </div>
-          <div class="markdown-formula-preview">
-            <header><span>即时预览</span><code>{{ formulaMode === 'block' ? '$$…$$' : '$…$' }}</code></header>
-            <div class="markdown-formula-preview__surface" v-html="formulaPreview"></div>
-            <small>预览只渲染当前短公式，不会触发整篇文档重排。</small>
+          <div class="stack content-start gap-3 min-w-0 p-4 rounded-md bg-surface-2 border border-line">
+            <header class="row-between gap-2"><span class="text-[11px] font-semibold text-fg-3">即时预览</span><code class="font-mono text-[11px] font-semibold text-accent">{{ formulaMode === 'block' ? '$$…$$' : '$…$' }}</code></header>
+            <div class="center min-h-37 overflow-auto p-3.5 rounded-sm bg-surface border border-line text-fg" v-html="formulaPreview"></div>
+            <small class="text-[11px] leading-relaxed text-fg-3">预览只渲染当前短公式，不会触发整篇文档重排。</small>
           </div>
         </div>
 
-        <footer><span><kbd>Esc</kbd> 取消 · 插入后会选中第一个可编辑内容</span><div><button class="quiet-button" type="button" @click="$emit('close')">取消</button><button class="primary-button" type="button" @click="confirmInsertion">插入{{ panel === 'table' ? '表格' : '公式' }}</button></div></footer>
-        <div v-if="imageMenu" ref="imageMenuElement" class="formula-image-menu" role="menu" aria-label="公式图片操作" :style="{ left: `${imageMenu.x}px`, top: `${imageMenu.y}px` }" @pointerdown.stop @keydown.stop="handleImageMenuKeydown">
-          <button role="menuitem" type="button" @click="selectFormulaImage"><AppIcon name="file-image" :size="13" />重新选择图片</button>
-          <button role="menuitem" type="button" @click="copyFormulaImageName"><AppIcon name="clipboard" :size="13" />复制图片名称</button>
-          <button role="menuitem" type="button" class="danger" @click="clearFormulaImage"><AppIcon name="trash" :size="13" />移除本次图片</button>
+        <footer class="row-between gap-4 shrink-0 px-5 h-14 border-t border-line bg-surface-2">
+          <span class="row gap-1.5 min-w-0 text-[11px] text-fg-3"><kbd class="kbd">Esc</kbd> 取消 · 插入后会选中第一个可编辑内容</span>
+          <div class="row gap-2 shrink-0"><button class="btn-default" type="button" @click="$emit('close')">取消</button><button class="btn-primary" type="button" @click="confirmInsertion">插入{{ panel === 'table' ? '表格' : '公式' }}</button></div>
+        </footer>
+        <div v-if="imageMenu" ref="imageMenuElement" class="menu-panel w-52" role="menu" aria-label="公式图片操作" :style="{ left: `${imageMenu.x}px`, top: `${imageMenu.y}px` }" @pointerdown.stop @keydown.stop="handleImageMenuKeydown">
+          <button class="menu-item" role="menuitem" type="button" @click="selectFormulaImage"><span class="row gap-2"><AppIcon name="file-image" :size="13" />重新选择图片</span></button>
+          <button class="menu-item" role="menuitem" type="button" @click="copyFormulaImageName"><span class="row gap-2"><AppIcon name="clipboard" :size="13" />复制图片名称</span></button>
+          <button class="menu-item menu-item-danger" role="menuitem" type="button" @click="clearFormulaImage"><span class="row gap-2"><AppIcon name="trash" :size="13" />移除本次图片</span></button>
         </div>
       </section>
     </div>
   </Teleport>
 </template>
-
-<style scoped>
-.markdown-insert-backdrop{position:fixed;inset:0;z-index:310;display:grid;place-items:center;padding:24px;background:var(--line-strong)}
-.markdown-insert-dialog{width:min(780px,calc(100vw - 32px));max-height:min(760px,calc(100vh - 32px));overflow:auto;border:1px solid var(--accent-soft);border-radius:16px;color:var(--text);background:var(--surface);box-shadow:0 28px 80px var(--line-strong),0 4px 16px var(--line);font-family:var(--font-ui)}
-.markdown-insert-dialog>header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:22px 24px 18px;border-bottom:1px solid var(--line-weak);background:linear-gradient(145deg,var(--accent-soft),transparent 56%)}
-.markdown-insert-dialog>header>div{display:grid;gap:4px}.markdown-insert-dialog>header p{margin:0;color:var(--green-strong);font:700 9px var(--font-mono);letter-spacing:.1em}.markdown-insert-dialog>header h2{margin:0;font:710 22px/1.3 var(--font-display);letter-spacing:-.025em}.markdown-insert-dialog>header span{color:var(--muted);font-size:10px;line-height:1.55}
-.markdown-insert-close{display:grid;width:31px;height:31px;flex:0 0 auto;place-items:center;border:1px solid transparent;border-radius:8px;color:var(--muted);background:transparent;font-size:20px}.markdown-insert-close:hover,.markdown-insert-close:focus-visible{border-color:var(--accent-soft);color:var(--green-strong);background:var(--green-bg)}
-.markdown-insert-tabs{display:flex;gap:5px;padding:10px 24px 0}.markdown-insert-tabs button{display:inline-flex;min-height:34px;align-items:center;gap:7px;padding:0 13px;border:1px solid transparent;border-radius:8px;color:var(--text-secondary);background:transparent;font:680 11px var(--font-ui)}.markdown-insert-tabs button.active{border-color:var(--accent-soft);color:var(--green-strong);background:var(--green-bg)}
-.markdown-insert-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,.9fr);gap:22px;padding:18px 24px 23px}.markdown-table-controls,.markdown-formula-editor{display:grid;align-content:start;gap:14px}.markdown-table-controls>label:not(.markdown-table-header-toggle),.markdown-formula-editor>label{display:grid;gap:7px}.markdown-table-controls label>span,.markdown-formula-editor label>span,.markdown-table-controls legend{color:var(--text-secondary);font:680 10px var(--font-ui)}
-.markdown-stepper{display:grid;width:142px;grid-template-columns:36px 1fr 36px;overflow:hidden;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface)}.markdown-stepper button{border:0;color:var(--green-strong);background:var(--green-bg);font-size:16px}.markdown-stepper input{width:100%;min-width:0;border:0;border-inline:1px solid var(--line);outline:0;color:var(--text);background:transparent;font:700 11px var(--font-mono);text-align:center}.markdown-stepper input::-webkit-inner-spin-button{appearance:none}
-.markdown-table-header-toggle{display:flex;align-items:flex-start;gap:9px;padding:11px;border:1px solid var(--line-weak);border-radius:9px;background:var(--surface-2)}.markdown-table-header-toggle input{margin-top:2px;accent-color:var(--green)}.markdown-table-header-toggle>span{display:grid;gap:3px}.markdown-table-header-toggle b{font-size:10px}.markdown-table-header-toggle small{color:var(--muted);font-size:9px;line-height:1.45}
-.markdown-table-controls fieldset{display:grid;gap:7px;margin:0;padding:0;border:0}.markdown-table-controls legend{margin-bottom:7px}.markdown-segments{display:flex;width:max-content;max-width:100%;padding:3px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}.markdown-segments button{min-height:28px;padding:0 10px;border:0;border-radius:6px;color:var(--muted);background:transparent;font:650 9px var(--font-ui)}.markdown-segments button.active{color:var(--green-strong);background:var(--surface);box-shadow:0 1px 4px var(--accent-soft)}
-.markdown-table-preview,.markdown-formula-preview{display:grid;min-width:0;align-content:start;gap:13px;padding:15px;border:1px solid var(--accent-soft);border-radius:11px;background:linear-gradient(145deg,var(--surface-2),var(--surface-2))}.markdown-table-preview>header,.markdown-formula-preview>header{display:flex;align-items:center;justify-content:space-between;color:var(--text-secondary);font:700 9px var(--font-mono);letter-spacing:.04em}.markdown-table-preview code,.markdown-formula-preview code{color:var(--green-strong);font:700 9px var(--font-mono)}.markdown-table-preview__grid{display:grid;gap:3px;min-height:132px;align-content:center}.markdown-table-preview__grid i{display:grid;min-height:22px;place-items:center;border:1px solid var(--accent-soft);border-radius:3px;background:var(--surface-2);color:var(--muted);font:700 8px var(--font-mono);font-style:normal}.markdown-table-preview__grid i.head{border-color:var(--accent-soft);color:var(--green-strong);background:var(--accent-soft)}.markdown-table-preview>small,.markdown-formula-preview>small{color:var(--muted);font-size:8.5px;line-height:1.5}
-.markdown-formula-mode{margin-bottom:1px}.markdown-formula-editor textarea{box-sizing:border-box;width:100%;min-height:134px;resize:vertical;padding:11px 12px;border:1px solid var(--line-strong);border-radius:9px;outline:0;color:var(--accent);background:var(--surface);font:11px/1.65 var(--font-mono)}.markdown-formula-editor textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--accent-soft)}.markdown-formula-snippets{display:flex;flex-wrap:wrap;gap:6px}.markdown-formula-snippets button{min-height:29px;padding:0 9px;border:1px solid var(--line);border-radius:7px;color:var(--text-secondary);background:var(--surface);font:620 9px var(--font-ui)}.markdown-formula-snippets button:hover,.markdown-formula-snippets button:focus-visible{border-color:var(--accent-soft);color:var(--green-strong);background:var(--green-bg)}
-.formula-vision-card{grid-column:1/-1;overflow:hidden;border:1px solid var(--accent-soft);border-radius:11px;background:var(--surface-2)}.formula-vision-card.open{border-color:var(--accent-soft);background:var(--surface-2)}.formula-vision-toggle{display:flex;width:100%;min-height:43px;align-items:center;justify-content:space-between;padding:0 13px;border:0;color:var(--text-secondary);background:transparent}.formula-vision-toggle>span{display:flex;align-items:center;gap:7px}.formula-vision-toggle b{font:690 10px var(--font-ui)}.formula-vision-toggle small{padding-left:7px;border-left:1px solid var(--line);color:var(--muted);font:9px var(--font-ui)}.formula-vision-toggle i{color:var(--green-strong);font:normal 16px var(--font-ui)}
-.formula-vision-body{display:grid;grid-template-columns:minmax(210px,.9fr) minmax(240px,1.1fr);gap:10px;padding:0 12px 12px;border-top:1px solid var(--line-weak)}.formula-vision-input{position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none}.formula-image-picker,.formula-image-preview{display:flex;min-height:86px;align-items:center;gap:11px;margin-top:11px;padding:10px;border:1px dashed var(--accent-soft);border-radius:9px;color:var(--text-secondary);background:var(--surface);text-align:left}.formula-image-picker:hover,.formula-image-preview:hover{border-color:var(--green);background:var(--green-bg)}.formula-image-picker>span,.formula-image-preview>span{display:grid;min-width:0;gap:4px}.formula-image-picker b,.formula-image-preview b{overflow:hidden;font:670 9.5px var(--font-ui);text-overflow:ellipsis;white-space:nowrap}.formula-image-picker small,.formula-image-preview small{color:var(--muted);font:8.5px/1.45 var(--font-ui)}.formula-image-preview img{width:78px;height:62px;flex:0 0 auto;object-fit:contain;border:1px solid var(--line-weak);border-radius:6px;background:var(--surface)}
-.formula-vision-control{display:grid;align-content:center;gap:8px;margin-top:11px}.formula-vision-control label{display:grid;gap:5px}.formula-vision-control label>span{color:var(--text-secondary);font:680 9px var(--font-ui)}.formula-vision-control select{box-sizing:border-box;width:100%;min-height:34px;padding:0 9px;border:1px solid var(--line-strong);border-radius:8px;color:var(--text);background:var(--surface);font:9px var(--font-ui)}.formula-vision-control>.primary-button{display:inline-flex;min-height:34px;align-items:center;justify-content:center;gap:7px;margin:0}.formula-vision-control p{margin:0;color:var(--muted);font:9px/1.55 var(--font-ui)}.formula-vision-control a{color:var(--green-strong)}.formula-vision-privacy,.formula-vision-error{grid-column:1/-1;display:flex;align-items:flex-start;gap:6px;margin:0;padding:8px 9px;border-radius:7px;color:var(--muted);background:var(--accent-soft);font:8.5px/1.5 var(--font-ui)}.formula-vision-error{color:var(--danger);background:var(--danger-soft)}
-.formula-image-menu{position:fixed;z-index:380;display:grid;width:184px;padding:5px;border:1px solid var(--accent-soft);border-radius:9px;background:var(--surface);box-shadow:0 14px 36px var(--line-strong)}.formula-image-menu button{display:flex;min-height:33px;align-items:center;gap:8px;padding:0 9px;border:0;border-radius:6px;color:var(--text-secondary);background:transparent;font:9px var(--font-ui);text-align:left}.formula-image-menu button:hover,.formula-image-menu button:focus-visible{color:var(--green-strong);background:var(--green-bg)}.formula-image-menu button.danger{color:var(--danger)}.formula-image-menu button.danger:hover,.formula-image-menu button.danger:focus-visible{background:var(--danger-soft)}
-.markdown-formula-preview__surface{display:grid;min-height:150px;place-items:center;overflow:auto;padding:14px;border:1px solid var(--accent-soft);border-radius:8px;background:var(--surface)}.markdown-formula-preview__surface :deep(p){margin:0}.markdown-formula-preview__surface :deep(.math-block){margin:0;max-width:100%;overflow:auto}.markdown-formula-preview__surface :deep(.katex){font-size:1.08em}
-.markdown-insert-dialog>footer{display:flex;min-height:64px;align-items:center;justify-content:space-between;gap:16px;padding:11px 24px;border-top:1px solid var(--line-weak);background:var(--surface-2)}.markdown-insert-dialog>footer>span{color:var(--muted);font:9px var(--font-ui)}.markdown-insert-dialog>footer kbd{padding:2px 5px;border:1px solid var(--line);border-radius:4px;background:var(--surface);font:8px var(--font-mono)}.markdown-insert-dialog>footer>div{display:flex;gap:8px}.markdown-insert-dialog>footer button{min-height:34px;margin:0;padding:0 14px;font-size:10px}
-.markdown-insert-dialog button:focus-visible,.markdown-insert-dialog input:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:2px}
-@media(max-width:700px){.markdown-insert-backdrop{padding:10px}.markdown-insert-dialog{width:calc(100vw - 20px);max-height:calc(100vh - 20px)}.markdown-insert-body{grid-template-columns:1fr}.formula-vision-body{grid-template-columns:1fr}.formula-vision-control{margin-top:0}.formula-vision-toggle small{display:none}.markdown-insert-dialog>header,.markdown-insert-body,.markdown-insert-dialog>footer{padding-inline:16px}.markdown-insert-tabs{padding-inline:16px}.markdown-insert-dialog>footer{align-items:flex-end;flex-direction:column}.markdown-insert-dialog>footer>span{align-self:flex-start}}
-</style>

@@ -18,17 +18,12 @@
    single cheapest upgrade available to mixed-script UI text. */
 
 /* Latin numerals inside Chinese sentences should not jitter between states. */
-.markdown-preview, .markdown-body, p, li { font-variant-numeric: normal; }
-
-::selection { background: var(--accent-soft); color: var(--text); }
-
-/* ─────────────────────────────────────────────────────────────────────────
+.markdown-preview, .markdown-body, p, li { font-variant-numeric: normal; }/* ─────────────────────────────────────────────────────────────────────────
    3. Type
    ───────────────────────────────────────────────────────────────────────── */
-
 /* Headings build hierarchy from weight, size and tracking. Chinese has no
    small-caps or italics to lean on, so those three do all the work. */
-.topbar h1 { font: 700 24px/1.3 var(--font-display); letter-spacing: -.01em; }
+
 
 
 /* The eyebrow was a shouty uppercase Latin mono label sitting above Chinese
@@ -38,7 +33,7 @@
   align-items: center;
   gap: 6px;
   color: var(--accent);
-  font: 600 12px/1.5 var(--font-ui);
+  font: 600 12px/1.5 var(--font-family-ui);
   letter-spacing: .04em;
   text-transform: none;
 }
@@ -62,7 +57,7 @@
 p, li, dd { line-height: 1.7; }
 small { line-height: 1.6; }
 
-code, pre, kbd, samp { font-family: var(--font-mono); font-variant-ligatures: none; }
+code, pre, kbd, samp { font-family: var(--font-family-mono); font-variant-ligatures: none; }
 
 /* ─────────────────────────────────────────────────────────────────────────
    4. Surfaces
@@ -102,14 +97,6 @@ code, pre, kbd, samp { font-family: var(--font-mono); font-variant-ligatures: no
     background var(--duration-fast) var(--ease-out);
 }
 
-
-
-.topbar {
-  background: color-mix(in srgb, var(--canvas) 82%, transparent);
-  border-bottom-color: var(--line-weak);
-  backdrop-filter: blur(20px) saturate(1.4);
-}
-
 /* ─────────────────────────────────────────────────────────────────────────
    5. Controls
    ───────────────────────────────────────────────────────────────────────── */
@@ -128,7 +115,7 @@ code, pre, kbd, samp { font-family: var(--font-mono); font-variant-ligatures: no
   gap: 7px;
   padding: 0 14px;
   border-radius: var(--radius-sm);
-  font: 600 13px/1 var(--font-ui);
+  font: 600 13px/1 var(--font-family-ui);
   letter-spacing: .01em;
   white-space: nowrap;
   transition:
@@ -139,26 +126,31 @@ code, pre, kbd, samp { font-family: var(--font-mono); font-variant-ligatures: no
     transform var(--duration-fast) var(--ease-out);
 }
 
-/* Primary: the one thing the page wants you to do. */
+/* Primary: the one thing the page wants you to do.
+   It has to be the action colour. When this was `var(--surface-2)` the button
+   was the exact value of the panel behind it — on `/visual` the "选择图片"
+   button vanished into the canvas and only its 1px border gave it away. */
 .primary-button,
 .new-task,
 .run-tool {
-  border: 1px solid var(--accent-ink);
+  border: 1px solid var(--accent-solid);
   color: var(--accent-fg);
-  background: var(--surface-2);
-  box-shadow: var(--shadow-accent);
+  background: var(--accent-solid);
+  box-shadow: var(--shadow-sm);
 }
 .primary-button:hover:not(:disabled),
 .new-task:hover:not(:disabled),
 .run-tool:hover:not(:disabled) {
-  background: var(--surface-2);
-  box-shadow: 0 2px 4px var(--accent-soft), 0 10px 22px var(--accent-soft);
+  border-color: var(--accent-solid-hover);
+  background: var(--accent-solid-hover);
+  box-shadow: var(--shadow-md);
 }
 .primary-button:active:not(:disabled),
 .new-task:active:not(:disabled),
 .run-tool:active:not(:disabled) {
-  background: linear-gradient(180deg, var(--green-strong), var(--accent-ink));
-  box-shadow: inset 0 1px 3px var(--line-strong);
+  border-color: var(--accent-solid-press);
+  background: var(--accent-solid-press);
+  box-shadow: none;
   transform: translateY(1px);
 }
 /* A disabled primary must still read as a button, not as a ghost. */
@@ -242,8 +234,7 @@ textarea,
   border-radius: var(--radius-sm);
   color: var(--text);
   background: var(--surface);
-  box-shadow: inset 0 1px 2px var(--line);
-  font-family: var(--font-ui);
+  font-family: var(--font-family-ui);
   font-size: 13px;
   transition:
     border-color var(--duration-fast) var(--ease-out),
@@ -252,22 +243,18 @@ textarea,
 input:hover:not(:disabled):not(:focus),
 select:hover:not(:disabled):not(:focus),
 textarea:hover:not(:disabled):not(:focus) { border-color: var(--line-strong); }
-input:focus,
-select:focus,
-textarea:focus {
-  border-color: var(--accent-soft);
-  outline: none;
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
+/* The focus ring used to live here as `input:focus { box-shadow: 0 0 0 3px }`.
+   It now doubles up with the `field` shortcut's own ring and with the nine
+   views that put `focus-within:border-accent` on a label wrapping a bare
+   input — two indicators for one focus. `theme.css` owns `:focus-visible`. */
+
 ::placeholder { color: var(--text-faint); opacity: 1; }
 textarea { line-height: 1.7; resize: vertical; }
 
-/* Keyboard focus must stay visible everywhere, including on dark ground. */
-:focus-visible {
-  outline: 2px solid var(--accent-soft);
-  outline-offset: 2px;
-}
-.rail :focus-visible { outline-color: var(--accent); }
+/* Keyboard focus is owned by the token layer (`styles/theme.css`), which draws
+   it in the full-strength accent. This layer used to redeclare it at
+   `--accent-soft` — a 14%-alpha tint — which put an invisible focus ring on
+   every keyboard user's screen. */
 
 /* Tabs and filter pills read as one control group rather than loose buttons. */
 .operation-tabs,
@@ -277,21 +264,11 @@ textarea { line-height: 1.7; resize: vertical; }
   border-radius: var(--radius-sm);
   background: var(--surface-sunken);
 }
-.operation-tabs button,
-.filter-row button {
-  border: 0;
-  border-radius: 5px;
-  color: var(--muted);
-  background: transparent;
-  font: 600 12px/1 var(--font-ui);
-  padding: 7px 11px;
-  transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
-}
-.operation-tabs button:hover,
-.filter-row button:hover { color: var(--text); background: var(--surface-2); }
+
+
 .operation-tabs button.active,
 .filter-row button.active {
-  color: var(--accent-ink);
+  color: var(--accent);
   background: var(--surface);
   box-shadow: var(--shadow-xs);
 }
@@ -302,22 +279,15 @@ textarea { line-height: 1.7; resize: vertical; }
   border-radius: 999px;
   color: var(--green-strong);
   background: var(--green-bg);
-  font: 600 12px/1.5 var(--font-ui);
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
+  font: 600 12px/1.5 var(--font-family-ui);
+}/* ─────────────────────────────────────────────────────────────────────────
    6. Vertical fill
    ───────────────────────────────────────────────────────────────────────── */
-
 /* Routes were top-heavy: a heading, one short panel, then a wide band of bare
    canvas where the panel simply stopped. Every route root carries
    `.page-enter`, so the work surface can be told to absorb the leftover
    height instead of floating in the middle of the window. */
-.workspace-content > .page-enter {
-  display: flex;
-  min-height: 100%;
-  flex-direction: column;
-}
+
 
 .designed-empty,
 .clipboard-grid,
@@ -370,29 +340,9 @@ textarea { line-height: 1.7; resize: vertical; }
     var(--surface);
   text-align: center;
 }
-.designed-empty > b {
-  display: grid;
-  width: 52px;
-  height: 52px;
-  place-items: center;
-  border: 1px solid var(--accent-soft);
-  border-radius: var(--radius-md);
-  color: var(--accent);
-  background: var(--green-bg);
-  box-shadow: var(--shadow-xs);
-}
-.designed-empty h3 {
-  margin: 4px 0 0;
-  color: var(--text);
-  font: 650 17px/1.4 var(--font-display);
-  letter-spacing: -.01em;
-}
-.designed-empty p {
-  max-width: 32em;
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-}
+
+
+
 .designed-empty .quiet-button { margin-top: 6px; }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -400,7 +350,7 @@ textarea { line-height: 1.7; resize: vertical; }
    ───────────────────────────────────────────────────────────────────────── */
 
 .modal-backdrop {
-  background: var(--line-strong);
+  background: var(--scrim);
   backdrop-filter: blur(6px) saturate(.9);
   animation: polish-fade var(--duration-normal) var(--ease-out);
 }
@@ -419,16 +369,9 @@ textarea { line-height: 1.7; resize: vertical; }
    8. Scrollbars
    ───────────────────────────────────────────────────────────────────────── */
 
-* { scrollbar-color: var(--accent-soft) transparent; scrollbar-width: thin; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  background-clip: content-box;
-}
-::-webkit-scrollbar-thumb:hover { background: var(--accent-soft); background-clip: content-box; }
-::-webkit-scrollbar-corner { background: transparent; }
+/* Owned by the token layer. This layer painted the thumb in `--accent-soft`,
+   which is a 14%-alpha tint: the scrollbar read as empty track, and its hover
+   state was declared as the same value, so grabbing it gave no feedback. */
 
 /* ─────────────────────────────────────────────────────────────────────────
    9. Motion

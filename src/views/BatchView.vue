@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useUiStore } from '@/stores/ui'
@@ -7,11 +7,14 @@ import type { FileReference, ToolRecipe } from '@/types'
 import type { PdfTaskOperation } from '@/lib/pdf-worker'
 import { buildRenamePreview, cleanOutputName, transformText, type TextTransformMode } from '@/lib/file-tools'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
-import { isDesktop, revealDesktopFile, saveOutputAs } from '@/lib/native'
-import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
+import { isDesktop } from '@/lib/native'
 import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import FileDropZone from '@/components/FileDropZone.vue'
+import ToolLayout from '@/components/ToolLayout.vue'
+import FieldRow from '@/components/FieldRow.vue'
+import ProgressTrack from '@/components/ProgressTrack.vue'
+import OutputList from '@/components/OutputList.vue'
 
 type ToolGroup = 'pdf' | 'image' | 'text' | 'organize'
 type ToolOption = [id: string, label: string]
@@ -56,11 +59,15 @@ const renameKeepOriginal = ref(false)
 const recipeTitle = ref('')
 const activeRecipeId = ref<string>()
 const recentOutputs = ref<FileReference[]>([])
-const resultMenu = ref<{ output: FileReference; x: number; y: number }>()
-const resultMenuElement = ref<HTMLElement>()
+// Progress is rendered in the work area now, not just written into the job
+// record, so the view needs its own copy of it.
+const progress = ref(0)
+// The recipe name field used to sit permanently in the execution bar, asking
+// every user to name something they had not decided to save. It appears on
+// request instead.
+const recipeFormOpen = ref(false)
 const TASK_CANCELLED_MESSAGE = '任务已停止。已完成的输出会保留。'
 let cancellationRequested = false
-let resultMenuTrigger: HTMLElement | undefined
 
 const groups: [ToolGroup, string, string, string][] = [
   ['pdf', 'file-pdf', 'PDF', '合并、拆页、旋转、提取页面'],
@@ -136,7 +143,6 @@ const textPreview = computed(() => {
     return { content: error instanceof Error ? error.message : '暂时无法生成预览。', truncated: false, error: true }
   }
 })
-const visibleRecentOutputs = computed(() => recentOutputs.value.slice(0, 12))
 const inputFileLimit = computed(() => group.value === 'text' ? 8 * 1024 * 1024 : group.value === 'image' || operation.value === 'images-to-pdf' ? 32 * 1024 * 1024 : 96 * 1024 * 1024)
 const inputTotalLimit = computed(() => group.value === 'text' ? 32 * 1024 * 1024 : group.value === 'image' || operation.value === 'images-to-pdf' ? 96 * 1024 * 1024 : 192 * 1024 * 1024)
 
@@ -150,23 +156,52 @@ function formatSize(value?: number) {
 function clearFiles() {
   if (running.value) return
   files.value = []
+  // Results belong to the tool that produced them. Leaving them on screen
+  // after a switch made the JSON formatter claim it had just written two
+  // watermarked PDFs.
+  recentOutputs.value = []
   if (input.value) input.value.value = ''
+}
+
+/** Rotation is shared by three operations that mean different things by it.
+ *  A watermark tilts; a page turns. Carrying 90° into the watermark panel
+ *  left its angle picker showing no selection at all, because 90 is not one
+ *  of the angles a watermark offers. */
+function defaultRotationFor(next: string) {
+  return next === 'watermark' ? 45 : 90
+}
+
+/** Every tool used to propose the same file name, `knitspace-output`, so a
+ *  folder of results told you nothing about which tool made what. */
+const outputNames: Record<string, string> = {
+  merge: '合并结果',
+  'images-to-pdf': '图片合集',
+  transform: '文本处理结果',
+  'rename-report': '重命名预览',
+  'dedupe-report': '重复文件报告',
+}
+function defaultOutputNameFor(next: string) {
+  return outputNames[next] ?? 'knitspace-output'
 }
 
 function setGroup(next: ToolGroup) {
   if (running.value) return
   group.value = next
   operation.value = operationMap[next][0][0]
+  rotation.value = defaultRotationFor(operation.value)
+  outputName.value = defaultOutputNameFor(operation.value)
   activeRecipeId.value = undefined
   clearFiles()
-  message.value = '已切换工具。请选择本次输入。'
+  message.value = `已切换到${groups.find((item) => item[0] === next)?.[2] ?? ''}工具，选择输入后即可开始。`
 }
 
 function setOperation(next: string) {
   if (running.value) return
   operation.value = next
+  rotation.value = defaultRotationFor(next)
+  outputName.value = defaultOutputNameFor(next)
   clearFiles()
-  message.value = '已切换操作。请重新选择符合要求的输入。'
+  message.value = `已切换到「${operations.value.find((item) => item[0] === next)?.[1] ?? '新操作'}」，请重新选择输入。`
 }
 
 function choose(event: Event) {
@@ -268,6 +303,8 @@ watch(() => route.query, (query) => {
     : operationMap[requestedGroup][0][0]
   group.value = requestedGroup
   operation.value = requestedOperation
+  rotation.value = defaultRotationFor(requestedOperation)
+  outputName.value = defaultOutputNameFor(requestedOperation)
   const supportedTextModes: TextTransformMode[] = ['json', 'trim', 'markdown', 'dedupe-lines', 'sort-lines', 'extract-contacts', 'statistics']
   if (typeof query.mode === 'string' && supportedTextModes.includes(query.mode as TextTransformMode)) textMode.value = query.mode as TextTransformMode
   activeRecipeId.value = undefined
@@ -493,6 +530,7 @@ async function run() {
   cancellationRequested = false
   cancelling.value = false
   running.value = true
+  progress.value = 15
   recentOutputs.value = []
   const kind = group.value as 'pdf' | 'image' | 'text' | 'archive'
   const label = `${groups.find((item) => item[0] === group.value)?.[1]} · ${operations.value.find((item) => item[0] === operation.value)?.[1]}`
@@ -506,11 +544,14 @@ async function run() {
   try {
     let lastProgress = 15
     let lastProgressAt = 0
-    const reportProgress = (progress: number, detail: string) => {
+    const reportProgress = (value: number, detail: string) => {
       if (cancellationRequested) return
-      const next = Math.max(16, Math.min(97, Math.round(16 + progress * .81)))
+      const next = Math.max(16, Math.min(97, Math.round(16 + value * .81)))
       const now = performance.now()
       message.value = detail
+      // The bar advances on every report so it stays smooth; the job record is
+      // only rewritten on a real step, which is what history wants to show.
+      progress.value = Math.max(progress.value, next)
       if (next >= lastProgress + 2 || now - lastProgressAt >= 650) {
         lastProgress = Math.max(lastProgress, next)
         currentProgress = lastProgress
@@ -562,63 +603,11 @@ async function cancelRun() {
   }
 }
 
-function closeResultMenu(restoreFocus = false) {
-  resultMenu.value = undefined
-  if (restoreFocus) void nextTick(() => resultMenuTrigger?.focus({ preventScroll: true }))
-}
-function resultMenuHeight(output: FileReference) { return output.path ? 192 : 120 }
-function showResultMenu(output: FileReference, x: number, y: number, trigger: HTMLElement) {
-  resultMenuTrigger = trigger
-  resultMenu.value = { output, ...clampMenuPosition(x, y, { menuWidth: 224, menuHeight: resultMenuHeight(output), margin: 12 }) }
-  void nextTick(() => resultMenuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus())
-}
-function openResultMenu(event: MouseEvent, output: FileReference) {
-  showResultMenu(output, event.clientX, event.clientY, event.currentTarget as HTMLElement)
-}
-function openResultMenuFromKeyboard(event: KeyboardEvent, output: FileReference) {
-  if (!isContextMenuShortcut(event)) return
-  event.preventDefault()
-  const trigger = event.currentTarget as HTMLElement
-  const bounds = trigger.getBoundingClientRect()
-  showResultMenu(output, bounds.right - 16, bounds.top + 20, trigger)
-}
-function handleResultMenuKeydown(event: KeyboardEvent) {
-  const items = [...(resultMenuElement.value?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])]
-  if (event.key === 'Escape') { event.preventDefault(); closeResultMenu(true); return }
-  const next = nextMenuItemIndex(event.key, items.indexOf(document.activeElement as HTMLButtonElement), items.length)
-  if (next === undefined) return
-  event.preventDefault()
-  items[next]?.focus()
-}
-async function revealResult(output: FileReference) {
-  if (!output.path) return
-  try { await revealDesktopFile(output.path) }
-  catch (error) { ui.toast('无法打开输出位置', error instanceof Error ? error.message : '输出文件可能已移动。', 'error') }
-}
-async function saveResultAs(output: FileReference) {
-  if (!output.path) return
-  try {
-    const saved = await saveOutputAs(output.path, output.name)
-    if (saved) ui.toast('已另存输出', saved, 'success')
-  } catch (error) { ui.toast('另存失败', error instanceof Error ? error.message : '无法复制当前输出。', 'error') }
-}
-async function copyResultPath(output: FileReference) {
-  if (!output.path) return
-  try { await navigator.clipboard.writeText(output.path); ui.toast('输出路径已复制', output.path, 'success') }
-  catch (error) { ui.toast('复制路径失败', error instanceof Error ? error.message : '系统剪贴板暂时不可用。', 'error') }
-}
 function removeResult(output: FileReference) {
   recentOutputs.value = recentOutputs.value.filter((item) => item !== output)
-  closeResultMenu(true)
 }
-async function runRevealResult() { const output = resultMenu.value?.output; closeResultMenu(); if (output) await revealResult(output) }
-async function runSaveResultAs() { const output = resultMenu.value?.output; closeResultMenu(); if (output) await saveResultAs(output) }
-async function runCopyResultPath() { const output = resultMenu.value?.output; closeResultMenu(); if (output) await copyResultPath(output) }
-function closeResultMenuOnOutsideClick() { closeResultMenu() }
 
-onMounted(() => window.addEventListener('click', closeResultMenuOnOutsideClick))
 onBeforeUnmount(() => {
-  window.removeEventListener('click', closeResultMenuOnOutsideClick)
   if (!running.value || group.value !== 'pdf') return
   cancellationRequested = true
   void import('@/lib/pdf-worker').then(({ cancelPdfTask }) => cancelPdfTask()).catch(() => undefined)
@@ -626,68 +615,254 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="tool-center page-enter mx-auto w-full max-w-320 px-8 py-6">
+  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
     <PageHeader :title="activeOperationLabel" :subtitle="activeOperationNote">
       <template #actions>
-        <span class="row gap-1.5 h-9 px-3 rounded-sm bg-surface-2 border border-line text-[12px] text-fg-2">
-          {{ files.length ? `已选 ${files.length} 个文件` : '尚未选择输入' }}
+        <span
+          class="row gap-1.5 h-9 px-3 rounded-sm text-[12px] tabular-nums"
+          :class="files.length ? 'bg-accent-soft text-accent' : 'bg-surface-2 text-fg-3'"
+        >
+          <AppIcon name="inbox" :size="14" />
+          {{ files.length ? `${files.length} 个输入` : '尚未选择输入' }}
         </span>
+      </template>
+
+      <!--
+        The tool picker. This was a 200px sidebar of three categories plus a
+        row of tabs, occupying a column of the page permanently — duplicating
+        the category rail that is already on screen. It is one strip now:
+        which family, then which operation.
+      -->
+      <template #lead>
+        <div class="row gap-3 flex-wrap" role="group" aria-label="选择工具">
+          <div class="row gap-0.5 p-0.5 rounded-sm bg-surface-2 border border-line shrink-0">
+            <button
+              v-for="item in groups"
+              :key="item[0]"
+              :disabled="running"
+              :title="item[3]"
+              :aria-pressed="group === item[0]"
+              class="row gap-1.5 h-7 px-2.5 rounded-[4px] text-[12px] transition-colors disabled:opacity-45"
+              :class="group === item[0] ? 'bg-surface text-fg font-medium shadow-sm' : 'text-fg-3 hover:not-disabled:text-fg'"
+              @click="setGroup(item[0])"
+            >
+              <AppIcon :name="item[1]" :size="14" />{{ item[2] }}
+            </button>
+          </div>
+
+          <div class="row gap-1 flex-wrap min-w-0">
+            <button
+              v-for="item in operations"
+              :key="item[0]"
+              :disabled="running"
+              :aria-pressed="operation === item[0]"
+              class="h-7 px-2.5 rounded-full text-[12px] transition-colors disabled:opacity-45"
+              :class="operation === item[0]
+                ? 'bg-accent-solid text-accent-fg font-medium'
+                : 'text-fg-2 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg'"
+              @click="setOperation(item[0])"
+            >
+              {{ item[1] }}
+            </button>
+          </div>
+        </div>
       </template>
     </PageHeader>
 
-    <section class="tool-shell">
-      <aside class="tool-nav" :inert="running || undefined" :aria-disabled="running" aria-label="工具分类">
-        <button v-for="item in groups" :key="item[0]" :disabled="running" :class="{ active: group === item[0] }" @click="setGroup(item[0])">
-          <b><AppIcon :name="item[1]" :size="18" /> {{ item[2] }}</b><span>{{ item[3] }}</span>
-        </button>
-      </aside>
+    <ToolLayout>
+      <!-- ── Work area ──────────────────────────────────────────────────────
+           Ordered by what you need to see next: the result of the job you
+           just ran, then the job in flight, then the input you are staging.
+      -->
+      <OutputList v-if="recentOutputs.length && !running" :outputs="recentOutputs" @remove="removeResult" />
 
-      <main class="tool-main">
-        <header class="tool-picker" :inert="running || undefined" :aria-disabled="running">
-          <div>
-            <p class="eyebrow">01 · 选择操作</p>
-            <div class="operation-tabs">
-              <button v-for="item in operations" :key="item[0]" :disabled="running" :class="{ active: operation === item[0] }" @click="setOperation(item[0])">{{ item[1] }}</button>
-            </div>
-          </div>
-        </header>
+      <ProgressTrack
+        v-if="running"
+        :label="activeOperationLabel"
+        :value="progress"
+        :detail="message"
+        :done="recentOutputs.map((output) => output.name)"
+        :stopping="cancelling"
+        @cancel="cancelRun"
+      />
 
-        <section class="tool-body" :class="{ 'single-column': !hasParameters }" :inert="running || undefined" :aria-busy="running">
-          <div class="input-card"><p class="eyebrow">02 · 输入</p><FileDropZone v-model="files" :disabled="running" :accept="accept" :max-file-bytes="inputFileLimit" :max-total-bytes="inputTotalLimit" :title="group === 'text' ? '选择文件或直接粘贴' : '拖入需要处理的文件'" :hint="`自动识别类型与大小；本次内存上限 ${formatSize(inputTotalLimit)}`" @error="message=$event"/></div>
+      <template v-else>
+        <!-- Text tools have no files to stage; the content itself is the
+             work surface, and its result updates as you type. -->
+        <template v-if="group === 'text'">
+          <section class="panel overflow-hidden stack flex-1 min-h-52">
+            <header class="row-between gap-2 px-3 h-10 border-b border-line shrink-0">
+              <p class="text-[12px] font-medium text-fg-2">输入文本</p>
+              <span class="text-[11px] text-fg-3 tabular-nums">{{ textInput.length }} 字符</span>
+            </header>
+            <textarea
+              v-model="textInput"
+              name="text-input"
+              class="w-full flex-1 min-h-52 px-3 py-2.5 border-0 rounded-none bg-transparent text-[13px] font-mono leading-relaxed resize-none focus:outline-none"
+              placeholder="粘贴需要处理的内容，结果会随输入实时更新…"
+            />
+          </section>
 
-          <div v-if="hasParameters" class="parameter-card">
-            <p class="eyebrow">03 · 参数</p>
-            <template v-if="group === 'pdf'">
-              <label v-if="operation === 'extract'">页码范围<input v-model="pageRange" name="page-range" placeholder="例如 1,3-5" /></label>
-              <label v-if="operation === 'reorder'">新的页面顺序<input v-model="pageRange" name="page-order" placeholder="例如 3,1,2 或 5,1-3" /></label>
-              <template v-if="operation === 'watermark'">
-                <label>水印文字<input v-model="watermarkText" name="watermark" maxlength="34" /></label>
-                <label>透明度 {{ watermarkOpacity }}%<input v-model.number="watermarkOpacity" type="range" min="3" max="80" /></label>
-                <label>水印颜色<input v-model="watermarkColor" type="color" /></label>
-                <label>倾斜角度<select v-model.number="rotation"><option :value="45">45°</option><option :value="-45">-45°</option><option :value="0">不旋转</option></select></label>
-              </template>
-              <label v-if="operation === 'rotate'">旋转角度<select v-model.number="rotation"><option :value="90">顺时针 90°</option><option :value="180">180°</option><option :value="270">顺时针 270°</option></select></label>
-              <template v-if="operation === 'page-number'">
-                <label>起始页码<input v-model.number="pageNumberStart" type="number" min="0" /></label>
-                <label>页码位置<select v-model="pageNumberPosition"><option value="bottom-center">底部居中</option><option value="bottom-right">右下角</option></select></label>
-              </template>
-              <p v-if="operation === 'split'" class="parameter-note">每一页会生成一份独立 PDF，文件名带原页码。</p>
-              <p v-if="operation === 'text'" class="parameter-note">仅提取 PDF 已有的文字层；扫描件不会伪造识别结果。</p>
+          <section v-if="textPreview" class="panel overflow-hidden" aria-live="polite">
+            <header
+              class="row gap-1.5 px-3 h-10 border-b text-[12px] font-medium"
+              :class="textPreview.error ? 'border-line bg-danger-soft text-danger' : 'border-line text-fg-2'"
+            >
+              <AppIcon :name="textPreview.error ? 'warning' : 'check'" :size="14" />
+              {{ textPreview.error ? '这段内容还不能处理' : '结果预览' }}
+            </header>
+            <pre
+              class="m-0 px-3 py-2.5 max-h-96 overflow-auto text-[12px] font-mono leading-relaxed whitespace-pre-wrap break-words"
+              :class="textPreview.error ? 'text-danger' : 'text-fg-2'"
+            >{{ textPreview.content }}</pre>
+            <p v-if="textPreview.truncated" class="px-3 py-2 border-t border-line text-[11px] text-fg-3">
+              预览只显示前 1800 个字符，导出的内容是完整的。
+            </p>
+          </section>
+
+          <FileDropZone
+            v-if="!textInput.trim()"
+            v-model="files"
+            :accept="accept"
+            :max-file-bytes="inputFileLimit"
+            :max-total-bytes="inputTotalLimit"
+            title="或者载入一个文本文件"
+            hint="载入后内容会填进上方输入框，原文件不会被改动"
+            @error="message = $event"
+          />
+        </template>
+
+        <FileDropZone
+          v-else
+          v-model="files"
+          class="flex-1"
+          :accept="accept"
+          :max-file-bytes="inputFileLimit"
+          :max-total-bytes="inputTotalLimit"
+          :title="group === 'pdf' && operation === 'images-to-pdf' ? '拖入要合成的图片' : '拖入要处理的文件'"
+          :hint="`本次最多载入 ${formatSize(inputTotalLimit)}；处理后生成新文件，原件保持不变`"
+          @error="message = $event"
+        />
+
+        <!-- A rename report is a preview of an answer, so it belongs beside
+             the files it describes rather than in the settings column. -->
+        <section v-if="operation === 'rename-report' && renamePreview.length" class="panel overflow-hidden" aria-live="polite">
+          <header class="row-between gap-2 px-3 h-10 border-b border-line">
+            <p class="text-[12px] font-medium text-fg-2">重命名预览</p>
+            <span class="text-[11px] text-fg-3">不会改动磁盘上的文件</span>
+          </header>
+          <ul class="stack gap-0.5 p-1.5">
+            <li v-for="line in renamePreview" :key="line" class="px-2 py-1 rounded-sm font-mono text-[12px] text-fg-2 hover:bg-surface-2">
+              {{ line }}
+            </li>
+          </ul>
+          <p v-if="files.length > renamePreview.length" class="px-4 py-2 border-t border-line text-[11px] text-fg-3">
+            另有 {{ files.length - renamePreview.length }} 个文件会按同样规则命名。
+          </p>
+        </section>
+      </template>
+
+      <!-- ── Settings column ────────────────────────────────────────────── -->
+      <template #aside>
+        <section v-if="hasParameters" class="panel p-4 stack gap-4">
+          <p class="eyebrow">参数</p>
+
+          <template v-if="group === 'pdf'">
+            <FieldRow v-if="operation === 'extract'" label="页码范围" hint="逗号分隔，连续页用短横线">
+              <input v-model="pageRange" name="page-range" class="field w-full" placeholder="1,3-5" />
+            </FieldRow>
+
+            <FieldRow v-if="operation === 'reorder'" label="新的页面顺序" hint="按写下的先后重排，未列出的页会被丢弃">
+              <input v-model="pageRange" name="page-order" class="field w-full" placeholder="3,1,2" />
+            </FieldRow>
+
+            <template v-if="operation === 'watermark'">
+              <FieldRow label="水印文字">
+                <input v-model="watermarkText" name="watermark" maxlength="34" class="field w-full" />
+              </FieldRow>
+              <FieldRow label="透明度">
+                <template #value>{{ watermarkOpacity }}%</template>
+                <input v-model.number="watermarkOpacity" type="range" min="3" max="80" class="w-full accent-accent" />
+              </FieldRow>
+              <FieldRow label="倾斜角度">
+                <select v-model.number="rotation" class="field w-full">
+                  <option :value="45">斜向上 45°</option>
+                  <option :value="-45">斜向下 45°</option>
+                  <option :value="0">水平不旋转</option>
+                </select>
+              </FieldRow>
+              <FieldRow label="水印颜色" hint="浅灰通常最不干扰阅读">
+                <div class="row gap-2">
+                  <input v-model="watermarkColor" type="color" aria-label="水印颜色" />
+                  <code class="row h-8 px-2 rounded-sm bg-well border border-line text-[12px] text-fg-3 uppercase">{{ watermarkColor }}</code>
+                </div>
+              </FieldRow>
             </template>
 
-            <template v-else-if="group === 'image'">
-              <label>输出格式<select v-model="imageFormat"><option value="image/png">PNG</option><option value="image/jpeg">JPG</option><option value="image/webp">WebP</option></select></label>
-              <label v-if="operation === 'rotate'">旋转角度<select v-model.number="rotation"><option :value="90">顺时针 90°</option><option :value="180">180°</option><option :value="270">顺时针 270°</option></select></label>
-              <template v-if="operation === 'crop'">
-                <div class="parameter-pair"><label>左侧起点<input v-model.number="cropLeft" type="number" min="0" max="99" /><span>%</span></label><label>顶部起点<input v-model.number="cropTop" type="number" min="0" max="99" /><span>%</span></label></div>
-                <div class="parameter-pair"><label>裁剪宽度<input v-model.number="cropWidth" type="number" min="1" max="100" /><span>%</span></label><label>裁剪高度<input v-model.number="cropHeight" type="number" min="1" max="100" /><span>%</span></label></div>
-              </template>
-              <label>最大宽度<input v-model.number="maxWidth" type="number" min="100" max="7680" /></label>
-              <label>质量 {{ quality }}%<input v-model.number="quality" type="range" min="20" max="100" /></label>
+            <FieldRow v-if="operation === 'rotate'" label="旋转角度">
+              <select v-model.number="rotation" class="field w-full">
+                <option :value="90">顺时针 90°</option>
+                <option :value="180">旋转 180°</option>
+                <option :value="270">逆时针 90°</option>
+              </select>
+            </FieldRow>
+
+            <template v-if="operation === 'page-number'">
+              <FieldRow label="起始页码" hint="第一页从这个数字开始编">
+                <input v-model.number="pageNumberStart" type="number" min="0" class="field w-full" />
+              </FieldRow>
+              <FieldRow label="页码位置">
+                <select v-model="pageNumberPosition" class="field w-full">
+                  <option value="bottom-center">底部居中</option>
+                  <option value="bottom-right">右下角</option>
+                </select>
+              </FieldRow>
             </template>
 
-            <template v-else-if="group === 'text'">
-              <label>处理方式<select v-model="textMode">
+            <p v-if="operation === 'split'" class="text-[12px] text-fg-3 leading-snug">
+              每一页会生成一份独立 PDF，文件名带上原来的页码。这个操作没有需要设置的参数。
+            </p>
+            <p v-if="operation === 'text'" class="text-[12px] text-fg-3 leading-snug">
+              只导出 PDF 里已有的文字层。扫描件里没有文字层，这里不会伪造识别结果，请改用 OCR。
+            </p>
+          </template>
+
+          <template v-else-if="group === 'image'">
+            <FieldRow label="输出格式">
+              <select v-model="imageFormat" class="field w-full">
+                <option value="image/png">PNG · 无损，体积大</option>
+                <option value="image/jpeg">JPG · 照片首选</option>
+                <option value="image/webp">WebP · 体积最小</option>
+              </select>
+            </FieldRow>
+            <FieldRow v-if="operation === 'rotate'" label="旋转角度">
+              <select v-model.number="rotation" class="field w-full">
+                <option :value="90">顺时针 90°</option>
+                <option :value="180">旋转 180°</option>
+                <option :value="270">逆时针 90°</option>
+              </select>
+            </FieldRow>
+            <template v-if="operation === 'crop'">
+              <div class="grid grid-cols-2 gap-3">
+                <FieldRow label="左侧起点"><input v-model.number="cropLeft" type="number" min="0" max="99" class="field w-full" /></FieldRow>
+                <FieldRow label="顶部起点"><input v-model.number="cropTop" type="number" min="0" max="99" class="field w-full" /></FieldRow>
+                <FieldRow label="裁剪宽度"><input v-model.number="cropWidth" type="number" min="1" max="100" class="field w-full" /></FieldRow>
+                <FieldRow label="裁剪高度"><input v-model.number="cropHeight" type="number" min="1" max="100" class="field w-full" /></FieldRow>
+              </div>
+              <p class="text-[11px] text-fg-3 leading-snug">四个值都是相对原图的百分比。</p>
+            </template>
+            <FieldRow label="最大宽度" hint="比这窄的图片不会被放大">
+              <input v-model.number="maxWidth" type="number" min="100" max="7680" class="field w-full" />
+            </FieldRow>
+            <FieldRow label="质量">
+              <template #value>{{ quality }}%</template>
+              <input v-model.number="quality" type="range" min="20" max="100" class="w-full accent-accent" />
+            </FieldRow>
+          </template>
+
+          <template v-else-if="group === 'text'">
+            <FieldRow label="处理方式">
+              <select v-model="textMode" class="field w-full">
                 <option value="json">格式化 JSON</option>
                 <option value="trim">清理空行与尾随空格</option>
                 <option value="markdown">清理 Markdown 空行</option>
@@ -695,46 +870,75 @@ onBeforeUnmount(() => {
                 <option value="sort-lines">自然排序每一行</option>
                 <option value="extract-contacts">提取链接与邮箱</option>
                 <option value="statistics">统计字数与段落</option>
-              </select></label>
-              <label>文本内容<textarea v-model="textInput" name="text-input" placeholder="粘贴需要处理的内容…"></textarea></label>
-              <div v-if="textPreview" class="transform-preview" :class="{ error: textPreview.error }" aria-live="polite"><b>{{ textPreview.error ? '需要检查' : '即时结果预览' }}</b><pre>{{ textPreview.content }}</pre><small v-if="textPreview.truncated">预览仅显示前 1800 个字符，导出内容保持完整。</small></div>
-            </template>
+              </select>
+            </FieldRow>
+          </template>
 
-            <template v-else>
-              <template v-if="operation === 'rename-report'">
-                <div class="parameter-pair"><label>名称前缀<input v-model="renamePrefix" name="rename-prefix" /></label><label>名称后缀<input v-model="renameSuffix" name="rename-suffix" placeholder="可选" /></label></div>
-                <div class="parameter-pair"><label>起始编号<input v-model.number="renameStart" type="number" min="0" /></label><label>编号位数<input v-model.number="renameDigits" type="number" min="1" max="8" /></label></div>
-                <div class="parameter-pair"><label>分隔符<input v-model="renameSeparator" maxlength="3" placeholder="-" /></label><label class="check-label"><input v-model="renameKeepOriginal" type="checkbox" />保留原文件名</label></div>
-                <div v-if="renamePreview.length" class="rename-preview" aria-live="polite"><b>实时预览</b><code v-for="line in renamePreview" :key="line">{{ line }}</code><small v-if="files.length > renamePreview.length">另有 {{ files.length - renamePreview.length }} 个文件</small></div>
-              </template>
-              <p class="parameter-note">只生成预览或报告，不移动、删除或重命名原文件。</p>
+          <template v-else>
+            <template v-if="operation === 'rename-report'">
+              <div class="grid grid-cols-2 gap-3">
+                <FieldRow label="名称前缀"><input v-model="renamePrefix" name="rename-prefix" class="field w-full" /></FieldRow>
+                <FieldRow label="名称后缀"><input v-model="renameSuffix" name="rename-suffix" class="field w-full" placeholder="可选" /></FieldRow>
+                <FieldRow label="起始编号"><input v-model.number="renameStart" type="number" min="0" class="field w-full" /></FieldRow>
+                <FieldRow label="编号位数"><input v-model.number="renameDigits" type="number" min="1" max="8" class="field w-full" /></FieldRow>
+              </div>
+              <FieldRow label="分隔符"><input v-model="renameSeparator" maxlength="3" class="field w-full" placeholder="-" /></FieldRow>
+              <label class="row gap-2 text-[12px] text-fg-2 cursor-pointer">
+                <input v-model="renameKeepOriginal" type="checkbox" class="accent-accent" />保留原文件名
+              </label>
             </template>
-          </div>
+            <p class="text-[12px] text-fg-3 leading-snug">
+              只生成一份报告文件，不会移动、删除或重命名任何原文件。
+            </p>
+          </template>
         </section>
 
-        <footer class="execution-bar">
-          <div class="output-summary">
-            <p class="eyebrow">{{ hasParameters ? '04' : '03' }} · 输出</p>
-            <strong>{{ outputHint }}</strong>
-            <small aria-live="polite">{{ message }}</small>
-          </div>
-          <div class="execution-actions">
-            <label>配方名称<input v-model="recipeTitle" name="recipe-title" placeholder="例如：证件照压缩" /></label>
-            <label v-if="usesOutputName">输出名称<input v-model="outputName" name="output-name" /></label>
-            <button class="save-recipe" :disabled="running" @click="saveCurrentRecipe">保存配方</button>
-            <button v-if="running" class="cancel-run" :disabled="cancelling" @click="cancelRun">{{ cancelling ? '正在停止…' : '停止任务' }}</button>
-            <button v-else class="run-tool" :disabled="!canRun" @click="run">生成新输出</button>
-          </div>
-        </footer>
-      </main>
-    </section>
-    <section v-if="recentOutputs.length" class="tool-output-result panel" aria-label="本次处理结果">
-      <header><div><p class="eyebrow">最近产物</p><h3>本次生成</h3><small>{{ recentOutputs.length }} 个输出 · 右键或 Shift+F10 可进行桌面操作</small></div><RouterLink class="quiet-button" to="/history">查看处理历史</RouterLink></header>
-      <div class="tool-output-result__list">
-        <button v-for="output in visibleRecentOutputs" :key="`${output.path ?? output.name}:${output.size ?? 0}`" v-memo="[output.name, output.path, output.size]" class="tool-output-result__row" :class="{ 'tool-output-result__row--browser': !output.path }" :title="output.path ? '左键打开所在位置；右键查看更多操作' : '浏览器下载已开始；右键可移除此记录'" :aria-label="`${output.name}，${formatSize(output.size)}；右键或 Shift 加 F10 打开操作`" aria-haspopup="menu" :aria-expanded="resultMenu?.output === output" @click="revealResult(output)" @contextmenu.prevent.stop="openResultMenu($event, output)" @keydown="openResultMenuFromKeyboard($event, output)"><span><AppIcon name="file-text" :size="17" /></span><b>{{ output.name }}</b><small>{{ formatSize(output.size) }}</small><i>{{ output.path ? '打开位置' : '已下载' }}</i></button>
-      </div>
-      <p v-if="recentOutputs.length > visibleRecentOutputs.length" class="tool-output-result__more">另外 {{ recentOutputs.length - visibleRecentOutputs.length }} 个输出已记录在处理历史中。</p>
-    </section>
-    <Teleport to="body"><section v-if="resultMenu" ref="resultMenuElement" class="tool-output-context-menu" role="menu" :aria-label="`${resultMenu.output.name} 操作`" :style="{ left: `${resultMenu.x}px`, top: `${resultMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleResultMenuKeydown"><p>{{ resultMenu.output.name }}</p><button v-if="resultMenu.output.path" role="menuitem" @click="runRevealResult">打开文件位置</button><button v-if="resultMenu.output.path" role="menuitem" @click="runSaveResultAs">另存为…</button><button v-if="resultMenu.output.path" role="menuitem" @click="runCopyResultPath">复制输出路径</button><button role="menuitem" class="danger" @click="removeResult(resultMenu.output)">从本次结果移除</button></section></Teleport>
+        <!-- The action panel. Sticky, so the button you came here to press is
+             never below the fold no matter how long the file list gets. -->
+        <section class="panel p-4 stack gap-3">
+          <FieldRow v-if="usesOutputName" label="输出文件名" hint="扩展名会自动补上">
+            <input v-model="outputName" name="output-name" class="field w-full" />
+          </FieldRow>
+
+          <button class="btn-primary btn-lg w-full" :disabled="!canRun || running" @click="run">
+            {{ running ? '正在处理…' : '生成新输出' }}
+          </button>
+
+          <p class="text-[12px] text-fg-3 text-center leading-snug" aria-live="polite">
+            {{ running ? message : outputHint }}
+          </p>
+        </section>
+
+        <section class="panel px-4 py-3 stack gap-3">
+          <button
+            class="row-between gap-2 w-full text-left"
+            :aria-expanded="recipeFormOpen"
+            @click="recipeFormOpen = !recipeFormOpen"
+          >
+            <span class="stack gap-0.5">
+              <span class="text-[13px] font-medium text-fg">保存为配方</span>
+              <span class="text-[11px] text-fg-3">下次直接调出这套参数</span>
+            </span>
+            <AppIcon
+              name="chevron"
+              :size="16"
+              class="text-fg-3 shrink-0 transition-transform"
+              :class="recipeFormOpen ? 'rotate-180' : ''"
+            />
+          </button>
+
+          <template v-if="recipeFormOpen">
+            <input
+              v-model="recipeTitle"
+              name="recipe-title"
+              class="field w-full"
+              :placeholder="`${activeOperationLabel} · 我的预设`"
+            />
+            <button class="btn-default btn-sm w-full" :disabled="running" @click="saveCurrentRecipe">保存配方</button>
+            <p class="text-[11px] text-fg-3 leading-snug">配方只记下参数，不会保存文件内容或路径。</p>
+          </template>
+        </section>
+      </template>
+    </ToolLayout>
   </div>
 </template>

@@ -363,7 +363,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="quick-intake page-enter mx-auto w-full max-w-320 px-8 py-6" @paste.capture="handlePaste">
+  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @paste.capture="handlePaste">
     <PageHeader title="快速处理" subtitle="拖进来就行,Knitspace 判断类型后给出可直接执行的下一步">
       <template #actions>
         <span class="row gap-1.5 h-9 px-3 rounded-sm bg-surface-2 border border-line text-[12px] text-fg-2">
@@ -372,42 +372,145 @@ onBeforeUnmount(() => {
       </template>
     </PageHeader>
 
-    <section class="intake-stage panel" :class="`kind-${kind}`">
-      <div class="intake-input">
-        <header><span>01</span><div><b>输入内容</b><small>拖入文件，或者直接粘贴文字</small></div><button v-if="kind !== 'empty'" class="quiet-button" @click="clearInput">清空</button></header>
-        <FileDropZone v-model="files" :max-file-bytes="32 * 1024 * 1024" :max-total-bytes="96 * 1024 * 1024" title="把任何文件拖到这里" hint="PDF · 图片 · 文本 · 代码 · 单次最多 96 MB" @error="ui.toast('无法读取文件', $event, 'error')"/>
-        <div class="intake-divider"><span>或者</span></div>
-        <textarea v-model="text" :disabled="files.length > 0" aria-label="粘贴文字或代码" placeholder="粘贴文字、代码、JSON、网址、会议记录或作业内容…"></textarea>
-        <p v-if="draftStatus" class="intake-draft-status"><AppIcon name="shield" :size="13"/><span>{{ draftStatus }}</span><button type="button" @click="clearInput">丢弃草稿</button></p>
-        <button class="clipboard-read" :disabled="readingClipboard" @click="readClipboard"><AppIcon name="clipboard" :size="16"/>{{ readingClipboard ? '正在读取…' : '读取系统剪贴板' }}</button>
-      </div>
+    <!-- Input on the left, what to do with it on the right. The numbered
+         "01 / 02" badges are gone: two panes side by side already say which
+         comes first, and there was never a step three. -->
+    <div class="grid gap-4 grid-cols-1 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] items-start">
+      <section class="pane min-h-[26rem]">
+        <header class="pane-head">
+          <p class="pane-title">输入内容</p>
+          <button v-if="kind !== 'empty'" class="btn-ghost btn-sm" @click="clearInput">清空</button>
+        </header>
 
-      <aside class="intake-result">
-        <header><span>02</span><div><b>智能建议</b><small>{{ kind === 'empty' ? '输入后自动出现' : `${summary} · 已完成本地识别` }}</small></div></header>
-        <div v-if="kind !== 'empty'" class="intake-detected"><b><AppIcon :name="activeMeta.icon" :size="22"/></b><span><strong>{{ activeMeta.label }}</strong><small>{{ activeMeta.description }}</small></span><i></i></div>
-        <div v-if="actions.length" class="intake-actions">
-          <button v-for="action in actions" :key="action.id" :class="{ primary: action.primary }" :aria-label="`${action.title}${action.badge ? `，${action.badge}` : ''}；右键或 Shift 加 F10 打开更多操作`" aria-haspopup="menu" :aria-expanded="actionMenu?.action.id === action.id" @click="openAction(action)" @contextmenu.prevent.stop="openActionMenu($event, action)" @keydown="openActionMenuFromKeyboard($event, action)">
-            <b><AppIcon :name="action.icon" :size="19"/></b><span><strong>{{ action.title }}</strong><small>{{ action.description }}</small></span><span class="intake-action-end"><i v-if="action.badge">{{ action.badge }}</i><AppIcon name="arrow-right" :size="15"/></span>
+        <div class="stack gap-3 p-3 flex-1">
+          <FileDropZone
+            v-model="files"
+            :max-file-bytes="32 * 1024 * 1024"
+            :max-total-bytes="96 * 1024 * 1024"
+            title="把任何文件拖到这里"
+            hint="PDF · 图片 · 文本 · 代码 · 单次最多 96 MB"
+            @error="ui.toast('无法读取文件', $event, 'error')"
+          />
+
+          <div class="row gap-3 text-[12px] text-fg-3">
+            <span class="h-px flex-1 bg-line" />或者<span class="h-px flex-1 bg-line" />
+          </div>
+
+          <textarea
+            v-model="text"
+            :disabled="files.length > 0"
+            aria-label="粘贴文字或代码"
+            class="w-full min-h-40 px-3 py-2.5 rounded-md bg-well border border-line font-mono text-[13px] leading-relaxed resize-y focus:outline-none focus:border-accent disabled:opacity-45"
+            placeholder="粘贴文字、代码、JSON、网址、会议记录或作业内容…"
+          />
+
+          <p v-if="draftStatus" class="row gap-2 text-[12px] text-fg-3">
+            <AppIcon name="shield" :size="13" class="shrink-0 text-success" />
+            <span class="min-w-0 truncate">{{ draftStatus }}</span>
+            <button type="button" class="ml-auto shrink-0 text-fg-2 underline hover:text-danger" @click="clearInput">丢弃草稿</button>
+          </p>
+
+          <button class="btn-default w-full" :disabled="readingClipboard" @click="readClipboard">
+            <AppIcon name="clipboard" :size="15" />{{ readingClipboard ? '正在读取…' : '读取系统剪贴板' }}
           </button>
         </div>
-        <div v-else class="intake-empty"><AppIcon name="inbox" :size="28"/><b>一个入口，接住所有内容</b><p>不需要先判断该去哪个页面。Knitspace 会根据输入给出最合适的三到四个操作。</p></div>
-      </aside>
+      </section>
+
+      <section class="pane min-h-[26rem]">
+        <header class="pane-head">
+          <p class="pane-title">下一步</p>
+          <span class="text-[11px] text-fg-3 truncate">{{ kind === 'empty' ? '输入后自动出现' : `${summary} · 已在本机识别` }}</span>
+        </header>
+
+        <div v-if="kind !== 'empty'" class="stack gap-3 p-3 flex-1">
+          <div class="row gap-3 p-3 rounded-md bg-accent-soft">
+            <b class="center w-10 h-10 shrink-0 rounded-sm bg-accent text-accent-fg"><AppIcon :name="activeMeta.icon" :size="20" /></b>
+            <span class="stack gap-0.5 min-w-0">
+              <strong class="text-[14px] font-semibold text-fg">{{ activeMeta.label }}</strong>
+              <small class="text-[12px] leading-snug text-fg-2">{{ activeMeta.description }}</small>
+            </span>
+          </div>
+
+          <div v-if="actions.length" class="stack gap-2">
+            <button
+              v-for="action in actions"
+              :key="action.id"
+              class="row gap-3 p-3 rounded-md border text-left transition-colors"
+              :class="action.primary ? 'border-accent bg-accent text-accent-fg' : 'border-line bg-surface-2 hover:border-line-strong hover:bg-surface-3'"
+              :aria-label="`${action.title}${action.badge ? `，${action.badge}` : ''}；右键或 Shift 加 F10 打开更多操作`"
+              aria-haspopup="menu"
+              :aria-expanded="actionMenu?.action.id === action.id"
+              @click="openAction(action)"
+              @contextmenu.prevent.stop="openActionMenu($event, action)"
+              @keydown="openActionMenuFromKeyboard($event, action)"
+            >
+              <b class="center w-9 h-9 shrink-0 rounded-sm" :class="action.primary ? 'bg-white/15' : 'bg-surface text-accent'">
+                <AppIcon :name="action.icon" :size="18" />
+              </b>
+              <span class="stack gap-0.5 min-w-0 flex-1">
+                <strong class="text-[13px] font-medium truncate">{{ action.title }}</strong>
+                <small class="text-[11px] leading-snug" :class="action.primary ? 'opacity-80' : 'text-fg-3'">{{ action.description }}</small>
+              </span>
+              <span class="row gap-2 shrink-0">
+                <i v-if="action.badge" class="chip h-5 px-1.5 text-[11px] not-italic" :class="action.primary ? 'bg-white/15 text-inherit' : 'bg-accent-soft text-accent'">{{ action.badge }}</i>
+                <AppIcon name="arrow-right" :size="15" :class="action.primary ? '' : 'text-fg-3'" />
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div v-else class="flex-1 stack items-center justify-center gap-2 p-8 text-center">
+          <span class="center w-12 h-12 rounded-lg bg-surface-2 text-fg-3"><AppIcon name="inbox" :size="24" /></span>
+          <b class="text-[14px] font-semibold text-fg">一个入口，接住所有内容</b>
+          <p class="max-w-72 text-[12px] leading-relaxed text-fg-3">
+            不用先想该去哪个页面。放进去之后，这里会给出最合适的三到四个操作。
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <section class="row gap-2 flex-wrap mt-4">
+      <span class="row text-[12px] text-fg-3 pr-1">快速开始</span>
+      <RouterLink
+        v-for="shortcut in ([
+          ['/tools?group=pdf&operation=merge', 'file-pdf', '合并 PDF', '多份文档合成一份'],
+          ['/visual?tool=resize', 'resize', '压缩图片', '限制尺寸与质量'],
+          ['/clipboard?view=snippets', 'clipboard', '常用片段', '快速复制固定内容'],
+          ['/developer-tools?tool=json', 'json', '格式化 JSON', '校验并整理结构'],
+        ] as const)"
+        :key="shortcut[0]"
+        :to="shortcut[0]"
+        class="row gap-2.5 flex-1 min-w-52 px-3 py-2.5 rounded-md border border-line bg-surface transition-colors hover:border-line-strong hover:bg-surface-2"
+      >
+        <AppIcon :name="shortcut[1]" :size="17" class="shrink-0 text-fg-2" />
+        <span class="stack gap-0.5 min-w-0">
+          <b class="text-[13px] font-medium text-fg">{{ shortcut[2] }}</b>
+          <small class="text-[11px] text-fg-3">{{ shortcut[3] }}</small>
+        </span>
+      </RouterLink>
     </section>
 
-    <section class="intake-shortcuts">
-      <p class="eyebrow">快速开始</p>
-      <RouterLink to="/tools?group=pdf&operation=merge"><AppIcon name="file-pdf" :size="17"/><span><b>合并 PDF</b><small>多份文档合成一份</small></span></RouterLink>
-      <RouterLink to="/visual?tool=resize"><AppIcon name="resize" :size="17"/><span><b>压缩图片</b><small>限制尺寸与质量</small></span></RouterLink>
-      <RouterLink to="/clipboard?view=snippets"><AppIcon name="clipboard" :size="17"/><span><b>常用片段</b><small>快速复制固定内容</small></span></RouterLink>
-      <RouterLink to="/developer-tools?tool=json"><AppIcon name="json" :size="17"/><span><b>格式化 JSON</b><small>校验并整理结构</small></span></RouterLink>
-    </section>
-    <Teleport to="body"><section v-if="actionMenu" ref="actionMenuElement" class="intake-action-context-menu" role="menu" :aria-label="`${actionMenu.action.title} 的更多操作`" :style="{ left: `${actionMenu.x}px`, top: `${actionMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleActionMenuKeydown"><p>{{ actionMenu.action.title }}</p><button role="menuitem" @click="runCurrentAction">执行“{{ actionMenu.action.title }}”</button><button v-if="hasTextInput" role="menuitem" @click="createNoteFromMenu">整理为本地笔记</button><button v-if="hasTextInput" role="menuitem" @click="createQuestionFromMenu">记录为结构化题目</button><button v-if="hasTextInput && vocabularyCaptureReady" role="menuitem" @click="createWordFromMenu">录入结构化单词</button><button v-if="hasTextInput" role="menuitem" @click="pinSnippetFromMenu">固定为常用片段</button><button v-if="files.length" role="menuitem" @click="sendToLibraryFromMenu">收进本地资料库</button><button role="menuitem" class="danger" @click="clearFromActionMenu">清空本次输入</button></section></Teleport>
+    <Teleport to="body">
+      <div
+        v-if="actionMenu"
+        ref="actionMenuElement"
+        class="fixed z-[145] w-62 p-1 rounded-md bg-surface border border-line-strong shadow-lg"
+        role="menu"
+        :aria-label="`${actionMenu.action.title} 的更多操作`"
+        :style="{ left: `${actionMenu.x}px`, top: `${actionMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleActionMenuKeydown"
+      >
+        <p class="px-2.5 py-1.5 text-[11px] text-fg-3 truncate">{{ actionMenu.action.title }}</p>
+        <button class="nav-item w-full" role="menuitem" @click="runCurrentAction">执行「{{ actionMenu.action.title }}」</button>
+        <button v-if="hasTextInput" class="nav-item w-full" role="menuitem" @click="createNoteFromMenu">整理为本地笔记</button>
+        <button v-if="hasTextInput" class="nav-item w-full" role="menuitem" @click="createQuestionFromMenu">记录为结构化题目</button>
+        <button v-if="hasTextInput && vocabularyCaptureReady" class="nav-item w-full" role="menuitem" @click="createWordFromMenu">录入结构化单词</button>
+        <button v-if="hasTextInput" class="nav-item w-full" role="menuitem" @click="pinSnippetFromMenu">固定为常用片段</button>
+        <button v-if="files.length" class="nav-item w-full" role="menuitem" @click="sendToLibraryFromMenu">收进本地资料库</button>
+        <button class="nav-item w-full hover:bg-danger-soft hover:text-danger" role="menuitem" @click="clearFromActionMenu">清空本次输入</button>
+      </div>
+    </Teleport>
   </div>
 </template>
-
-<style scoped>
-.quick-intake{max-width:1180px;margin:0 auto;padding:34px 28px 64px}.intake-hero{justify-content:space-between;margin-bottom:24px}.intake-hero h2{margin:8px 0 7px;font-size:clamp(32px,4vw,50px);line-height:1.05;letter-spacing:-.045em}.intake-hero h2 em{font-style:normal}.intake-hero p:not(.eyebrow){max-width:700px;font-size:15px}.intake-privacy{display:flex;align-items:center;gap:11px;max-width:300px;padding:13px 15px;border:1px solid var(--line);border-radius:14px;background:color-mix(in srgb,var(--surface) 84%,var(--accent) 4%);color:var(--accent)}.intake-privacy span{display:grid;gap:2px}.intake-privacy b{font-size:13px}.intake-privacy small{color:var(--muted);line-height:1.45}.intake-stage{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr);min-height:560px;overflow:hidden}.intake-input,.intake-result{padding:25px}.intake-input{border-right:1px solid var(--line);background:linear-gradient(145deg,color-mix(in srgb,var(--surface) 96%,var(--accent) 4%),var(--surface))}.intake-result{background:var(--surface)}.intake-input>header,.intake-result>header{display:flex;align-items:center;gap:11px;margin-bottom:20px}.intake-input>header>span,.intake-result>header>span{display:grid;place-items:center;width:29px;height:29px;border-radius:9px;background:var(--ink);color:var(--fg);font:700 11px/1 monospace}.intake-input>header div,.intake-result>header div{display:grid;gap:2px}.intake-input>header b,.intake-result>header b{font-size:15px}.intake-input>header small,.intake-result>header small{color:var(--muted)}.intake-input>header button{margin-left:auto}.intake-divider{display:flex;align-items:center;gap:12px;margin:15px 0;color:var(--faint);font-size:11px}.intake-divider:before,.intake-divider:after{content:"";height:1px;flex:1;background:var(--line)}.intake-input textarea{width:100%;min-height:170px;resize:vertical;border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--canvas);color:var(--ink);font:14px/1.65 var(--font-mono);outline:none}.intake-input textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 13%,transparent)}.intake-input textarea:disabled{opacity:.48}.intake-draft-status{display:flex;min-height:32px;align-items:center;gap:7px;margin:7px 2px 0;color:var(--muted);font:650 9px var(--font-ui)}.intake-draft-status .app-icon{flex:0 0 auto;color:var(--green-strong)}.intake-draft-status button{margin-left:auto;padding:3px 0;border:0;color:var(--green-strong);background:transparent;font:700 9px var(--font-ui)}.intake-draft-status button:hover,.intake-draft-status button:focus-visible{text-decoration:underline}.intake-draft-status button:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 42%,transparent);outline-offset:3px}.clipboard-read{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;margin-top:11px;padding:11px;border:1px dashed color-mix(in srgb,var(--accent) 45%,var(--line));border-radius:11px;background:transparent;color:var(--accent);font-weight:700}.intake-detected{display:flex;align-items:center;gap:13px;padding:16px;margin-bottom:13px;border:1px solid color-mix(in srgb,var(--accent) 26%,var(--line));border-radius:15px;background:color-mix(in srgb,var(--accent) 7%,var(--surface))}.intake-detected>b{display:grid;place-items:center;width:44px;height:44px;border-radius:13px;background:var(--accent);color:white}.intake-detected span{display:grid;gap:3px;min-width:0}.intake-detected strong{font-size:15px}.intake-detected small{color:var(--muted);line-height:1.4}.intake-detected i{width:8px;height:8px;margin-left:auto;border-radius:50%;background:var(--accent);box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 13%,transparent)}.intake-actions{display:grid;gap:9px}.intake-actions>button{display:grid;grid-template-columns:40px 1fr auto;align-items:center;gap:12px;width:100%;padding:13px;border:1px solid var(--line);border-radius:13px;background:var(--canvas);color:var(--ink);text-align:left;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease}.intake-actions>button:hover{border-color:color-mix(in srgb,var(--accent) 48%,var(--line));background:color-mix(in srgb,var(--accent) 5%,var(--surface));box-shadow:0 7px 18px var(--accent-soft)}.intake-actions>button.primary{border-color:var(--accent);background:var(--ink);color:white}.intake-actions>button>b{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:color-mix(in srgb,var(--accent) 12%,var(--surface));color:var(--accent)}.intake-actions>button.primary>b{background:color-mix(in srgb,var(--accent) 78%,white 8%);color:white}.intake-actions span{display:grid;gap:3px}.intake-actions strong{font-size:14px}.intake-actions small{color:var(--muted);line-height:1.35}.intake-actions>button.primary small{color:var(--line-strong)}.intake-empty{display:grid;place-items:center;align-content:center;min-height:350px;padding:45px;text-align:center;color:var(--muted)}.intake-empty svg{color:var(--accent);margin-bottom:14px}.intake-empty b{color:var(--ink);font-size:17px}.intake-empty p{max-width:310px;line-height:1.7}.intake-shortcuts{display:grid;grid-template-columns:auto repeat(4,1fr);align-items:center;gap:10px;margin-top:18px}.intake-shortcuts>.eyebrow{padding-right:8px}.intake-shortcuts>a{display:flex;align-items:center;gap:10px;min-height:62px;padding:12px 13px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);text-decoration:none}.intake-shortcuts>a>svg{color:var(--accent)}.intake-shortcuts span{display:grid;gap:2px}.intake-shortcuts b{font-size:13px}.intake-shortcuts small{color:var(--muted);font-size:11px}@media(max-width:900px){.intake-hero{flex-direction:column}.intake-stage{grid-template-columns:1fr}.intake-input{border-right:0;border-bottom:1px solid var(--line)}.intake-shortcuts{grid-template-columns:1fr 1fr}.intake-shortcuts>.eyebrow{grid-column:1/-1}}@media(max-width:560px){.quick-intake{padding:22px 14px 48px}.intake-stage{display:block}.intake-input,.intake-result{padding:18px}.intake-shortcuts{grid-template-columns:1fr}}
-.quick-intake{padding-top:28px}.intake-hero{}.intake-hero>div:first-child{min-width:0;max-width:760px}.intake-hero h2{font-size:clamp(32px,3.25vw,44px);line-height:1.06;letter-spacing:-.04em}.intake-privacy{flex:0 0 auto}@media(max-width:560px){.quick-intake{padding-top:22px}}
-.intake-actions>button:focus-visible{position:relative;z-index:1;outline:2px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:3px}.intake-action-context-menu{position:fixed;z-index:145;width:250px;overflow:hidden;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:13px;background:var(--surface);box-shadow:var(--shadow-lg);animation:intake-menu-in .14s ease-out both}.intake-action-context-menu p{overflow:hidden;margin:0;padding:11px 13px 8px;border-bottom:1px solid var(--line-weak);color:var(--muted);font:700 9px var(--font-mono);letter-spacing:.065em;text-overflow:ellipsis;white-space:nowrap}.intake-action-context-menu button{display:block;width:100%;min-height:36px;padding:0 13px;border:0;color:var(--text-secondary);background:transparent;font:650 11px var(--font-ui);text-align:left}.intake-action-context-menu button:hover,.intake-action-context-menu button:focus-visible{color:var(--green-strong);background:var(--green-bg)}.intake-action-context-menu button:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:-2px}.intake-action-context-menu button.danger{border-top:1px solid var(--line-weak);color:var(--danger)}.intake-action-context-menu button.danger:hover,.intake-action-context-menu button.danger:focus-visible{background:var(--danger-soft)}@keyframes intake-menu-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
-.intake-actions>button{grid-template-columns:40px minmax(0,1fr) auto}.intake-actions>button>span:not(.intake-action-end){display:grid;min-width:0;gap:3px}.intake-actions>button>span:not(.intake-action-end)>strong,.intake-actions>button>span:not(.intake-action-end)>small{overflow:hidden;text-overflow:ellipsis}.intake-actions>button>span:not(.intake-action-end)>strong{white-space:nowrap}.intake-action-end{display:flex!important;align-items:center;gap:8px;color:var(--muted)}.intake-action-end i{padding:4px 6px;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:999px;color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--surface));font:750 8px/1 var(--font-mono);font-style:normal;white-space:nowrap}.intake-actions>button.primary .intake-action-end{color:var(--line-strong)}.intake-actions>button.primary .intake-action-end i{border-color:var(--accent-soft);color:var(--fg);background:var(--surface-2)}@media(max-width:560px){.intake-action-end i{display:none}}@media(prefers-reduced-motion:reduce){.intake-actions>button,.intake-action-context-menu{animation:none;transition:none}}
-</style>

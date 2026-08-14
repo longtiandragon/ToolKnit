@@ -40,17 +40,42 @@ function close() { open.value = false }
 onBeforeUnmount(() => activeController?.abort())
 </script>
 
+<!--
+  A launcher that stays out of the way and a panel that opens above it, both
+  anchored to the bottom-right corner of the window. `flex-col-reverse` is what
+  puts the panel above the button while keeping the button first in the DOM, so
+  focus still lands on the control that opened the dialog.
+
+  The panel is an ordinary `panel`, not a tinted gradient card: it floats over
+  the user's own Markdown, and a surface that is nearly the editor's colour is
+  the one thing it cannot be.
+-->
 <template>
-  <aside class="ai-assist" :class="{ open }">
-    <button class="ai-tab" type="button" :aria-expanded="open" :aria-controls="drawerId" @click="open = !open" @keydown.esc.stop.prevent="close"><AppIcon name="sparkle" :size="15" /><span>AI 辅助</span></button>
-    <section v-if="open" :id="drawerId" class="ai-drawer" role="dialog" aria-modal="false" aria-label="AI 辅助草稿" tabindex="-1" @keydown.esc.stop="close">
-      <header><div><p class="eyebrow">上下文操作 · 需手动触发</p><h3>只在你点击时，发出你选的文本。</h3></div><button type="button" aria-label="关闭 AI 辅助" title="关闭（Esc）" @click="close"><AppIcon name="close" :size="16" /></button></header>
-      <div class="ai-actions"><button v-for="item in Object.keys(actionLabels) as AiAction[]" :key="item" type="button" :class="{ active: action === item }" @click="action = item">{{ actionLabels[item] }}</button></div>
-      <label v-if="store.aiProfiles.length">使用配置<select v-model="profileId"><option value="">{{ selectedProfile?.label }}</option><option v-for="profile in store.aiProfiles" :key="profile.id" :value="profile.id">{{ profile.label }}</option></select></label>
-      <details><summary>查看本次发送内容</summary><pre>{{ JSON.stringify(payload, null, 2) }}</pre></details>
-      <button class="primary-button wide" :class="{ 'ai-cancel': running }" @click="running ? cancelRun() : run()">{{ running ? '停止等待' : actionLabels[action] }}</button>
-      <p v-if="error" class="ai-error" role="alert">{{ error }}</p>
-      <article v-if="result" class="ai-result" aria-live="polite"><p class="eyebrow">DRAFT · 需要你确认</p><pre>{{ result }}</pre><div><button class="quiet-button" type="button" @click="copyResult">复制</button><button class="primary-button" type="button" @click="emit('insert', result)">插入正文</button></div></article>
+  <aside class="fixed right-5 bottom-5 z-100 flex flex-col-reverse items-end gap-2.5">
+    <button class="btn-primary shadow-lg" type="button" :aria-expanded="open" :aria-controls="drawerId" @click="open = !open" @keydown.esc.stop.prevent="close"><AppIcon name="sparkle" :size="15" /><span>AI 辅助</span></button>
+    <section v-if="open" :id="drawerId" class="stack gap-3 w-[min(24rem,calc(100vw_-_2.5rem))] max-h-[min(42.75rem,calc(100vh_-_5.5rem))] overflow-y-auto p-3.5 panel shadow-lg" role="dialog" aria-modal="false" aria-label="AI 辅助草稿" tabindex="-1" @keydown.esc.stop="close">
+      <header class="flex items-start justify-between gap-3 shrink-0 pb-3 border-b border-line">
+        <div class="stack gap-1 min-w-0">
+          <p class="eyebrow">上下文操作 · 需手动触发</p>
+          <h3 class="text-[15px] font-semibold leading-snug text-fg">只在你点击时，发出你选的文本。</h3>
+        </div>
+        <button class="center w-7 h-7 shrink-0 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" type="button" aria-label="关闭 AI 辅助" title="关闭（Esc）" @click="close"><AppIcon name="close" :size="16" /></button>
+      </header>
+      <div class="grid grid-cols-3 gap-1.5 shrink-0">
+        <button
+          v-for="item in Object.keys(actionLabels) as AiAction[]"
+          :key="item"
+          type="button"
+          class="center h-8 px-1.5 rounded-sm text-[12px] transition-colors duration-120"
+          :class="action === item ? 'bg-accent-soft text-accent font-medium' : 'bg-surface-2 text-fg-2 hover:bg-surface-3 hover:text-fg'"
+          @click="action = item"
+        >{{ actionLabels[item] }}</button>
+      </div>
+      <label v-if="store.aiProfiles.length" class="stack gap-1.5 shrink-0 text-[12px] font-medium text-fg-2">使用配置<select v-model="profileId" class="field h-8 px-2 text-[12px]"><option value="">{{ selectedProfile?.label }}</option><option v-for="profile in store.aiProfiles" :key="profile.id" :value="profile.id">{{ profile.label }}</option></select></label>
+      <details class="shrink-0"><summary class="row gap-1.5 h-7 -mx-1.5 px-1.5 rounded-sm list-none cursor-pointer text-[12px] text-fg-3 transition-colors duration-120 hover:bg-surface-2 hover:text-fg">查看本次发送内容</summary><pre class="mt-1.5 max-h-40 overflow-auto p-2.5 rounded-sm well font-mono text-[11px] leading-relaxed text-fg-2 whitespace-pre-wrap break-all">{{ JSON.stringify(payload, null, 2) }}</pre></details>
+      <button class="w-full shrink-0" :class="running ? 'btn-danger' : 'btn-primary'" @click="running ? cancelRun() : run()">{{ running ? '停止等待' : actionLabels[action] }}</button>
+      <p v-if="error" class="shrink-0 pl-2.5 border-l-2 border-l-danger text-[12px] leading-relaxed text-danger" role="alert">{{ error }}</p>
+      <article v-if="result" class="stack gap-2 shrink-0 p-2.5 rounded-md well" aria-live="polite"><p class="eyebrow">DRAFT · 需要你确认</p><pre class="max-h-64 overflow-auto font-ui text-[12px] leading-relaxed text-fg whitespace-pre-wrap break-words">{{ result }}</pre><div class="row justify-end gap-2"><button class="btn-default btn-sm" type="button" @click="copyResult">复制</button><button class="btn-primary btn-sm" type="button" @click="emit('insert', result)">插入正文</button></div></article>
     </section>
   </aside>
 </template>

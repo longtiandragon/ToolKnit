@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import FileDropZone from '@/components/FileDropZone.vue'
+import SegmentedControl from '@/components/SegmentedControl.vue'
 import { blobToDataUrl, readClipboardPayload } from '@/lib/clipboard'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { filterSources, SOURCE_TAG_LIMIT, sourceFilterFromQuery, sourcePageFromQuery, sourceSearchFromQuery, sourceTagsFromInput, type SourceFilter } from '@/lib/source-list'
@@ -63,6 +64,18 @@ const libraryWorkflows = [
   { id: 'code-image', kind: 'code', icon: 'terminal', label: '分享代码', detail: '连续长图，不截断' },
 ] as const
 const toolActionById = new Map(toolActions.map((item) => [item.id, item]))
+// The filter chips carry their own counts, so "nothing here" is answered
+// before you click into an empty category.
+const sourceFilterOptions = computed(() => [
+  { id: 'all', label: '全部', detail: `${store.sources.length}` },
+  { id: 'image', label: '图片', detail: `${sourceStats.value.image}` },
+  { id: 'pdf', label: 'PDF', detail: `${sourceStats.value.pdf}` },
+  { id: 'code', label: '代码', detail: `${sourceStats.value.code}` },
+  { id: 'text', label: '文本', detail: `${sourceStats.value.text}` },
+])
+const availableActions = computed(() =>
+  selected.value ? toolActions.filter((tool) => tool.accepts.includes(selected.value!.kind)) : [],
+)
 const searchPending = computed(() => query.value.trim() !== appliedQuery.value.trim())
 const sourceRowHeight = 68
 const sourceListOverscan = 8
@@ -204,6 +217,10 @@ async function ingest(files: FileList | File[]) {
   // Reading files remains sequential to avoid a burst of data URLs in memory,
   // while the costly PDF/image preview is created only once for the batch.
   await selectSource(last.source)
+  // The staging list has done its job: these files are copied into the Vault
+  // and are now rows in the library below. Leaving them mounted showed every
+  // imported file twice in the same column.
+  libraryFiles.value = []
   notice.value = files.length === 1
     ? (last.duplicate ? `“${last.source.name}” 已在资料库中，已跳到原件。` : `已收进资料库：${last.source.name}`)
     : `已收进 ${files.length} 份资料${duplicateCount ? `，其中 ${duplicateCount} 份为已有原件` : ''}；正在预览最后一份。`
@@ -529,10 +546,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="library page-enter mx-auto w-full max-w-320 px-8 py-6">
+  <!-- No `library` / `library-layout` class: the legacy sheets pin that grid
+       to a 280px first column and give the page its own width. -->
+  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
     <PageHeader
       title="收集与归档"
-      subtitle="原件复制进库并留下指纹,之后移动或改名也能找回来源"
+      subtitle="原件复制进库并留下指纹，之后移动或改名也能找回来源"
       :stats="[
         { label: '已索引', value: store.sources.length },
         { label: '图片', value: sourceStats.image },
@@ -546,93 +565,241 @@ onBeforeUnmount(() => {
         <button class="btn-primary" @click="chooseImport"><AppIcon name="plus" :size="15" />{{ desktop ? '从磁盘导入' : '导入文件' }}</button>
       </template>
     </PageHeader>
+
     <input ref="fileInput" class="visually-hidden" type="file" multiple accept="image/*,.pdf,.md,.txt,.cpp,.c,.py,.java,.js,.ts,.rs,.go,.vue" @change="onFiles">
-    <p v-if="notice" class="notice">{{ notice }}</p>
-    <section class="library-workbench__inbox" aria-label="资料收件入口"><FileDropZone v-model="libraryFiles" accept="image/*,.pdf,.md,.txt,.cpp,.c,.py,.java,.js,.ts,.rs,.go,.vue" :disabled="libraryImporting" :desktop-path-only="desktop" :max-file-bytes="desktop ? undefined : BROWSER_LIBRARY_FILE_LIMIT" :max-total-bytes="desktop ? undefined : BROWSER_LIBRARY_TOTAL_LIMIT" title="拖入资料，立即建立本地索引" :hint="desktop ? '按路径直接复制到 Vault，不把整份文件塞进界面内存' : '图片 · PDF · 文本 · 源代码；单次最多 192 MB'" @desktop-paths="importDesktopPaths" @request-desktop-choose="chooseImport" @error="notice=$event"/></section>
-    <section class="library-workbench__workflows" aria-labelledby="library-workflows-title">
-      <header><div><p class="eyebrow">下一步</p><h3 id="library-workflows-title">资料收进来以后</h3></div><p>{{ selected ? `当前资料：${selected.name}` : '选择工作流，Knitspace 会帮你定位合适的资料。' }}</p></header>
-      <div>
-        <button v-for="workflow in libraryWorkflows" :key="workflow.id" :class="{ ready: workflowAcceptsSource(workflow, selected) }" @click="startLibraryWorkflow(workflow)">
-          <b><AppIcon :name="workflow.icon" :size="16" /></b>
-          <span><strong>{{ workflow.label }}</strong><small>{{ workflow.detail }}</small></span>
-          <i>{{ workflowAcceptsSource(workflow, selected) ? '用当前资料' : workflow.kind === 'all' ? '选择资料' : `查看${workflow.kind === 'image' ? '图片' : workflow.kind === 'pdf' ? 'PDF' : '代码'}` }}</i>
-        </button>
-      </div>
-    </section>
-    <div class="library-layout">
-      <section class="source-list panel">
-        <div class="filter-row" aria-label="资料类型筛选"><button v-for="item in [['all','全部'],['image','图片'],['pdf','PDF'],['code','代码'],['text','文本']] as const" :key="item[0]" :class="{ active: filter === item[0] }" @click="filter = item[0]">{{ item[1] }}</button></div>
-        <label class="source-search"><span class="visually-hidden">搜索资料库</span><AppIcon name="search" :size="14" /><input v-model="query" placeholder="名称、类型或标签…" /></label>
-        <div class="source-list__summary" aria-live="polite"><span>{{ filtered.length }} 份资料{{ searchPending ? ' · 正在筛选' : '' }}</span><button v-if="query.trim()" class="quiet-button" @click="clearSearch">清除</button></div>
-        <div ref="sourceListViewport" class="source-list__rows" :aria-busy="searchPending" aria-label="资料列表" @scroll.passive="handleSourceListScroll">
-          <div v-if="filtered.length" class="source-list__spacer" :style="{ height: `${sourceWindow.before}px` }" aria-hidden="true"></div>
-          <button v-for="source in visibleSources" :key="source.id" v-memo="[source.id, source.name, source.kind, source.size, source.importedAt, selected?.id === source.id, store.isContentFavorite('source', source.id)]" class="source-row" :class="{ selected: selected?.id === source.id }" aria-haspopup="menu" :aria-expanded="sourceMenu?.source.id === source.id" :aria-label="`${source.name}；右键或 Shift 加 F10 打开操作`" @click="selectSource(source)" @contextmenu.prevent.stop="openSourceMenu($event, source)" @keydown="handleSourceKeydown($event, source)"><span class="source-icon"><AppIcon :name="source.kind === 'image' ? 'file-image' : source.kind === 'pdf' ? 'file-pdf' : source.kind === 'code' ? 'file-code' : 'file-text'" :size="18" /></span><div><h4>{{ source.name }}</h4><p>{{ Math.max(1, Math.round(source.size / 1024)) }} KB · {{ new Date(source.importedAt).toLocaleDateString('zh-CN') }}</p></div><AppIcon v-if="store.isContentFavorite('source', source.id)" class="source-favorite-marker" name="star" :size="12" /></button>
-          <div v-if="filtered.length" class="source-list__spacer" :style="{ height: `${sourceWindow.after}px` }" aria-hidden="true"></div>
-          <div v-if="!filtered.length" class="library-list-empty"><AppIcon :name="query.trim() || filter !== 'all' ? 'search' : 'inbox'" :size="20" /><b>{{ query.trim() || filter !== 'all' ? '没有匹配的资料' : '还没有资料' }}</b><span>{{ query.trim() || filter !== 'all' ? '试试更换关键词或资料类型。' : '拖入文件或从剪贴板读取。' }}</span><button v-if="query.trim() || filter !== 'all'" class="quiet-button" @click="clearSearch(); filter = 'all'">清除筛选</button></div>
+
+    <p v-if="notice" class="row gap-2 shrink-0 mb-3 px-3 py-2 rounded-md bg-surface-2 text-[12px] text-fg-2" role="status">
+      <AppIcon name="inbox" :size="14" class="shrink-0 text-fg-3" />{{ notice }}
+    </p>
+
+    <!-- You open a library to find a file. The list is the page, so it starts
+         at the top of the fold instead of below an intake banner and a
+         workflow grid — those cost the first 600px of the old layout. -->
+    <!-- The height comes from what is left of the window, not from a guessed
+         offset: the page header grows with the stat row and the notice, and a
+         hard `calc(100vh - 16rem)` pushed the detail pane's action footer
+         below the fold whenever either appeared. -->
+    <div class="flex-1 min-h-0 grid gap-4 grid-cols-1 xl:grid-cols-[minmax(280px,340px)_minmax(0,1fr)]">
+      <section class="pane h-full min-h-0" aria-label="资料列表">
+        <!-- The drop zone stays mounted at every size: it owns the desktop
+             drag listener, so hiding it would turn off window drops. -->
+        <FileDropZone
+          v-model="libraryFiles"
+          compact
+          accept="image/*,.pdf,.md,.txt,.cpp,.c,.py,.java,.js,.ts,.rs,.go,.vue"
+          :disabled="libraryImporting"
+          :desktop-path-only="desktop"
+          :max-file-bytes="desktop ? undefined : BROWSER_LIBRARY_FILE_LIMIT"
+          :max-total-bytes="desktop ? undefined : BROWSER_LIBRARY_TOTAL_LIMIT"
+          title="拖入资料，立即建立本地索引"
+          :hint="desktop ? '按路径直接复制到 Vault，不把整份文件塞进界面内存' : '图片 · PDF · 文本 · 源代码；单次最多 192 MB'"
+          class="shrink-0 rounded-none! border-0! border-b! border-line!"
+          @desktop-paths="importDesktopPaths"
+          @request-desktop-choose="chooseImport"
+          @error="notice = $event"
+        />
+
+        <div class="stack gap-2 shrink-0 p-2.5 border-b border-line">
+          <label class="row gap-2 h-8 px-2.5 rounded-sm bg-well border border-line focus-within:border-accent">
+            <span class="visually-hidden">搜索资料库</span>
+            <AppIcon name="search" :size="14" class="shrink-0 text-fg-3" />
+            <input v-model="query" class="min-w-0 flex-1 bg-transparent border-0 text-[12px] focus:outline-none" placeholder="名称、类型或标签…" />
+            <button v-if="query.trim()" class="shrink-0 text-fg-3 hover:text-fg" aria-label="清除搜索" @click="clearSearch">
+              <AppIcon name="close" :size="13" />
+            </button>
+          </label>
+          <SegmentedControl
+            :options="sourceFilterOptions"
+            :model-value="filter"
+            label="资料类型筛选"
+            size="compact"
+            @update:model-value="filter = $event as SourceFilter"
+          />
+        </div>
+
+        <div class="row-between gap-2 shrink-0 px-3 h-7 text-[11px] text-fg-3" aria-live="polite">
+          <span>{{ filtered.length }} 份资料{{ searchPending ? ' · 正在筛选' : '' }}</span>
+          <span v-if="selected" class="truncate">已选 {{ selected.name }}</span>
+        </div>
+
+        <div
+          ref="sourceListViewport"
+          class="flex-1 min-h-0 overflow-y-auto"
+          :aria-busy="searchPending"
+          aria-label="资料列表"
+          @scroll.passive="handleSourceListScroll"
+        >
+          <div v-if="filtered.length" :style="{ height: `${sourceWindow.before}px` }" aria-hidden="true"></div>
+          <button
+            v-for="source in visibleSources"
+            :key="source.id"
+            v-memo="[source.id, source.name, source.kind, source.size, source.importedAt, selected?.id === source.id, store.isContentFavorite('source', source.id)]"
+            class="row gap-2.5 w-full h-17 px-3 text-left border-l-2 transition-colors"
+            :class="selected?.id === source.id ? 'border-l-accent bg-accent-soft' : 'border-l-transparent hover:bg-surface-2'"
+            aria-haspopup="menu"
+            :aria-expanded="sourceMenu?.source.id === source.id"
+            :aria-label="`${source.name}；右键或 Shift 加 F10 打开操作`"
+            @click="selectSource(source)"
+            @contextmenu.prevent.stop="openSourceMenu($event, source)"
+            @keydown="handleSourceKeydown($event, source)"
+          >
+            <span class="center w-9 h-9 shrink-0 rounded-sm bg-surface-2" :class="selected?.id === source.id ? 'text-accent' : 'text-fg-3'">
+              <AppIcon :name="source.kind === 'image' ? 'file-image' : source.kind === 'pdf' ? 'file-pdf' : source.kind === 'code' ? 'file-code' : 'file-text'" :size="18" />
+            </span>
+            <span class="stack gap-0.5 min-w-0 flex-1">
+              <b class="text-[13px] font-medium text-fg truncate">{{ source.name }}</b>
+              <small class="text-[11px] text-fg-3 tabular-nums">{{ Math.max(1, Math.round(source.size / 1024)) }} KB · {{ new Date(source.importedAt).toLocaleDateString('zh-CN') }}</small>
+            </span>
+            <AppIcon v-if="store.isContentFavorite('source', source.id)" name="star" :size="12" class="shrink-0 text-warn" />
+          </button>
+          <div v-if="filtered.length" :style="{ height: `${sourceWindow.after}px` }" aria-hidden="true"></div>
+
+          <div v-if="!filtered.length" class="stack items-center justify-center gap-2 h-full px-6 py-10 text-center">
+            <AppIcon :name="query.trim() || filter !== 'all' ? 'search' : 'inbox'" :size="20" class="text-fg-3" />
+            <b class="text-[13px] font-medium text-fg">{{ query.trim() || filter !== 'all' ? '没有匹配的资料' : '还没有资料' }}</b>
+            <span class="text-[12px] leading-relaxed text-fg-3">{{ query.trim() || filter !== 'all' ? '试试更换关键词或资料类型。' : '拖入文件或从剪贴板读取。' }}</span>
+            <button v-if="query.trim() || filter !== 'all'" class="btn-default btn-sm mt-1" @click="clearSearch(); filter = 'all'">清除筛选</button>
+          </div>
         </div>
       </section>
-      <section class="source-detail panel">
-        <template v-if="selected"><div class="detail-title"><div><p class="eyebrow">{{ selected.kind.toUpperCase() }}</p><h3>{{ selected.name }}</h3></div><span class="hash" :title="selected.sha256">#{{ selected.sha256?.slice(0, 8) }}</span></div>
-          <div v-if="selectedLoading" class="source-preview source-preview__loading" role="status" aria-live="polite">
-            <AppIcon name="inbox" :size="19" /><span>正在读取本地资料…</span>
-          </div>
-          <div v-else class="source-preview">
-            <Suspense>
+
+      <section class="pane h-full min-h-0" aria-label="资料详情">
+        <template v-if="selected">
+          <header class="row-between gap-3 shrink-0 px-4 h-13 border-b border-line">
+            <div class="row gap-2.5 min-w-0">
+              <span class="chip shrink-0 uppercase">{{ selected.kind }}</span>
+              <b class="text-[14px] font-semibold text-fg truncate">{{ selected.name }}</b>
+            </div>
+            <code class="shrink-0 font-mono text-[11px] text-fg-3" :title="selected.sha256">#{{ selected.sha256?.slice(0, 8) }}</code>
+          </header>
+
+          <div class="flex-1 min-h-0 overflow-auto bg-well">
+            <div v-if="selectedLoading" class="center gap-2 h-full text-[13px] text-fg-3" role="status" aria-live="polite">
+              <AppIcon name="inbox" :size="19" /><span>正在读取本地资料…</span>
+            </div>
+            <Suspense v-else>
               <template #default>
                 <SourceCanvas :source="selected" :initial-page="sourcePage" @select="captureSelection" @clear="clearCapturedSelection" @page="handleSourcePage" />
               </template>
               <template #fallback>
-                <div class="source-preview__loading" role="status" aria-live="polite">
-                  <AppIcon name="inbox" :size="19" />
-                  <span>正在准备本地预览…</span>
+                <div class="center gap-2 h-full text-[13px] text-fg-3" role="status" aria-live="polite">
+                  <AppIcon name="inbox" :size="19" /><span>正在准备本地预览…</span>
                 </div>
               </template>
             </Suspense>
           </div>
-          <div class="action-grid"><button v-for="item in toolActions.filter((tool) => tool.accepts.includes(selected!.kind))" :key="item.id" :disabled="selectedLoading || handoffBusy" @click="action(selected!, item.id)"><b><AppIcon :name="actionIcon(item.id)" :size="17" /></b><span>{{ item.title }}<small>{{ item.description }}</small></span></button></div>
-          <div class="source-meta">
-            <div class="source-tags" aria-label="资料标签">
-              <span class="source-tags__label">标签</span>
-              <button v-for="tag in selected.tags" :key="tag" type="button" class="source-tag" :disabled="sourceTagSaving" :aria-label="`移除标签 ${tag}`" :title="`移除标签 ${tag}`" @click="removeSelectedSourceTag(tag)"><span>{{ tag }}</span><i aria-hidden="true">×</i></button>
-              <form v-if="selected.tags.length < SOURCE_TAG_LIMIT" class="source-tag-input" @submit.prevent="addSelectedSourceTags"><label class="visually-hidden" for="source-tag-input">添加资料标签</label><input id="source-tag-input" v-model="newSourceTag" maxlength="120" :disabled="selectedLoading || sourceTagSaving" placeholder="添加标签" @keydown.enter.prevent="addSelectedSourceTags" /><button type="submit" :disabled="selectedLoading || sourceTagSaving || !newSourceTag.trim()" aria-label="保存资料标签" title="保存标签"><AppIcon name="plus" :size="13" /></button></form>
-              <small v-else class="source-tags__limit">已达 {{ SOURCE_TAG_LIMIT }} 个标签上限</small>
+
+          <footer class="stack gap-2.5 shrink-0 p-3 border-t border-line">
+            <div class="row gap-2 flex-wrap">
+              <button
+                v-for="item in availableActions"
+                :key="item.id"
+                class="btn-default btn-sm"
+                :disabled="selectedLoading || handoffBusy"
+                :title="item.description"
+                @click="action(selected!, item.id)"
+              >
+                <AppIcon :name="actionIcon(item.id)" :size="14" />{{ item.title }}
+              </button>
             </div>
-            <span>来源定位：第 {{ selectedPage + 1 }} 页{{ selectedBbox ? ' · 已记录选区' : ' · 全页区域' }}</span>
+
+            <div class="row gap-2 flex-wrap text-[11px]">
+              <span class="shrink-0 text-fg-3">标签</span>
+              <button
+                v-for="tag in selected.tags"
+                :key="tag"
+                type="button"
+                class="row gap-1 h-6 px-2 rounded-full bg-surface-2 text-fg-2 transition-colors hover:bg-danger-soft hover:text-danger"
+                :disabled="sourceTagSaving"
+                :aria-label="`移除标签 ${tag}`"
+                :title="`移除标签 ${tag}`"
+                @click="removeSelectedSourceTag(tag)"
+              >
+                {{ tag }}<AppIcon name="close" :size="11" />
+              </button>
+              <form v-if="selected.tags.length < SOURCE_TAG_LIMIT" class="row gap-1" @submit.prevent="addSelectedSourceTags">
+                <label class="visually-hidden" for="source-tag-input">添加资料标签</label>
+                <input
+                  id="source-tag-input"
+                  v-model="newSourceTag"
+                  maxlength="120"
+                  class="w-28 h-6 px-2 rounded-full bg-well border border-line text-[11px] focus:outline-none focus:border-accent"
+                  :disabled="selectedLoading || sourceTagSaving"
+                  placeholder="添加标签"
+                  @keydown.enter.prevent="addSelectedSourceTags"
+                />
+                <button
+                  type="submit"
+                  class="center w-6 h-6 rounded-full bg-surface-2 text-fg-3 hover:text-fg disabled:opacity-40"
+                  :disabled="selectedLoading || sourceTagSaving || !newSourceTag.trim()"
+                  aria-label="保存资料标签"
+                  title="保存标签"
+                >
+                  <AppIcon name="plus" :size="12" />
+                </button>
+              </form>
+              <small v-else class="text-fg-3">已达 {{ SOURCE_TAG_LIMIT }} 个标签上限</small>
+              <span class="ml-auto text-fg-3">来源定位：第 {{ selectedPage + 1 }} 页{{ selectedBbox ? ' · 已记录选区' : ' · 全页区域' }}</span>
+            </div>
+          </footer>
+        </template>
+
+        <!-- Nothing selected: the same action list, in the same place, but
+             each row now finds the material instead of acting on it. The old
+             layout had these twice — a "资料收进来以后" band above the list
+             and an action grid inside the detail pane, six overlapping
+             entries with two different sets of labels. -->
+        <div v-else class="flex-1 stack items-center justify-center gap-4 p-8 text-center">
+          <span class="center w-14 h-14 rounded-lg bg-surface-2 text-fg-3"><AppIcon name="file-text" :size="24" /></span>
+          <div class="stack gap-1">
+            <b class="text-[15px] font-semibold text-fg">选择一份资料开始</b>
+            <p class="max-w-100 text-[12px] leading-relaxed text-fg-3">预览、选区、建错题和代码分享都集中在这里；也可以直接从下面的工作流找资料。</p>
           </div>
-        </template><div v-else class="detail-empty"><div><b><AppIcon name="file-text" :size="22" /></b><strong>选择资料后继续处理</strong><span>预览、选区、建错题和代码分享都会集中在这里。</span><button class="primary-button" @click="chooseImport">导入第一份资料</button></div></div>
+          <div class="grid gap-2 grid-cols-2 w-full max-w-140">
+            <button
+              v-for="workflow in libraryWorkflows"
+              :key="workflow.id"
+              class="row gap-2.5 p-2.5 rounded-md border border-line bg-surface-2 text-left transition-colors hover:border-line-strong hover:bg-surface-3"
+              @click="startLibraryWorkflow(workflow)"
+            >
+              <AppIcon :name="workflow.icon" :size="16" class="shrink-0 text-fg-3" />
+              <span class="stack gap-0.5 min-w-0">
+                <b class="text-[12px] font-medium text-fg">{{ workflow.label }}</b>
+                <small class="text-[11px] text-fg-3 truncate">{{ workflow.detail }}</small>
+              </span>
+            </button>
+          </div>
+        </div>
       </section>
     </div>
-    <menu v-if="sourceMenu" ref="sourceMenuElement" class="source-context-menu" role="menu" :aria-label="`${sourceMenu.source.name} 操作`" :style="{ left: `${sourceMenu.x}px`, top: `${sourceMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleSourceMenuKeydown">
-      <p>{{ sourceMenu.source.name }}</p>
-      <button role="menuitem" @click="runSourceMenu('open')"><AppIcon name="file-text" :size="14" />打开并预览</button>
-      <button role="menuitem" @click="runSourceMenu('favorite')"><AppIcon name="star" :size="14" />{{ store.isContentFavorite('source', sourceMenu.source.id) ? '取消收藏' : '加入收藏' }}</button>
-      <button v-if="store.isContentRecent('source', sourceMenu.source.id)" role="menuitem" @click="runSourceMenu('remove-recent')"><AppIcon name="clock" :size="14" />从最近使用移除</button>
-      <button v-if="sourceDesktopPath(sourceMenu.source)" role="menuitem" @click="runSourceMenu('reveal')"><AppIcon name="inbox" :size="14" />在文件夹中显示</button>
-      <button v-if="sourceDesktopPath(sourceMenu.source)" role="menuitem" @click="runSourceMenu('copy-path')"><AppIcon name="link" :size="14" />复制 Vault 路径</button>
-      <button role="menuitem" @click="runSourceMenu('note')"><AppIcon name="file-text" :size="14" />整理为来源笔记</button>
-      <button role="menuitem" @click="runSourceMenu('question')"><AppIcon name="book" :size="14" />从资料创建错题</button>
-      <button v-if="sourceMenu.source.kind === 'image'" role="menuitem" :disabled="handoffBusy" @click="runSourceMenu('image-edit')"><AppIcon name="palette" :size="14" />在图片工作室编辑</button>
-      <button v-if="sourceMenu.source.kind === 'image'" role="menuitem" :disabled="handoffBusy || !sourceDesktopPath(sourceMenu.source)" @click="runSourceMenu('ocr')"><AppIcon name="file-text" :size="14" />离线识别图片文字</button>
-      <button v-if="sourceMenu.source.kind === 'image' || sourceMenu.source.kind === 'pdf'" role="menuitem" @click="runSourceMenu('formula')"><AppIcon name="math" :size="14" />整理为 LaTeX 公式草稿</button>
-      <button v-if="sourceMenu.source.kind === 'code' || sourceMenu.source.kind === 'text'" role="menuitem" @click="runSourceMenu('code-image')"><AppIcon name="terminal" :size="14" />转为代码分享</button>
-      <button v-if="sourceMenu.source.kind === 'image' || sourceMenu.source.kind === 'pdf'" role="menuitem" :disabled="handoffBusy" @click="runSourceMenu('batch')"><AppIcon name="toolbox" :size="14" />{{ sourceMenu.source.kind === 'image' ? '带入图片转 PDF' : '带入 PDF 工具' }}</button>
-      <button role="menuitem" @click="runSourceMenu('copy-name')"><AppIcon name="duplicate" :size="14" />复制资料名称</button>
-    </menu>
+
+    <Teleport to="body">
+      <menu
+        v-if="sourceMenu"
+        ref="sourceMenuElement"
+        class="fixed z-[120] w-60 m-0 p-1 rounded-md bg-surface border border-line-strong shadow-lg list-none"
+        role="menu"
+        :aria-label="`${sourceMenu.source.name} 操作`"
+        :style="{ left: `${sourceMenu.x}px`, top: `${sourceMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleSourceMenuKeydown"
+      >
+        <p class="px-2.5 py-1.5 text-[11px] text-fg-3 truncate">{{ sourceMenu.source.name }}</p>
+        <button class="nav-item w-full" role="menuitem" @click="runSourceMenu('open')"><AppIcon name="file-text" :size="14" />打开并预览</button>
+        <button class="nav-item w-full" role="menuitem" @click="runSourceMenu('favorite')"><AppIcon name="star" :size="14" />{{ store.isContentFavorite('source', sourceMenu.source.id) ? '取消收藏' : '加入收藏' }}</button>
+        <button v-if="store.isContentRecent('source', sourceMenu.source.id)" class="nav-item w-full" role="menuitem" @click="runSourceMenu('remove-recent')"><AppIcon name="clock" :size="14" />从最近使用移除</button>
+        <button v-if="sourceDesktopPath(sourceMenu.source)" class="nav-item w-full" role="menuitem" @click="runSourceMenu('reveal')"><AppIcon name="inbox" :size="14" />在文件夹中显示</button>
+        <button v-if="sourceDesktopPath(sourceMenu.source)" class="nav-item w-full" role="menuitem" @click="runSourceMenu('copy-path')"><AppIcon name="link" :size="14" />复制 Vault 路径</button>
+        <button class="nav-item w-full" role="menuitem" @click="runSourceMenu('note')"><AppIcon name="file-text" :size="14" />整理为来源笔记</button>
+        <button class="nav-item w-full" role="menuitem" @click="runSourceMenu('question')"><AppIcon name="book" :size="14" />从资料创建错题</button>
+        <button v-if="sourceMenu.source.kind === 'image'" class="nav-item w-full" role="menuitem" :disabled="handoffBusy" @click="runSourceMenu('image-edit')"><AppIcon name="palette" :size="14" />在图片工作室编辑</button>
+        <button v-if="sourceMenu.source.kind === 'image'" class="nav-item w-full" role="menuitem" :disabled="handoffBusy || !sourceDesktopPath(sourceMenu.source)" @click="runSourceMenu('ocr')"><AppIcon name="file-text" :size="14" />离线识别图片文字</button>
+        <button v-if="sourceMenu.source.kind === 'image' || sourceMenu.source.kind === 'pdf'" class="nav-item w-full" role="menuitem" @click="runSourceMenu('formula')"><AppIcon name="math" :size="14" />整理为 LaTeX 公式草稿</button>
+        <button v-if="sourceMenu.source.kind === 'code' || sourceMenu.source.kind === 'text'" class="nav-item w-full" role="menuitem" @click="runSourceMenu('code-image')"><AppIcon name="terminal" :size="14" />转为代码分享</button>
+        <button v-if="sourceMenu.source.kind === 'image' || sourceMenu.source.kind === 'pdf'" class="nav-item w-full" role="menuitem" :disabled="handoffBusy" @click="runSourceMenu('batch')"><AppIcon name="toolbox" :size="14" />{{ sourceMenu.source.kind === 'image' ? '带入图片转 PDF' : '带入 PDF 工具' }}</button>
+        <button class="nav-item w-full" role="menuitem" @click="runSourceMenu('copy-name')"><AppIcon name="duplicate" :size="14" />复制资料名称</button>
+      </menu>
+    </Teleport>
   </div>
 </template>
-
-<style scoped>
-.library-workbench__hero{display:grid;grid-template-columns:minmax(0,1fr) 236px;border-radius:18px;}
-.library-workbench__hero:before{display:none}
-.library-workbench__intro{position:relative;z-index:1;display:grid;align-content:center;justify-items:start;padding:24px 30px}.library-workbench__intro .eyebrow{color:var(--accent)}.library-workbench__intro h2{max-width:740px;margin:7px 0 8px;color:var(--fg);font:720 clamp(24px,2.7vw,35px)/1.13 var(--font-display);letter-spacing:-.04em}.library-workbench__intro h2 em{color:var(--accent);font-style:normal}.library-workbench__intro>p:not(.eyebrow){max-width:720px;margin:0;color:var(--fg);font-size:11px;line-height:1.65}.library-workbench__hero-actions{gap:7px;margin-top:14px}.library-workbench__hero-actions button{min-height:34px;font-size:10px}.library-workbench__hero-actions .primary-button{}.library-workbench__hero-actions .quiet-button{color:var(--fg);}.library-workbench__hero-actions .quiet-button:hover{}
-.library-workbench__hero>aside{position:relative;z-index:1;display:grid;align-content:center;gap:13px;padding:19px 20px;border-left:1px solid var(--surface-2);}.library-workbench__hero>aside header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:2px 10px;padding-bottom:11px;border-bottom:1px solid var(--surface-2)}.library-workbench__hero>aside header>span{font:700 9px var(--font-mono);letter-spacing:.08em}.library-workbench__hero>aside header>strong{grid-row:1/3;grid-column:2;font:760 34px/1 var(--font-mono);letter-spacing:-.065em}.library-workbench__hero>aside header>small{font-size:9px}.library-workbench__hero>aside>div{display:grid;grid-template-columns:1fr 1fr;gap:6px}.library-workbench__hero>aside>div span{display:grid;grid-template-columns:17px auto 1fr;align-items:center;gap:4px;}.library-workbench__hero>aside>div b{font:700 11px var(--font-mono)}.library-workbench__hero>aside>div small{font-size:9px}
-.library-workbench__inbox{margin-top:11px;padding:8px;border:1px solid var(--accent-soft);border-radius:13px;background:var(--surface-2)}.library-workbench__inbox :deep(.unified-drop){width:100%;min-height:58px;margin:0;padding:9px 11px;border-radius:9px;background:var(--accent-soft)}.library-workbench__inbox :deep(.drop-intro){grid-template-columns:32px minmax(0,1fr) auto}.library-workbench__inbox :deep(.drop-intro>b){width:31px;height:31px}.library-workbench__inbox :deep(.drop-intro strong){font-size:10px}.library-workbench__inbox :deep(.drop-intro small){font-size:9px}.library-workbench__inbox :deep(.select-files){min-height:31px;margin:0;font-size:9px}.library-workbench__inbox :deep(.drop-file-list){max-height:118px}
-.library-workbench__workflows{margin:11px 0;overflow:hidden;border:1px solid var(--accent-soft);border-radius:14px;background:var(--surface-2);box-shadow:0 8px 24px var(--accent-soft)}.library-workbench__workflows>header{display:flex;min-height:52px;align-items:center;justify-content:space-between;gap:18px;padding:9px 12px;border-bottom:1px solid var(--line-weak)}.library-workbench__workflows h3{margin:2px 0 0;font:700 14px var(--font-display)}.library-workbench__workflows>header>p{overflow:hidden;margin:0;color:var(--muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.library-workbench__workflows>div{display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}.library-workbench__workflows>div>button{display:grid;min-width:0;min-height:66px;grid-template-columns:29px minmax(0,1fr);align-items:center;gap:7px;padding:8px 10px;border:0;border-right:1px solid var(--line-weak);color:var(--text-secondary);background:transparent;text-align:left}.library-workbench__workflows>div>button:last-child{border-right:0}.library-workbench__workflows>div>button:hover,.library-workbench__workflows>div>button:focus-visible,.library-workbench__workflows>div>button.ready{color:var(--green-strong);background:linear-gradient(135deg,var(--green-bg),var(--surface-2))}.library-workbench__workflows>div>button:focus-visible{position:relative;z-index:1;outline:2px solid color-mix(in srgb,var(--green) 45%,transparent);outline-offset:-2px}.library-workbench__workflows button>b{display:grid;width:29px;height:29px;place-items:center;border-radius:8px;color:var(--green-strong);background:var(--accent-soft)}.library-workbench__workflows button>span{display:grid;min-width:0;gap:2px}.library-workbench__workflows button strong,.library-workbench__workflows button small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.library-workbench__workflows button strong{font:680 10px var(--font-ui)}.library-workbench__workflows button small{color:var(--muted);font-size:9px}.library-workbench__workflows button>i{grid-column:2;color:var(--green-strong);font:700 8.5px var(--font-mono);font-style:normal}
-.library-workbench__workflows button>i{font-size:9px}
-.library-workbench__workflows>div{grid-template-columns:repeat(6,minmax(0,1fr))}
-.library-layout{min-height:430px}.source-detail{min-width:0}.source-detail .action-grid button small{font-size:9px}
-@media(max-width:1050px){.library-workbench__hero{}.library-workbench__intro{padding:21px 23px}.library-workbench__intro h2{font-size:26px}.library-workbench__hero>aside{padding:16px}.library-workbench__workflows>div>button{padding-inline:7px}.library-workbench__workflows button>i{display:none}}
-@media(max-width:820px){.library-workbench__hero{}.library-workbench__hero>aside{display:none}.library-workbench__workflows>div{grid-template-columns:repeat(3,minmax(0,1fr))}.library-workbench__workflows>div>button{border-bottom:1px solid var(--line-weak)}.library-workbench__workflows>div>button:nth-child(3){border-right:0}.library-workbench__workflows>div>button:nth-last-child(-n+2){border-bottom:0}.library-workbench__workflows>header>p{display:none}}
-@media(max-width:820px){.library-workbench__workflows>div>button:nth-last-child(-n+3){border-bottom:0}}
-@media(prefers-reduced-motion:reduce){.library-workbench__hero,.library-workbench__workflows{scroll-behavior:auto}}
-</style>

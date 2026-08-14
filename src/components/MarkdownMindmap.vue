@@ -281,27 +281,48 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="markdown-mindmap" :class="`markdown-mindmap--${state}`" aria-label="Markdown 思维导图" @click="closeContextMenu()">
-    <header>
-      <div><span>脑图 · 由正文生成</span><small>滚轮缩放，拖拽平移，点击节点收合。</small></div>
-      <div class="markdown-mindmap__actions"><button class="quiet-button" :disabled="state !== 'ready'" @click.stop="fitMindmap">适应画布</button><button class="quiet-button markdown-mindmap__copy" :disabled="state !== 'ready' || copying" title="复制当前导图为 PNG" @click.stop="copyMindmapPng">{{ copying ? '正在复制…' : '复制 PNG' }}</button><button class="quiet-button markdown-mindmap__export" :disabled="state !== 'ready' || exporting" @click.stop="exportMindmapSvg">{{ exporting ? '导出中…' : '导出 SVG' }}</button><button class="more-button" aria-label="图谱更多操作" :disabled="state !== 'ready'" @click.stop="openContextMenu($event, $event.currentTarget)">•••</button></div>
+  <!-- The `markdown-mindmap` block name is gone; `markdown-mindmap__stage`
+       stays because App.vue names it in the selector that suppresses the
+       workspace context menu, and the `--${state}` modifier stays as the
+       state hook the drive scripts read. -->
+  <section class="flex flex-col min-w-0 min-h-0 overflow-hidden bg-surface" :class="`markdown-mindmap--${state}`" aria-label="Markdown 思维导图" @click="closeContextMenu()">
+    <header class="row-between gap-3 shrink-0 min-h-11 px-3 py-1.5">
+      <div class="stack gap-0.5 min-w-0"><span class="pane-title">脑图 · 由正文生成</span><small class="truncate text-[11px] text-fg-3">滚轮缩放，拖拽平移，点击节点收合。</small></div>
+      <div class="row gap-1.5 shrink-0"><button class="btn-default btn-sm" :disabled="state !== 'ready'" @click.stop="fitMindmap">适应画布</button><button class="btn-primary btn-sm" :disabled="state !== 'ready' || copying" title="复制当前导图为 PNG" @click.stop="copyMindmapPng">{{ copying ? '正在复制…' : '复制 PNG' }}</button><button class="btn-default btn-sm" :disabled="state !== 'ready' || exporting" @click.stop="exportMindmapSvg">{{ exporting ? '导出中…' : '导出 SVG' }}</button><button class="center w-7 h-7 shrink-0 rounded-sm text-fg-3 tracking-wider transition-colors duration-120 hover:not-disabled:bg-surface-2 hover:not-disabled:text-fg disabled:opacity-45 disabled:cursor-not-allowed" aria-label="图谱更多操作" :disabled="state !== 'ready'" @click.stop="openContextMenu($event, $event.currentTarget)">•••</button></div>
     </header>
-    <div ref="stage" tabindex="0" class="markdown-mindmap__stage" :aria-busy="state === 'loading'" aria-label="当前笔记的思维导图；右键或 Shift 加 F10 打开图谱菜单" @click="closeContextMenu()" @contextmenu.prevent.stop="openContextMenu($event, $event.currentTarget)" @keydown="openContextMenuFromKeyboard">
-      <svg v-show="state === 'ready' || state === 'loading'" ref="svg" aria-label="当前笔记的思维导图" />
-      <div v-if="state === 'empty'" class="markdown-mindmap__empty"><b>用标题写出层级。</b><p>从 <code># 主题</code>、<code>## 分支</code> 开始，Knitspace 会即时生成一张可缩放的思维导图。</p></div>
-      <div v-else-if="state === 'loading'" class="markdown-mindmap__loading"><i></i><span>正在整理标题结构…</span></div>
-      <div v-else-if="state === 'error'" class="markdown-mindmap__error"><b>图谱暂时无法生成</b><p>{{ errorMessage }}</p></div>
+    <!-- CONTENT PLANE. The stage is not a UI surface: what it shows is what
+         `serializeVisibleMindmap` writes into the exported SVG and what
+         `rasterizeVisibleMindmap` paints into the copied PNG, down to the
+         #fffefa ground and the dark-green ink. Theming it would mean the
+         diagram on screen and the diagram in the clipboard were two
+         different pictures, so it is fixed in both themes and the chrome
+         around it — header, overlays, menu — carries every token instead.
+         The overlays below therefore bring their own opaque card. -->
+    <div ref="stage" tabindex="0" class="markdown-mindmap__stage relative flex-1 min-h-0 overflow-hidden border-t border-line bg-[#fffefa] [&_.markmap-link]:stroke-[rgb(12_101_87_/_0.48)] [&_.markmap-node>line]:stroke-[rgb(12_101_87_/_0.48)] focus:outline-none focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-[var(--accent-ring)]" style="background-image: radial-gradient(rgb(12 101 87 / 0.13) 0.8px, transparent 0.8px); background-size: 16px 16px" :aria-busy="state === 'loading'" aria-label="当前笔记的思维导图；右键或 Shift 加 F10 打开图谱菜单" @click="closeContextMenu()" @contextmenu.prevent.stop="openContextMenu($event, $event.currentTarget)" @keydown="openContextMenuFromKeyboard">
+      <!-- markmap-view appends its own `markmap` class here and reads these
+           two custom properties out of the stylesheet it injects, so the ink
+           matches the export without a stylesheet override. The family list
+           is spelled out rather than taken from `--font-ui` on purpose: it
+           has to be identical to the one `serializeVisibleMindmap` writes
+           into the exported SVG, which is read by other programs that have
+           never heard of this app's tokens. -->
+      <svg v-show="state === 'ready' || state === 'loading'" ref="svg" class="block w-full h-full touch-none cursor-grab active:cursor-grabbing" style='--markmap-text-color: #1a2723; --markmap-font: 400 13px/1.35 "Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif' aria-label="当前笔记的思维导图" />
+      <div v-if="state === 'empty'" class="abs-center stack gap-2 w-[min(390px,calc(100%-48px))] p-5 rounded-lg bg-surface border border-line shadow-md"><b class="text-[13px] font-semibold text-fg">用标题写出层级。</b><p class="text-[12px] leading-relaxed text-fg-2">从 <code class="font-mono text-[11px] text-accent"># 主题</code>、<code class="font-mono text-[11px] text-accent">## 分支</code> 开始，Knitspace 会即时生成一张可缩放的思维导图。</p></div>
+      <div v-else-if="state === 'loading'" class="abs-center row gap-2 h-8 px-3 rounded-full bg-surface border border-line shadow-md text-[12px] font-medium text-fg-2 whitespace-nowrap"><i class="w-3.5 h-3.5 shrink-0 rounded-full border-2 border-line border-t-accent animate-spin"></i><span>正在整理标题结构…</span></div>
+      <div v-else-if="state === 'error'" class="abs-center stack gap-1 w-[min(390px,calc(100%-48px))] p-4 rounded-lg bg-surface border border-danger shadow-md"><b class="text-[13px] font-semibold text-danger">图谱暂时无法生成</b><p class="text-[12px] leading-relaxed text-fg-2">{{ errorMessage }}</p></div>
     </div>
     <Teleport to="body">
-      <section v-if="contextMenu" ref="contextMenuElement" class="markdown-mindmap__menu" role="menu" aria-label="图谱操作" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown">
-        <p>图谱视图</p>
-        <button role="menuitem" @click="fitMindmap(); closeContextMenu()">适应画布</button>
-        <button role="menuitem" :class="{ selected: expandLevel === 2 }" @click="chooseExpandLevel(2)">概览：只看一级分支</button>
-        <button role="menuitem" :class="{ selected: expandLevel === 4 }" @click="chooseExpandLevel(4)">展开：显示三层结构</button>
-        <button role="menuitem" :class="{ selected: expandLevel === -1 }" @click="chooseExpandLevel(-1)">展开全部标题</button>
-        <button role="menuitem" class="separator" :disabled="copying" @click="copyMindmapPng">{{ copying ? '正在复制 PNG…' : '复制当前视图 PNG' }}</button>
-        <button role="menuitem" class="separator" :disabled="exporting" @click="exportMindmapSvg">{{ exporting ? '正在导出 SVG…' : '导出当前视图 SVG' }}</button>
-        <button role="menuitem" class="separator" @click="rebuildMindmap">重新生成图谱</button>
+      <section v-if="contextMenu" ref="contextMenuElement" class="menu-panel w-[218px]" role="menu" aria-label="图谱操作" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown">
+        <p class="menu-title">图谱视图</p>
+        <button class="menu-item" role="menuitem" @click="fitMindmap(); closeContextMenu()">适应画布</button>
+        <button class="menu-item" role="menuitem" :class="{ 'bg-accent-soft text-accent font-medium': expandLevel === 2 }" @click="chooseExpandLevel(2)">概览：只看一级分支</button>
+        <button class="menu-item" role="menuitem" :class="{ 'bg-accent-soft text-accent font-medium': expandLevel === 4 }" @click="chooseExpandLevel(4)">展开：显示三层结构</button>
+        <button class="menu-item" role="menuitem" :class="{ 'bg-accent-soft text-accent font-medium': expandLevel === -1 }" @click="chooseExpandLevel(-1)">展开全部标题</button>
+        <div class="menu-sep" aria-hidden="true"></div>
+        <button class="menu-item" role="menuitem" :disabled="copying" @click="copyMindmapPng">{{ copying ? '正在复制 PNG…' : '复制当前视图 PNG' }}</button>
+        <button class="menu-item" role="menuitem" :disabled="exporting" @click="exportMindmapSvg">{{ exporting ? '正在导出 SVG…' : '导出当前视图 SVG' }}</button>
+        <div class="menu-sep" aria-hidden="true"></div>
+        <button class="menu-item" role="menuitem" @click="rebuildMindmap">重新生成图谱</button>
       </section>
     </Teleport>
   </section>

@@ -42,11 +42,20 @@ async function samplePdf(name, pages = 3) {
 
 async function run() {
   const browser = await chromium.launch({ executablePath: CHROME, headless: true })
-  const page = await browser.newPage({ viewport: { width: 1600, height: 950 } })
+  // The theme is a stored preference read before mount, so it has to be in
+  // place before the first navigation rather than toggled afterwards.
+  const theme = process.argv[3] === 'light' ? 'light' : 'dark'
+  const context = await browser.newContext({ viewport: { width: 1600, height: 950 } })
+  await context.addInitScript(
+    (value) => window.localStorage.setItem('knitspace:theme', value),
+    theme,
+  )
+  const page = await context.newPage()
   const shots = []
+  console.log(`theme: ${theme}`)
 
   const shot = async (label) => {
-    const file = join(OUT, `${String(shots.length + 1).padStart(2, '0')}-${label}.png`)
+    const file = join(OUT, `${theme}-${String(shots.length + 1).padStart(2, '0')}-${label}.png`)
     await page.screenshot({ path: file })
     shots.push(file)
     console.log('  captured', label)
@@ -86,14 +95,51 @@ async function run() {
   await page.waitForTimeout(700)
   await shot('json-invalid')
 
-  // ── Flow: a developer tool ─────────────────────────────────────────────
-  console.log('flow: Base64')
-  await page.goto(`${BASE}/developer-tools`, { waitUntil: 'networkidle' })
+  // ── Flow: the developer tools, which are live now ──────────────────────
+  // Nothing here is clicked to run. If a state below is empty, the live
+  // recompute is broken.
+  console.log('flow: 开发者工具')
+  await page.goto(`${BASE}/developer-tools?tool=base64`, { waitUntil: 'networkidle' })
   await page.waitForTimeout(900)
-  const devInput = page.locator('textarea').first()
-  await devInput.fill('Knitspace 本地工具箱')
+  await page.locator('textarea[name=developer-input]').fill('Knitspace 本地工具箱')
   await page.waitForTimeout(600)
-  await shot('devtools-filled')
+  await shot('devtools-base64-live')
+
+  await page.goto(`${BASE}/developer-tools?tool=jwt`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(700)
+  await page.locator('textarea[name=developer-input]').fill('not-a-real-token')
+  await page.waitForTimeout(600)
+  await shot('devtools-jwt-error')
+
+  await page.goto(`${BASE}/developer-tools?tool=diff`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(700)
+  await page.locator('textarea[name=developer-input]').fill('const a = 1\nconst b = 2\nconst c = 3')
+  await page.locator('textarea[name=developer-secondary-input]').fill('const a = 1\nconst b = 20\nconst c = 3\nconst d = 4')
+  await page.waitForTimeout(600)
+  await shot('devtools-diff')
+
+  await page.goto(`${BASE}/developer-tools?tool=datecalc`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(700)
+  await page.locator('input[type=date]').first().fill('2026-01-01')
+  await page.locator('input[type=date]').nth(1).fill('2026-08-13')
+  await page.waitForTimeout(600)
+  await shot('devtools-datecalc')
+
+  // ── Flow: settings, which is mostly a reading surface ──────────────────
+  console.log('flow: 设置')
+  for (const section of ['config', 'appearance', 'backup']) {
+    await page.goto(`${BASE}/settings?section=${section}`, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(900)
+    await shot(`settings-${section}`)
+  }
+
+  // ── Flow: the pages you land on ────────────────────────────────────────
+  console.log('flow: 落地页')
+  for (const [route, label] of [['/', 'home'], ['/today', 'today'], ['/history', 'history'], ['/clipboard', 'clipboard'], ['/quick', 'quick'], ['/lab', 'lab'], ['/library', 'library'], ['/review', 'review'], ['/tool-space', 'tool-space']]) {
+    await page.goto(`${BASE}${route}`, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(900)
+    await shot(label)
+  }
 
   await browser.close()
 

@@ -13,6 +13,7 @@ import { latestBackupRecord } from '@/lib/backup-status'
 import { favoriteContentIcons, favoriteContentLabels, favoriteContentRoute, resolveFavoriteContent } from '@/lib/content-favorites'
 import type { StudyDocument } from '@/types'
 import AppIcon from '@/components/AppIcon.vue'
+import SectionCard from '@/components/SectionCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import TodayFocus from '@/components/TodayFocus.vue'
 
@@ -523,155 +524,379 @@ const formatBytes = (value: number) => value < 1024
 
     <TodayFocus />
 
-    <section class="quick-launch">
-      <header><div><p class="eyebrow">从这里开始</p><h3>从一件小事开始</h3></div><kbd>Ctrl K · 搜索全部</kbd></header>
-      <div>
-        <button v-for="action in quickActions" :key="action.id" aria-haspopup="menu" :aria-expanded="quickActionMenu?.action.id === action.id" :title="`${action.label}；右键或 Shift+F10 查看更多操作`" @click="openQuick(action)" @contextmenu.prevent.stop="openQuickActionMenuFromPointer($event, action)" @keydown="openQuickActionMenuFromKeyboard($event, action)">
-          <b><AppIcon :name="action.icon" :size="19" /></b><span>{{ action.label }}</span><i>↗</i>
-        </button>
-      </div>
-    </section>
-
-    <section class="dashboard-module today-recent-documents">
-      <header><div><p class="eyebrow">继续阅读</p><h3>继续最近的内容</h3></div><RouterLink to="/knowledge?filter=recent">全部记录 →</RouterLink></header>
-      <div v-if="recentDocuments.length" class="today-recent-document-grid">
-        <RouterLink v-for="document in recentDocuments" :key="document.id" v-memo="[document.id, document.title, document.kind, document.subject, document.updatedAt, recentDocumentOpenedAt.get(document.id), store.isContentFavorite(document.kind, document.id)]" :to="{ path: '/documents', query: { kind: document.kind, document: document.id } }" aria-haspopup="menu" :aria-expanded="recentDocumentMenu?.document.id === document.id" :title="`打开“${document.title}”；右键或 Shift+F10 查看更多操作`" @contextmenu.prevent.stop="openRecentDocumentMenuFromPointer($event, document)" @keydown="openRecentDocumentMenuFromKeyboard($event, document)">
-          <b><AppIcon :name="document.kind === 'question' ? 'review' : 'book'" :size="16" /></b><span><strong>{{ document.title }}</strong><small>{{ document.kind === 'question' ? '错题' : document.subject || 'Markdown' }} · {{ formatTime(recentDocumentOpenedAt.get(document.id) || document.updatedAt) }}</small></span><i><AppIcon v-if="store.isContentFavorite(document.kind, document.id)" name="star" :size="12" /><template v-else>→</template></i>
-        </RouterLink>
-      </div>
-      <div v-else class="today-recent-document-empty"><AppIcon name="book" :size="18" /><span><b>从知识库打开一篇内容</b><small>下次回到今天时，可以直接从这里继续阅读或编辑。</small></span><RouterLink to="/knowledge">浏览知识库</RouterLink></div>
-    </section>
-
-    <section class="dashboard-module favorites-module">
-      <header><div><p class="eyebrow">常用工具</p><h3>我的常用工具</h3></div><div class="favorite-heading-actions"><small>拖动排序 · Ctrl Alt 1–9 打开</small><button type="button" :class="{ active: favoritePickerOpen }" @click.stop="favoritePickerOpen = !favoritePickerOpen"><AppIcon :name="favoritePickerOpen ? 'close' : 'plus'" :size="15" />{{ favoritePickerOpen ? '收起' : '添加工具' }}</button></div></header>
-      <section v-if="favoritePickerOpen" class="favorite-picker" aria-label="添加常用工具" @click.stop>
-        <header><label><AppIcon name="search" :size="16" /><input v-model="favoriteQuery" autofocus placeholder="搜索 PDF、图片、文本、开发工具…" /></label><span>{{ favoriteCandidates.length }} 个工具</span></header>
-        <nav aria-label="工具分类"><button v-for="group in favoriteGroups" :key="group" :class="{ active: favoriteGroup === group }" @click="favoriteGroup = group">{{ group }}</button></nav>
-        <div v-if="favoriteCandidates.length" class="favorite-picker-grid">
-            <button v-for="tool in favoriteCandidates" :key="tool.id" v-memo="[tool.id, favoriteToolIds.has(tool.id)]" :class="{ selected: favoriteToolIds.has(tool.id) }" @click="toggleFavoriteFromPicker(tool.id)">
-              <b><AppIcon :name="tool.icon" :size="17" /></b><span><strong>{{ tool.title }}</strong><small>{{ tool.description }}</small></span><i>{{ favoriteToolIds.has(tool.id) ? '已添加' : '＋ 添加' }}</i>
+    <div class="stack gap-4 mt-4">
+      <!-- ── Start something ─────────────────────────────────────────────── -->
+      <SectionCard title="从一件小事开始">
+        <template #actions><kbd class="kbd">Ctrl K</kbd></template>
+        <div class="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+          <button
+            v-for="action in quickActions"
+            :key="action.id"
+            aria-haspopup="menu"
+            :aria-expanded="quickActionMenu?.action.id === action.id"
+            :title="`${action.label}；右键或 Shift+F10 查看更多操作`"
+            class="group stack items-start gap-2 p-3 rounded-md border border-line bg-surface-2 text-left transition-colors hover:border-line-strong hover:bg-surface-3"
+            @click="openQuick(action)"
+            @contextmenu.prevent.stop="openQuickActionMenuFromPointer($event, action)"
+            @keydown="openQuickActionMenuFromKeyboard($event, action)"
+          >
+            <span class="center w-9 h-9 rounded-sm bg-surface text-fg-2 group-hover:text-accent"><AppIcon :name="action.icon" :size="19" /></span>
+            <span class="text-[12px] font-medium text-fg leading-snug">{{ action.label }}</span>
           </button>
         </div>
-        <p v-else class="favorite-picker-empty">没有匹配的工具，换个关键词试试。</p>
-      </section>
-      <div v-if="favorites.length" class="favorite-grid">
-        <article
-          v-for="item in favorites"
-          :key="item.toolId"
-          class="favorite-card"
-          :class="{ dragging: dragging === item.toolId, 'drag-target': dragTarget === item.toolId && dragging !== item.toolId }"
-          draggable="true"
-          role="link"
-          tabindex="0"
-          aria-haspopup="menu"
-          :aria-expanded="contextTool === item.toolId"
-          :title="`Alt + ←/→ 调整顺序；${item.shortcut || '收藏快捷键'} 打开`"
-          @keydown="handleFavoriteKey($event, item.toolId)"
-          @keydown.enter="openFavorite(item.toolId)"
-          @keydown.space.prevent="openFavorite(item.toolId)"
-          @click="openFavorite(item.toolId)"
-          @dragstart="startFavoriteDrag($event, item.toolId)"
-          @dragenter.prevent="dragTarget = item.toolId"
-          @dragover.prevent
-          @drop.prevent="dropFavorite(item.toolId, $event)"
-          @dragend="finishFavoriteDrag"
-          @contextmenu.prevent.stop="openFavoriteMenu(item.toolId, $event.currentTarget as HTMLElement)"
-        >
-          <span><b><AppIcon :name="item.tool!.icon" :size="20" /></b><kbd v-if="item.shortcut">{{ item.shortcut }}</kbd></span>
-          <h4>{{ item.tool!.title }}</h4><p>{{ item.tool!.description }}</p><i>打开工具 →</i>
-          <menu v-if="contextTool === item.toolId" role="menu" :aria-label="`${item.tool!.title} 操作`" @click.stop @keydown.stop="handleFavoriteMenuKeydown"><button role="menuitem" @click.prevent.stop="store.toggleFavorite(item.toolId)">取消收藏</button><button role="menuitem" @click.prevent.stop="router.push(item.tool!.to)">立即打开</button></menu>
-        </article>
-      </div>
-      <div v-else class="favorite-empty"><span>还没有固定工具</span><div><button v-for="tool in suggested" :key="tool.id" @click="addFavorite(tool.id)"><AppIcon :name="tool.icon" :size="16" />加入 {{ tool.title }}</button></div></div>
-    </section>
+      </SectionCard>
 
-    <section class="dashboard-module content-favorites-module">
-      <header><div><p class="eyebrow">已收藏</p><h3>收藏内容</h3></div><RouterLink to="/knowledge?filter=favorites">查看收藏夹 →</RouterLink></header>
-      <div v-if="favoriteContent.length" class="content-favorites-list">
-        <RouterLink v-for="item in favoriteContent" :key="`${item.itemKind}:${item.itemId}`" v-memo="[item.itemKind, item.itemId, item.title, item.detail, item.addedAt]" :to="favoriteContentRoute(item)">
-          <b><AppIcon :name="favoriteContentIcons[item.itemKind]" :size="16" /></b><span><strong>{{ item.title }}</strong><small>{{ favoriteContentLabels[item.itemKind] }} · {{ item.detail }}</small></span><AppIcon name="star" :size="12" />
-        </RouterLink>
-      </div>
-      <div v-else class="content-favorites-empty"><AppIcon name="star" :size="17" /><span><b>把真正会反复打开的内容放在这里</b><small>笔记、题目、单词、资料与画布都可通过右键收藏。</small></span><RouterLink to="/knowledge">去知识库</RouterLink></div>
-    </section>
-
-    <div class="dashboard-board">
-      <section class="dashboard-module recent-task-module">
-        <header><div><p class="eyebrow">最近运行</p><h3>最近任务</h3></div><RouterLink to="/history">全部历史 →</RouterLink></header>
-        <div v-if="recentJobs.length" class="compact-task-list">
-          <article v-for="job in recentJobs" :key="job.id"><span :class="job.status"><i></i>{{ job.status === 'succeeded' ? '完成' : job.status === 'failed' ? '失败' : job.status === 'running' ? `${job.progress}%` : '等待' }}</span><div><h4>{{ job.label }}</h4><p>{{ job.outputNames?.join('、') || job.detail || job.inputNames?.join('、') }}</p></div><time>{{ formatTime(job.createdAt) }}</time></article>
+      <!-- ── Pick up where you left off ──────────────────────────────────── -->
+      <SectionCard title="继续阅读" to="/knowledge?filter=recent" link-label="全部记录">
+        <div v-if="recentDocuments.length" class="grid gap-2 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+          <RouterLink
+            v-for="document in recentDocuments"
+            :key="document.id"
+            v-memo="[document.id, document.title, document.kind, document.subject, document.updatedAt, recentDocumentOpenedAt.get(document.id), store.isContentFavorite(document.kind, document.id)]"
+            :to="{ path: '/documents', query: { kind: document.kind, document: document.id } }"
+            aria-haspopup="menu"
+            :aria-expanded="recentDocumentMenu?.document.id === document.id"
+            :title="`打开“${document.title}”；右键或 Shift+F10 查看更多操作`"
+            class="row gap-2.5 p-2.5 rounded-md border border-line bg-surface-2 transition-colors hover:border-line-strong hover:bg-surface-3"
+            @contextmenu.prevent.stop="openRecentDocumentMenuFromPointer($event, document)"
+            @keydown="openRecentDocumentMenuFromKeyboard($event, document)"
+          >
+            <span class="center w-8 h-8 rounded-sm bg-surface text-fg-2 shrink-0">
+              <AppIcon :name="document.kind === 'question' ? 'review' : 'book'" :size="16" />
+            </span>
+            <span class="stack gap-0.5 min-w-0 flex-1">
+              <strong class="text-[13px] font-medium text-fg truncate">{{ document.title }}</strong>
+              <small class="text-[11px] text-fg-3 truncate">
+                {{ document.kind === 'question' ? '错题' : document.subject || 'Markdown' }} · {{ formatTime(recentDocumentOpenedAt.get(document.id) || document.updatedAt) }}
+              </small>
+            </span>
+            <AppIcon v-if="store.isContentFavorite(document.kind, document.id)" name="star" :size="13" class="shrink-0 text-warn" />
+          </RouterLink>
         </div>
-        <EmptyState v-else icon="toolbox" title="还没有处理任务" description="拖入任意内容后，Knitspace 会把它收进合适的本地工作流。" action="快速捕获" @action="router.push('/quick')" />
-      </section>
+        <div v-else class="row gap-3 p-4 rounded-md border border-dashed border-line-strong">
+          <AppIcon name="book" :size="18" class="shrink-0 text-fg-3" />
+          <span class="stack gap-0.5 flex-1 min-w-0">
+            <b class="text-[13px] font-medium text-fg">从知识库打开一篇内容</b>
+            <small class="text-[12px] text-fg-3">下次回到今天时，可以直接从这里继续。</small>
+          </span>
+          <RouterLink class="btn-default btn-sm shrink-0" to="/knowledge">浏览知识库</RouterLink>
+        </div>
+      </SectionCard>
 
-      <section class="dashboard-module recent-tool-module">
-        <header><div><p class="eyebrow">最近工具</p><h3>最近使用</h3></div></header>
-        <div v-if="recentTools.length" class="recent-tool-list"><RouterLink v-for="item in recentTools" :key="item.usage.toolId" :to="item.tool!.to"><b><AppIcon :name="item.tool!.icon" :size="17" /></b><span><strong>{{ item.tool!.title }}</strong><small>{{ formatTime(item.usage.usedAt) }}</small></span><i>→</i></RouterLink></div>
-        <div v-else class="mini-empty">使用过的工具会自动留在这里。</div>
-      </section>
+      <!-- ── Pinned tools ────────────────────────────────────────────────── -->
+      <SectionCard title="我的常用工具" hint="拖动排序 · Ctrl Alt 1–9 打开">
+        <template #actions>
+          <button
+            type="button"
+            class="btn-sm"
+            :class="favoritePickerOpen ? 'btn-primary' : 'btn-default'"
+            @click.stop="favoritePickerOpen = !favoritePickerOpen"
+          >
+            <AppIcon :name="favoritePickerOpen ? 'close' : 'plus'" :size="14" />{{ favoritePickerOpen ? '收起' : '添加工具' }}
+          </button>
+        </template>
 
-      <section class="dashboard-module recent-source-module">
-        <header><div><h3>最近资料</h3></div><RouterLink to="/library">资料库 →</RouterLink></header>
-        <div v-if="recentSources.length" class="recent-source-list"><RouterLink v-for="source in recentSources" :key="source.id" :to="{ path: '/library', query: { source: source.id } }"><b>{{ source.kind.toUpperCase() }}</b><span><strong>{{ source.name }}</strong><small>{{ formatBytes(source.size) }} · {{ source.tags.join(' / ') || '未分类' }}</small></span></RouterLink></div>
-        <div v-else class="mini-empty">拖入 PDF、图片或代码建立你的本地资料库。</div>
-      </section>
+        <section v-if="favoritePickerOpen" class="stack gap-3 mb-3 p-3 rounded-md border border-accent bg-accent-soft" aria-label="添加常用工具" @click.stop>
+          <div class="row gap-2">
+            <label class="row gap-2 flex-1 min-w-0 h-9 px-3 rounded-sm bg-surface border border-line focus-within:border-accent">
+              <AppIcon name="search" :size="15" class="shrink-0 text-fg-3" />
+              <input v-model="favoriteQuery" autofocus placeholder="搜索 PDF、图片、文本、开发工具…" class="flex-1 min-w-0 bg-transparent border-0 outline-none text-[13px]" />
+            </label>
+            <span class="text-[12px] tabular-nums text-fg-3 shrink-0">{{ favoriteCandidates.length }} 个</span>
+          </div>
+          <nav class="row gap-1 flex-wrap" aria-label="工具分类">
+            <button
+              v-for="group in favoriteGroups"
+              :key="group"
+              class="h-7 px-2.5 rounded-full text-[12px] transition-colors"
+              :class="favoriteGroup === group ? 'bg-accent text-accent-fg font-medium' : 'text-fg-2 hover:bg-surface-2'"
+              @click="favoriteGroup = group"
+            >
+              {{ group }}
+            </button>
+          </nav>
+          <div v-if="favoriteCandidates.length" class="grid gap-2 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 max-h-80 overflow-y-auto">
+            <button
+              v-for="tool in favoriteCandidates"
+              :key="tool.id"
+              v-memo="[tool.id, favoriteToolIds.has(tool.id)]"
+              class="row gap-2.5 p-2.5 rounded-md border text-left transition-colors"
+              :class="favoriteToolIds.has(tool.id) ? 'border-accent bg-surface' : 'border-line bg-surface hover:border-line-strong'"
+              @click="toggleFavoriteFromPicker(tool.id)"
+            >
+              <span class="center w-8 h-8 rounded-sm bg-surface-2 text-fg-2 shrink-0"><AppIcon :name="tool.icon" :size="17" /></span>
+              <span class="stack gap-0.5 min-w-0 flex-1">
+                <strong class="text-[12px] font-medium text-fg truncate">{{ tool.title }}</strong>
+                <small class="text-[11px] text-fg-3 truncate">{{ tool.description }}</small>
+              </span>
+              <i class="text-[11px] not-italic shrink-0" :class="favoriteToolIds.has(tool.id) ? 'text-accent' : 'text-fg-3'">
+                {{ favoriteToolIds.has(tool.id) ? '已添加' : '添加' }}
+              </i>
+            </button>
+          </div>
+          <p v-else class="py-8 text-center text-[12px] text-fg-3">没有匹配的工具，换个关键词试试。</p>
+        </section>
 
-      <section class="dashboard-module study-module">
-        <header><div><p class="eyebrow">学习节奏</p><h3>学习进度</h3></div><RouterLink to="/review">开始复习 →</RouterLink></header>
-        <div class="study-gauge" :style="{ '--progress': `${learningPulse.coveragePercent}%` }"><b>{{ learningPulse.coveragePercent }}<small>%</small></b><span>{{ learningPulse.reviewableCount ? `已复习 ${learningPulse.reviewedCount} / ${learningPulse.reviewableCount} 张卡` : '还没有加入复习的卡片' }}</span></div>
-        <div class="study-stats"><span><b>{{ learningPulse.dueCount }}</b>今日待复习</span><span><b>{{ store.questionCount }}</b>累计错题</span><span><b>{{ noteCount }}</b>学习笔记</span></div>
-      </section>
+        <div v-if="favorites.length" class="grid gap-2 grid-cols-2 sm:grid-cols-3 xl:grid-cols-5">
+          <article
+            v-for="item in favorites"
+            :key="item.toolId"
+            class="relative stack gap-2 p-3 rounded-md border bg-surface-2 cursor-grab transition-all active:cursor-grabbing"
+            :class="[
+              dragging === item.toolId ? 'opacity-40 scale-97' : '',
+              dragTarget === item.toolId && dragging !== item.toolId ? 'border-accent shadow-md -translate-y-0.5' : 'border-line hover:border-line-strong',
+            ]"
+            draggable="true"
+            role="link"
+            tabindex="0"
+            aria-haspopup="menu"
+            :aria-expanded="contextTool === item.toolId"
+            :title="`Alt + ←/→ 调整顺序；${item.shortcut || '收藏快捷键'} 打开`"
+            @keydown="handleFavoriteKey($event, item.toolId)"
+            @keydown.enter="openFavorite(item.toolId)"
+            @keydown.space.prevent="openFavorite(item.toolId)"
+            @click="openFavorite(item.toolId)"
+            @dragstart="startFavoriteDrag($event, item.toolId)"
+            @dragenter.prevent="dragTarget = item.toolId"
+            @dragover.prevent
+            @drop.prevent="dropFavorite(item.toolId, $event)"
+            @dragend="finishFavoriteDrag"
+            @contextmenu.prevent.stop="openFavoriteMenu(item.toolId, $event.currentTarget as HTMLElement)"
+          >
+            <span class="row-between gap-2">
+              <b class="center w-9 h-9 rounded-sm bg-surface text-accent"><AppIcon :name="item.tool!.icon" :size="19" /></b>
+              <kbd v-if="item.shortcut" class="kbd shrink-0">{{ item.shortcut }}</kbd>
+            </span>
+            <h4 class="text-[13px] font-medium text-fg leading-snug">{{ item.tool!.title }}</h4>
+            <p class="text-[11px] leading-snug text-fg-3 line-clamp-2">{{ item.tool!.description }}</p>
 
-      <section class="dashboard-module recent-output-module">
-        <header><div><p class="eyebrow">产物架</p><h3>最近生成</h3></div><RouterLink to="/history">查看目录 →</RouterLink></header>
-        <div v-if="recentOutputs.length" class="output-list"><button v-for="job in recentOutputs" :key="job.id" @click="openOutput(job.outputs?.[0]?.path)"><b><AppIcon :name="job.kind === 'image' ? 'image' : job.kind === 'code' ? 'terminal' : 'file-text'" :size="17" /></b><span><strong>{{ job.outputs?.[0]?.name || job.outputNames?.[0] }}</strong><small>{{ job.label }}</small></span><i>→</i></button></div>
-        <div v-else class="mini-empty">生成结果会集中出现在这里。</div>
-      </section>
+            <menu
+              v-if="contextTool === item.toolId"
+              class="absolute right-2 top-2 z-10 m-0 w-36 p-1 rounded-md bg-surface border border-line-strong shadow-lg"
+              role="menu"
+              :aria-label="`${item.tool!.title} 操作`"
+              @click.stop
+              @keydown.stop="handleFavoriteMenuKeydown"
+            >
+              <button class="nav-item w-full" role="menuitem" @click.prevent.stop="store.toggleFavorite(item.toolId)">取消收藏</button>
+              <button class="nav-item w-full" role="menuitem" @click.prevent.stop="router.push(item.tool!.to)">立即打开</button>
+            </menu>
+          </article>
+        </div>
+        <div v-else class="stack gap-2.5 p-4 rounded-md border border-dashed border-line-strong">
+          <span class="text-[13px] text-fg-2">还没有固定工具，先放两个每天都要用的：</span>
+          <div class="row gap-1.5 flex-wrap">
+            <button v-for="tool in suggested" :key="tool.id" class="btn-default btn-sm" @click="addFavorite(tool.id)">
+              <AppIcon :name="tool.icon" :size="14" />{{ tool.title }}
+            </button>
+          </div>
+        </div>
+      </SectionCard>
+
+      <!-- ── Saved content ───────────────────────────────────────────────── -->
+      <SectionCard title="收藏内容" to="/knowledge?filter=favorites" link-label="收藏夹">
+        <div v-if="favoriteContent.length" class="grid gap-2 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+          <RouterLink
+            v-for="item in favoriteContent"
+            :key="`${item.itemKind}:${item.itemId}`"
+            v-memo="[item.itemKind, item.itemId, item.title, item.detail, item.addedAt]"
+            :to="favoriteContentRoute(item)"
+            class="row gap-2.5 p-2.5 rounded-md border border-line bg-surface-2 transition-colors hover:border-line-strong hover:bg-surface-3"
+          >
+            <span class="center w-8 h-8 rounded-sm bg-surface text-fg-2 shrink-0"><AppIcon :name="favoriteContentIcons[item.itemKind]" :size="16" /></span>
+            <span class="stack gap-0.5 min-w-0 flex-1">
+              <strong class="text-[13px] font-medium text-fg truncate">{{ item.title }}</strong>
+              <small class="text-[11px] text-fg-3 truncate">{{ favoriteContentLabels[item.itemKind] }} · {{ item.detail }}</small>
+            </span>
+            <AppIcon name="star" :size="13" class="shrink-0 text-warn" />
+          </RouterLink>
+        </div>
+        <div v-else class="row gap-3 p-4 rounded-md border border-dashed border-line-strong">
+          <AppIcon name="star" :size="17" class="shrink-0 text-fg-3" />
+          <span class="stack gap-0.5 flex-1 min-w-0">
+            <b class="text-[13px] font-medium text-fg">把会反复打开的内容放在这里</b>
+            <small class="text-[12px] text-fg-3">笔记、题目、单词、资料与画布都可以右键收藏。</small>
+          </span>
+          <RouterLink class="btn-default btn-sm shrink-0" to="/knowledge">去知识库</RouterLink>
+        </div>
+      </SectionCard>
+
+      <!-- ── Activity ────────────────────────────────────────────────────── -->
+      <div class="grid gap-4 grid-cols-1 xl:grid-cols-2 items-start">
+        <SectionCard title="最近任务" to="/history" link-label="全部历史" flush>
+          <ul v-if="recentJobs.length" class="stack">
+            <li v-for="job in recentJobs" :key="job.id" class="row gap-3 px-4 py-2.5 border-b border-line last:border-b-0">
+              <span
+                class="row gap-1.5 shrink-0 w-14 text-[11px] tabular-nums"
+                :class="job.status === 'succeeded' ? 'text-success' : job.status === 'failed' ? 'text-danger' : job.status === 'running' ? 'text-accent' : 'text-fg-3'"
+              >
+                <i class="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                {{ job.status === 'succeeded' ? '完成' : job.status === 'failed' ? '失败' : job.status === 'running' ? `${job.progress}%` : '等待' }}
+              </span>
+              <span class="stack gap-0.5 min-w-0 flex-1">
+                <h4 class="text-[13px] font-medium text-fg truncate">{{ job.label }}</h4>
+                <p class="text-[11px] text-fg-3 truncate">{{ job.outputNames?.join('、') || job.detail || job.inputNames?.join('、') }}</p>
+              </span>
+              <time class="text-[11px] text-fg-3 shrink-0">{{ formatTime(job.createdAt) }}</time>
+            </li>
+          </ul>
+          <div v-else class="p-3">
+            <EmptyState icon="toolbox" title="还没有处理任务" description="拖入任意内容，Knitspace 会把它收进合适的本地工作流。" action="快速捕获" @action="router.push('/quick')" />
+          </div>
+        </SectionCard>
+
+        <SectionCard title="学习进度" to="/review" link-label="开始复习">
+          <div class="stack gap-3">
+            <div class="stack gap-1.5">
+              <div class="row-between gap-2">
+                <span class="text-[12px] text-fg-3">
+                  {{ learningPulse.reviewableCount ? `已复习 ${learningPulse.reviewedCount} / ${learningPulse.reviewableCount} 张卡` : '还没有加入复习的卡片' }}
+                </span>
+                <b class="text-[16px] font-semibold tabular-nums text-fg">{{ learningPulse.coveragePercent }}%</b>
+              </div>
+              <div
+                class="h-1.5 rounded-full bg-surface-3 overflow-hidden"
+                role="progressbar"
+                :aria-valuenow="learningPulse.coveragePercent"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-label="复习覆盖率"
+              >
+                <span class="block h-full rounded-full bg-accent transition-[width] duration-300" :style="{ width: `${Math.max(2, learningPulse.coveragePercent)}%` }" />
+              </div>
+            </div>
+            <dl class="grid grid-cols-3 gap-px rounded-md bg-line border border-line overflow-hidden">
+              <div class="stack gap-0.5 px-3 py-2.5 bg-surface">
+                <dt class="text-[11px] text-fg-3">今日待复习</dt>
+                <dd class="text-[18px] font-semibold tabular-nums" :class="learningPulse.dueCount ? 'text-warn' : 'text-fg'">{{ learningPulse.dueCount }}</dd>
+              </div>
+              <div class="stack gap-0.5 px-3 py-2.5 bg-surface">
+                <dt class="text-[11px] text-fg-3">累计错题</dt>
+                <dd class="text-[18px] font-semibold tabular-nums text-fg">{{ store.questionCount }}</dd>
+              </div>
+              <div class="stack gap-0.5 px-3 py-2.5 bg-surface">
+                <dt class="text-[11px] text-fg-3">学习笔记</dt>
+                <dd class="text-[18px] font-semibold tabular-nums text-fg">{{ noteCount }}</dd>
+              </div>
+            </dl>
+          </div>
+        </SectionCard>
+      </div>
+
+      <div class="grid gap-4 grid-cols-1 lg:grid-cols-3 items-start">
+        <SectionCard title="最近使用" flush>
+          <ul v-if="recentTools.length" class="stack p-1.5 gap-0.5">
+            <li v-for="item in recentTools" :key="item.usage.toolId">
+              <RouterLink :to="item.tool!.to" class="row gap-2.5 px-2 py-2 rounded-sm hover:bg-surface-2">
+                <span class="center w-8 h-8 rounded-sm bg-surface-2 text-fg-2 shrink-0"><AppIcon :name="item.tool!.icon" :size="16" /></span>
+                <span class="stack gap-0.5 min-w-0 flex-1">
+                  <strong class="text-[13px] font-medium text-fg truncate">{{ item.tool!.title }}</strong>
+                  <small class="text-[11px] text-fg-3">{{ formatTime(item.usage.usedAt) }}</small>
+                </span>
+              </RouterLink>
+            </li>
+          </ul>
+          <p v-else class="p-4 text-[12px] text-fg-3">用过的工具会自动留在这里。</p>
+        </SectionCard>
+
+        <SectionCard title="最近资料" to="/library" link-label="资料库" flush>
+          <ul v-if="recentSources.length" class="stack p-1.5 gap-0.5">
+            <li v-for="source in recentSources" :key="source.id">
+              <RouterLink :to="{ path: '/library', query: { source: source.id } }" class="row gap-2.5 px-2 py-2 rounded-sm hover:bg-surface-2">
+                <b class="center w-8 h-8 shrink-0 rounded-sm bg-surface-2 text-[10px] font-semibold text-fg-2">{{ source.kind.toUpperCase() }}</b>
+                <span class="stack gap-0.5 min-w-0 flex-1">
+                  <strong class="text-[13px] font-medium text-fg truncate">{{ source.name }}</strong>
+                  <small class="text-[11px] text-fg-3 truncate">{{ formatBytes(source.size) }} · {{ source.tags.join(' / ') || '未分类' }}</small>
+                </span>
+              </RouterLink>
+            </li>
+          </ul>
+          <p v-else class="p-4 text-[12px] text-fg-3">拖入 PDF、图片或代码，建立本地资料库。</p>
+        </SectionCard>
+
+        <SectionCard title="最近生成" to="/history" link-label="查看目录" flush>
+          <ul v-if="recentOutputs.length" class="stack p-1.5 gap-0.5">
+            <li v-for="job in recentOutputs" :key="job.id">
+              <button class="w-full row gap-2.5 px-2 py-2 rounded-sm text-left hover:bg-surface-2" @click="openOutput(job.outputs?.[0]?.path)">
+                <span class="center w-8 h-8 rounded-sm bg-surface-2 text-fg-2 shrink-0">
+                  <AppIcon :name="job.kind === 'image' ? 'image' : job.kind === 'code' ? 'terminal' : 'file-text'" :size="16" />
+                </span>
+                <span class="stack gap-0.5 min-w-0 flex-1">
+                  <strong class="text-[13px] font-medium text-fg truncate">{{ job.outputs?.[0]?.name || job.outputNames?.[0] }}</strong>
+                  <small class="text-[11px] text-fg-3 truncate">{{ job.label }}</small>
+                </span>
+              </button>
+            </li>
+          </ul>
+          <p v-else class="p-4 text-[12px] text-fg-3">生成的结果会集中出现在这里。</p>
+        </SectionCard>
+      </div>
     </div>
 
-    <footer class="system-strip">
-      <span><i class="online"></i><b>本机模式</b> 文件不上传</span>
-      <span><AppIcon name="file-text" :size="15" />剪贴板历史 <b>{{ store.clipboardItems.length }} 条</b></span>
-      <RouterLink class="system-strip__backup" to="/settings?section=backup" :title="latestBackup ? `打开数据与备份；${latestBackupLabel} ${new Date(latestBackup.at).toLocaleString('zh-CN')}` : '打开数据与备份'"><AppIcon name="shield" :size="15" />{{ latestBackup ? `${latestBackupLabel} ${formatTime(latestBackup.at)}` : '尚无备份记录' }}</RouterLink>
-      <RouterLink to="/settings">打开设置 →</RouterLink>
+    <footer class="row gap-4 flex-wrap mt-5 pt-4 border-t border-line text-[12px] text-fg-3">
+      <span class="row gap-1.5"><i class="w-1.5 h-1.5 rounded-full bg-success" /><b class="font-medium text-fg-2">本机模式</b>文件不上传</span>
+      <span class="row gap-1.5"><AppIcon name="file-text" :size="14" />剪贴板历史 <b class="font-medium text-fg-2 tabular-nums">{{ store.clipboardItems.length }} 条</b></span>
+      <RouterLink
+        class="row gap-1.5 hover:text-accent"
+        to="/settings?section=backup"
+        :title="latestBackup ? `打开数据与备份；${latestBackupLabel} ${new Date(latestBackup.at).toLocaleString('zh-CN')}` : '打开数据与备份'"
+      >
+        <AppIcon name="shield" :size="14" />{{ latestBackup ? `${latestBackupLabel} ${formatTime(latestBackup.at)}` : '尚无备份记录' }}
+      </RouterLink>
+      <RouterLink class="ml-auto hover:text-accent" to="/settings">打开设置</RouterLink>
     </footer>
 
-    <section v-if="quickActionMenu" ref="quickActionMenuElement" class="quick-action-context-menu" role="menu" :aria-label="quickActionMenu.action.label + ' 操作'" :style="{ left: quickActionMenu.x + 'px', top: quickActionMenu.y + 'px', '--quick-menu-width': supportsNoteStarterTemplates(quickActionMenu.action) ? '306px' : '226px' }" @click.stop @contextmenu.prevent @keydown.stop="handleQuickActionMenuKeydown">
-      <header><span>快速入口</span><b>{{ quickActionMenu.action.label }}</b></header>
-      <button v-for="item in quickActionMenuItems" :key="item.id" :class="{ 'quick-action-context-menu__template': Boolean(item.template) }" role="menuitem" @click="runQuickActionMenu(item)"><span><b>{{ item.label }}</b><small v-if="item.template">{{ item.template.description }}</small></span><i v-if="item.template">{{ item.template.subject }}</i></button>
-    </section>
-    <section v-if="recentDocumentMenu" ref="recentDocumentMenuElement" class="recent-document-context-menu" role="menu" :aria-label="`${recentDocumentMenu.document.title} 文档操作`" :style="{ left: recentDocumentMenu.x + 'px', top: recentDocumentMenu.y + 'px' }" @click.stop @contextmenu.prevent @keydown.stop="handleRecentDocumentMenuKeydown">
-      <header><span>最近打开</span><b>{{ recentDocumentMenu.document.title }}</b></header>
-      <button role="menuitem" @click="openRecentDocument(recentDocumentMenu.document)"><AppIcon name="book" :size="16" /><span>阅读预览</span></button>
-      <button role="menuitem" @click="openRecentDocument(recentDocumentMenu.document, 'edit')"><AppIcon name="rename" :size="16" /><span>打开源码编辑</span></button>
-      <button role="menuitem" @click="toggleRecentDocumentFavorite(recentDocumentMenu.document)"><AppIcon name="star" :size="16" /><span>{{ store.isContentFavorite(recentDocumentMenu.document.kind, recentDocumentMenu.document.id) ? '取消收藏' : '加入收藏' }}</span></button>
-      <button role="menuitem" @click="removeRecentDocument(recentDocumentMenu.document)"><AppIcon name="clock" :size="16" /><span>从最近打开移除</span></button>
-      <button role="menuitem" @click="copyRecentDocumentWikiLink(recentDocumentMenu.document)"><AppIcon name="link" :size="16" /><span>复制双链</span></button>
-      <button role="menuitem" @click="openRecentDocumentKind(recentDocumentMenu.document)"><AppIcon name="book" :size="16" /><span>查看同类内容</span></button>
-    </section>
+    <Teleport to="body">
+      <div
+        v-if="quickActionMenu"
+        ref="quickActionMenuElement"
+        class="fixed z-[120] p-1 rounded-md bg-surface border border-line-strong shadow-lg"
+        role="menu"
+        :aria-label="quickActionMenu.action.label + ' 操作'"
+        :style="{ left: quickActionMenu.x + 'px', top: quickActionMenu.y + 'px', width: supportsNoteStarterTemplates(quickActionMenu.action) ? '306px' : '226px' }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleQuickActionMenuKeydown"
+      >
+        <p class="px-2.5 py-1.5 text-[11px] text-fg-3 truncate">快速入口 · {{ quickActionMenu.action.label }}</p>
+        <button
+          v-for="item in quickActionMenuItems"
+          :key="item.id"
+          class="row-between gap-2 w-full px-2.5 py-2 rounded-sm text-left text-fg-2 hover:bg-surface-2 hover:text-fg"
+          role="menuitem"
+          @click="runQuickActionMenu(item)"
+        >
+          <span class="stack gap-0.5 min-w-0">
+            <b class="text-[13px] font-medium truncate">{{ item.label }}</b>
+            <small v-if="item.template" class="text-[11px] text-fg-3 truncate">{{ item.template.description }}</small>
+          </span>
+          <i v-if="item.template" class="chip-accent shrink-0 not-italic">{{ item.template.subject }}</i>
+        </button>
+      </div>
+
+      <div
+        v-if="recentDocumentMenu"
+        ref="recentDocumentMenuElement"
+        class="fixed z-[120] w-60 p-1 rounded-md bg-surface border border-line-strong shadow-lg"
+        role="menu"
+        :aria-label="`${recentDocumentMenu.document.title} 文档操作`"
+        :style="{ left: recentDocumentMenu.x + 'px', top: recentDocumentMenu.y + 'px' }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleRecentDocumentMenuKeydown"
+      >
+        <p class="px-2.5 py-1.5 text-[11px] text-fg-3 truncate">最近打开 · {{ recentDocumentMenu.document.title }}</p>
+        <button class="nav-item w-full" role="menuitem" @click="openRecentDocument(recentDocumentMenu.document)"><AppIcon name="book" :size="15" />阅读预览</button>
+        <button class="nav-item w-full" role="menuitem" @click="openRecentDocument(recentDocumentMenu.document, 'edit')"><AppIcon name="rename" :size="15" />打开源码编辑</button>
+        <button class="nav-item w-full" role="menuitem" @click="toggleRecentDocumentFavorite(recentDocumentMenu.document)">
+          <AppIcon name="star" :size="15" />{{ store.isContentFavorite(recentDocumentMenu.document.kind, recentDocumentMenu.document.id) ? '取消收藏' : '加入收藏' }}
+        </button>
+        <button class="nav-item w-full" role="menuitem" @click="copyRecentDocumentWikiLink(recentDocumentMenu.document)"><AppIcon name="link" :size="15" />复制双链</button>
+        <button class="nav-item w-full" role="menuitem" @click="openRecentDocumentKind(recentDocumentMenu.document)"><AppIcon name="book" :size="15" />查看同类内容</button>
+        <button class="nav-item w-full hover:bg-danger-soft hover:text-danger" role="menuitem" @click="removeRecentDocument(recentDocumentMenu.document)">
+          <AppIcon name="clock" :size="15" />从最近打开移除
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
-
-<style scoped>
-.favorite-grid{align-items:stretch}.favorite-card{display:grid;grid-template-rows:auto auto minmax(38px,1fr) auto;min-height:178px;padding:16px;overflow:visible;cursor:grab;outline:none;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease,opacity .16s ease}.favorite-card:active{cursor:grabbing}.favorite-card:focus-visible{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}.favorite-card h4{margin:13px 0 5px;line-height:1.3}.favorite-card p{min-width:0;margin:0;color:var(--muted);font-size:11px;line-height:1.5;overflow-wrap:anywhere}.favorite-card>i{position:static;align-self:end;left:auto;bottom:auto;margin-top:12px;color:var(--accent);font-size:10px;font-style:normal;font-weight:700}.favorite-card.dragging{opacity:.42;transform:scale(.97)}.favorite-card.drag-target{border-color:var(--accent);box-shadow:inset 4px 0 0 var(--accent),0 12px 28px color-mix(in srgb,var(--accent) 12%,transparent);transform:translateY(-3px)}
-.favorite-heading-actions{display:flex;align-items:center;gap:12px}.favorite-heading-actions>small{color:var(--muted);font-size:10px}.favorite-heading-actions>button{display:flex;align-items:center;gap:7px;min-height:36px;padding:0 13px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent) 6%,var(--surface));color:var(--accent);font-size:11px;font-weight:750;transition:.16s ease}.favorite-heading-actions>button:hover,.favorite-heading-actions>button.active{border-color:var(--accent);background:var(--accent);color:white;box-shadow:0 8px 22px color-mix(in srgb,var(--accent) 20%,transparent)}
-.favorite-picker{margin:0 0 16px;padding:14px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line));border-radius:14px;background:linear-gradient(145deg,color-mix(in srgb,var(--surface) 96%,var(--accent) 4%),var(--surface));box-shadow:0 18px 42px var(--accent-soft);animation:picker-in .16s ease-out}.favorite-picker>header{display:flex;align-items:center;gap:12px;margin-bottom:11px}.favorite-picker>header label{display:flex;align-items:center;gap:9px;min-width:0;flex:1;height:40px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--canvas);color:var(--muted)}.favorite-picker>header label:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}.favorite-picker input{width:100%;border:0;outline:0;background:transparent;color:var(--ink);font-size:12px}.favorite-picker>header>span{color:var(--muted);font:10px ui-monospace,SFMono-Regular,Consolas,monospace}.favorite-picker>nav{display:flex;gap:6px;padding-bottom:12px;overflow-x:auto}.favorite-picker>nav button{flex:none;min-height:30px;padding:0 10px;border:1px solid transparent;border-radius:999px;background:transparent;color:var(--muted);font-size:10px}.favorite-picker>nav button:hover{background:color-mix(in srgb,var(--accent) 7%,var(--surface));color:var(--ink)}.favorite-picker>nav button.active{border-color:color-mix(in srgb,var(--accent) 30%,var(--line));background:color-mix(in srgb,var(--accent) 10%,var(--surface));color:var(--accent);font-weight:750}
-.favorite-picker-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;max-height:310px;overflow:auto;padding:1px 4px 3px 1px}.favorite-picker-grid>button{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:9px;min-height:62px;padding:9px 10px;border:1px solid var(--line);border-radius:11px;background:var(--surface);color:var(--ink);text-align:left;transition:.14s ease}.favorite-picker-grid>button:hover{border-color:color-mix(in srgb,var(--accent) 46%,var(--line));transform:translateY(-1px)}.favorite-picker-grid>button.selected{border-color:color-mix(in srgb,var(--accent) 36%,var(--line));background:color-mix(in srgb,var(--accent) 7%,var(--surface))}.favorite-picker-grid>button>b{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:color-mix(in srgb,var(--accent) 10%,var(--surface));color:var(--accent)}.favorite-picker-grid>button>span{display:grid;gap:3px;min-width:0}.favorite-picker-grid strong{overflow:hidden;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.favorite-picker-grid small{overflow:hidden;color:var(--muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.favorite-picker-grid i{color:var(--accent);font-size:9px;font-style:normal;font-weight:700}.favorite-picker-empty{margin:0;padding:28px;text-align:center;color:var(--muted);font-size:11px}@keyframes picker-in{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}@media(max-width:1050px){.favorite-picker-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.favorite-heading-actions>small{display:none}.favorite-picker-grid{grid-template-columns:1fr}}
-.content-favorites-module{margin-top:14px}.content-favorites-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.content-favorites-list>a{display:grid;min-height:60px;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--line);border-radius:11px;color:var(--text);background:var(--surface-2);transition:border-color .16s ease,background .16s ease,color .16s ease}.content-favorites-list>a:hover,.content-favorites-list>a:focus-visible{border-color:var(--accent-soft);color:var(--green-strong);background:var(--surface)}.content-favorites-list>a>b{display:grid;width:32px;height:32px;place-items:center;border-radius:9px;color:var(--green-strong);background:var(--green-bg)}.content-favorites-list>a>span{display:grid;min-width:0;gap:3px}.content-favorites-list strong,.content-favorites-list small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.content-favorites-list strong{font:680 10px var(--font-ui)}.content-favorites-list small{color:var(--muted);font:8px var(--font-ui)}.content-favorites-list>a>.app-icon{color:var(--warn)}.content-favorites-empty{display:grid;min-height:62px;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 11px;border:1px dashed var(--accent-soft);border-radius:11px;color:var(--green-strong);background:var(--surface-2)}.content-favorites-empty>span{display:grid;gap:3px}.content-favorites-empty b{color:var(--text-secondary);font:650 10px var(--font-ui)}.content-favorites-empty small{color:var(--muted);font:9px/1.4 var(--font-ui)}.content-favorites-empty>a{color:var(--green-strong);font:700 9px var(--font-ui)}@media(max-width:980px){.content-favorites-list{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:650px){.content-favorites-list{grid-template-columns:1fr}.content-favorites-empty{grid-template-columns:32px 1fr}.content-favorites-empty>a{grid-column:2}}
-.quick-action-context-menu{position:fixed;z-index:var(--z-context-menu);width:var(--quick-menu-width,226px);overflow:hidden;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:13px;background:var(--surface);box-shadow:var(--shadow-lg);animation:picker-in .14s ease-out both}.quick-action-context-menu>header{display:grid;gap:3px;padding:11px 13px 9px;border-bottom:1px solid var(--line-weak)}.quick-action-context-menu>header span{color:var(--muted);font:700 9px var(--font-mono);letter-spacing:.09em}.quick-action-context-menu>header b{color:var(--text);font:700 13px var(--font-ui)}.quick-action-context-menu>button{display:flex;width:100%;min-height:37px;align-items:center;justify-content:space-between;gap:10px;padding:0 13px;border:0;color:var(--text-secondary);background:transparent;font:650 11px var(--font-ui);text-align:left}.quick-action-context-menu>button:hover,.quick-action-context-menu>button:focus-visible{color:var(--green-strong);background:var(--green-bg)}.quick-action-context-menu>button:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:-2px}.quick-action-context-menu>button>span{display:grid;min-width:0;gap:3px}.quick-action-context-menu>button>span>b{overflow:hidden;color:inherit;font:inherit;text-overflow:ellipsis;white-space:nowrap}.quick-action-context-menu>button>span>small{overflow:hidden;color:var(--muted);font:10px/1.35 var(--font-sans);text-overflow:ellipsis;white-space:nowrap}.quick-action-context-menu>button>i{flex:0 0 auto;padding:3px 5px;border-radius:5px;color:var(--green-strong);background:var(--green-bg);font:700 8px/1 var(--font-mono);font-style:normal}.quick-action-context-menu>button.quick-action-context-menu__template{min-height:63px;padding-block:8px}.quick-action-context-menu>button.quick-action-context-menu__template:hover b,.quick-action-context-menu>button.quick-action-context-menu__template:focus-visible b{color:var(--green-strong)}
-.recent-document-list{display:grid}.recent-document-list>a{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:9px;padding:9px 0;border-top:1px solid var(--line);color:var(--text);transition:color .16s ease,background .16s ease}.recent-document-list>a:hover,.recent-document-list>a:focus-visible{color:var(--green-strong)}.recent-document-list>a>b{display:grid;width:29px;height:29px;place-items:center;border-radius:7px;color:var(--green-strong);background:var(--green-bg)}.recent-document-list span{min-width:0}.recent-document-list strong,.recent-document-list small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.recent-document-list strong{font:650 10px/1.3 var(--font-ui)}.recent-document-list small{margin-top:3px;color:var(--muted);font:9px/1.35 var(--font-sans)}.recent-document-list i{color:var(--muted);font-size:11px;font-style:normal}.recent-document-list>a:hover i,.recent-document-list>a:focus-visible i{color:var(--green-strong)}
-.recent-document-context-menu{position:fixed;z-index:var(--z-context-menu);width:244px;overflow:hidden;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:13px;background:var(--surface);box-shadow:var(--shadow-lg);animation:picker-in .14s ease-out both}.recent-document-context-menu>header{display:grid;gap:3px;padding:11px 13px 9px;border-bottom:1px solid var(--line-weak);background:linear-gradient(120deg,color-mix(in srgb,var(--green-bg) 76%,transparent),transparent 74%)}.recent-document-context-menu>header span{color:var(--muted);font:700 9px var(--font-mono);letter-spacing:.09em}.recent-document-context-menu>header b{overflow:hidden;color:var(--text);font:700 13px var(--font-ui);text-overflow:ellipsis;white-space:nowrap}.recent-document-context-menu>button{display:flex;width:100%;min-height:38px;align-items:center;gap:9px;padding:0 13px;border:0;color:var(--text-secondary);background:transparent;font:650 11px var(--font-ui);text-align:left}.recent-document-context-menu>button:hover,.recent-document-context-menu>button:focus-visible{color:var(--green-strong);background:var(--green-bg)}.recent-document-context-menu>button:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:-2px}.recent-document-context-menu .app-icon{color:currentColor}
-.hero-quick-capture{gap:9px;max-width:620px;margin-top:14px;padding:5px 6px 5px 13px;}.hero-quick-capture input{width:100%;min-width:0;height:32px;outline:0;font:600 12px var(--font-ui)}.hero-quick-capture input::placeholder{}.hero-quick-capture:focus-within{}.hero-quick-capture kbd{padding:3px 6px;border-radius:5px;font:700 9px var(--font-mono)}.hero-quick-capture button{min-height:32px;padding:0 11px;border-radius:8px;font:750 11px var(--font-ui);white-space:nowrap}.hero-quick-capture button:hover:not(:disabled){}.hero-quick-capture button:focus-visible{outline:2px solid var(--surface);outline-offset:2px}.hero-quick-capture button:disabled{opacity:.5}@media(max-width:720px){.hero-quick-capture{}.hero-quick-capture kbd{display:none}}
-
-/* Today is a daily command surface, so its hero stays expressive without
-   pushing the actual work below the first desktop viewport. */
-.workbench-hero{min-height:264px;gap:22px;padding:28px 32px}.hero-copy h2{max-width:610px;margin-top:8px;font-size:clamp(28px,2.55vw,38px);line-height:1.14}.hero-copy>p:not(.eyebrow){margin:10px 0 14px;font-size:13px;line-height:1.65}.hero-actions .new-task,.hero-actions .secondary-action{min-height:36px}.hero-quick-capture{margin-top:10px}.hero-privacy{margin-top:8px}
-
-.today-recent-documents{margin-top:14px;padding:16px 18px}.today-recent-documents>header{margin-bottom:10px}.today-recent-document-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}.today-recent-document-grid>a{display:grid;min-width:0;min-height:66px;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--line);border-radius:11px;color:var(--text);background:var(--surface-2);transition:border-color .16s ease,color .16s ease,background .16s ease}.today-recent-document-grid>a:hover,.today-recent-document-grid>a:focus-visible{border-color:var(--accent-soft);color:var(--green-strong);background:var(--surface)}.today-recent-document-grid>a>b{display:grid;width:32px;height:32px;place-items:center;border-radius:9px;color:var(--green-strong);background:var(--green-bg)}.today-recent-document-grid>a>span{display:grid;min-width:0;gap:4px}.today-recent-document-grid strong,.today-recent-document-grid small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.today-recent-document-grid strong{font:680 12px var(--font-ui)}.today-recent-document-grid small{color:var(--muted);font:10px var(--font-ui)}.today-recent-document-grid>a>i{color:var(--muted);font-size:11px;font-style:normal}.today-recent-document-grid>a:hover>i,.today-recent-document-grid>a:focus-visible>i{color:var(--green-strong)}
-.today-recent-document-empty{display:grid;min-height:66px;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 11px;border:1px dashed var(--accent-soft);border-radius:11px;color:var(--green-strong);background:var(--surface-2)}.today-recent-document-empty>span{display:grid;gap:3px}.today-recent-document-empty b{color:var(--text-secondary);font:670 11px var(--font-ui)}.today-recent-document-empty small{color:var(--muted);font:10px/1.45 var(--font-ui)}.today-recent-document-empty>a{color:var(--green-strong);font:700 10px var(--font-ui)}
-
-.favorite-picker-grid strong{font-size:12px}.favorite-picker-grid small,.favorite-picker-grid i{font-size:10px}.content-favorites-list strong{font-size:12px}.content-favorites-list small{font-size:10px}.content-favorites-empty b{font-size:11px}.content-favorites-empty small,.content-favorites-empty>a{font-size:10px}.quick-action-context-menu>header span,.recent-document-context-menu>header span{font-size:10px}.quick-action-context-menu>button>i{font-size:9px}.system-strip>span,.system-strip>a{font-size:10px}.system-strip b{font-size:10px}.system-strip>.system-strip__backup{margin-left:0;color:var(--text-secondary)}.system-strip>.system-strip__backup:hover,.system-strip>.system-strip__backup:focus-visible{color:var(--green-strong);background:var(--green-bg)}
-
-@media(max-width:1100px){.today-recent-document-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:1180px){.system-strip>.system-strip__backup{display:none}}
-</style>

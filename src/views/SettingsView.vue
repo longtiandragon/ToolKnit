@@ -11,6 +11,12 @@ import { aiProviderPresets, findAiProviderPreset } from '@/lib/ai-presets'
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useUiStore } from '@/stores/ui'
 import AppIcon from '@/components/AppIcon.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import FieldRow from '@/components/FieldRow.vue'
+import SettingRow from '@/components/SettingRow.vue'
+import SegmentedControl from '@/components/SegmentedControl.vue'
+import ToggleSwitch from '@/components/ToggleSwitch.vue'
+import { applyTheme, themePreference, type ThemePreference } from '@/lib/theme'
 import VaultRestorePreviewDialog from '@/components/VaultRestorePreviewDialog.vue'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { storageSpaceLevel, storageSpacePercent } from '@/lib/storage-health'
@@ -557,278 +563,766 @@ function openVaultRestoreReviewQa() {
 async function focusSection(){const section=typeof route.query.section==='string'?route.query.section:'';await nextTick();if(!section||section==='config'){window.scrollTo({top:0,behavior:'auto'});return}document.getElementById(section)?.scrollIntoView({behavior:'auto',block:'start'})}
 watch(()=>route.query.section,focusSection)
 onMounted(()=>{store.pruneClipboard();focusSection();void loadVaultHealth();openVaultRestoreReviewQa()})
+
+
+/** The index down the left. Kept as data so the nav and the anchors cannot
+ *  drift apart the way seven hand-written RouterLinks did. */
+const sections = [
+  { id: 'config', label: '常规', icon: 'settings' },
+  { id: 'appearance', label: '阅读与外观', icon: 'palette' },
+  { id: 'clipboard', label: '剪贴板', icon: 'file-text' },
+  { id: 'ai', label: 'AI 服务', icon: 'sparkle' },
+  { id: 'engines', label: '本机引擎', icon: 'play' },
+  { id: 'backup', label: '数据与备份', icon: 'inbox' },
+  { id: 'update', label: '版本更新', icon: 'clock' },
+] as const
+const activeSection = computed(() => {
+  const requested = route.query.section
+  return typeof requested === 'string' && sections.some((item) => item.id === requested) ? requested : 'config'
+})
+
+const themeOptions = [
+  { id: 'system', label: '跟随系统' },
+  { id: 'dark', label: '深色' },
+  { id: 'light', label: '浅色' },
+] as const
+
+/** Restoring a vault is three distinct operations, and which one is running
+ *  is the only thing that distinguishes "working" from "hung". */
+const restoreSteps = computed(() => [
+  { title: '已选择归档', detail: '不会直接覆盖当前资料库', state: 'done' as const },
+  {
+    title: '验证并保护当前数据',
+    detail: '检查 SQLite 与 Markdown，再创建恢复前归档',
+    state: vaultRestorePhase.value === 'working' ? ('active' as const) : ('done' as const),
+  },
+  {
+    title: '替换并重新载入',
+    detail: '完成后由新的 Vault 重建当前界面',
+    state: vaultRestorePhase.value === 'reloading' ? ('active' as const) : ('pending' as const),
+  },
+])
 </script>
 
 <template>
-  <div class="settings page-enter" @click="closeVaultMenu(); closeBuildMenu(); closeAiProfileMenu()">
-    <div class="settings-shell">
-      <aside class="settings-index" aria-label="设置分类">
-        <header>
-          <span class="settings-index-icon"><AppIcon name="settings" :size="18" /></span>
-          <div><strong>偏好设置</strong><small>本机配置自动保存</small></div>
-        </header>
-        <nav>
-          <RouterLink :to="{ path: '/settings', query: { section: 'config' } }" :class="{ active: !route.query.section || route.query.section === 'config' }" :aria-current="!route.query.section || route.query.section === 'config' ? 'page' : undefined"><AppIcon name="settings" :size="16" /><span>常规</span></RouterLink>
-          <RouterLink :to="{ path: '/settings', query: { section: 'appearance' } }" :class="{ active: route.query.section === 'appearance' }" :aria-current="route.query.section === 'appearance' ? 'page' : undefined"><AppIcon name="palette" :size="16" /><span>阅读与外观</span></RouterLink>
-          <RouterLink :to="{ path: '/settings', query: { section: 'clipboard' } }" :class="{ active: route.query.section === 'clipboard' }" :aria-current="route.query.section === 'clipboard' ? 'page' : undefined"><AppIcon name="file-text" :size="16" /><span>剪贴板</span></RouterLink>
-          <RouterLink :to="{ path: '/settings', query: { section: 'ai' } }" :class="{ active: route.query.section === 'ai' }" :aria-current="route.query.section === 'ai' ? 'page' : undefined"><AppIcon name="sparkle" :size="16" /><span>AI 服务</span></RouterLink>
-          <RouterLink :to="{ path: '/settings', query: { section: 'engines' } }" :class="{ active: route.query.section === 'engines' }" :aria-current="route.query.section === 'engines' ? 'page' : undefined"><AppIcon name="play" :size="16" /><span>本机引擎</span></RouterLink>
-          <RouterLink :to="{ path: '/settings', query: { section: 'backup' } }" :class="{ active: route.query.section === 'backup' }" :aria-current="route.query.section === 'backup' ? 'page' : undefined"><AppIcon name="inbox" :size="16" /><span>数据与备份</span></RouterLink>
-          <RouterLink :to="{ path: '/settings', query: { section: 'update' } }" :class="{ active: route.query.section === 'update' }" :aria-current="route.query.section === 'update' ? 'page' : undefined"><AppIcon name="clock" :size="16" /><span>版本更新</span></RouterLink>
-        </nav>
-        <div class="settings-local-note"><AppIcon name="shield" :size="16" /><span><b>本地优先</b><small>没有遥测，不会静默上传</small></span></div>
-      </aside>
+  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeVaultMenu(); closeBuildMenu(); closeAiProfileMenu()">
+    <PageHeader title="设置" subtitle="桌面行为、隐私边界、服务连接与工作区数据，改动即时生效">
+      <template #actions>
+        <span class="row gap-1.5 h-9 px-3 rounded-sm bg-success-soft text-[12px] text-success">
+          <AppIcon name="check" :size="14" />更改自动保存
+        </span>
+      </template>
+    </PageHeader>
 
-      <main class="settings-content">
-        <header class="settings-intro">
-          <div><p class="eyebrow">桌面偏好</p><h2>让 Knitspace 按你的方式工作</h2><p>调整桌面行为、隐私边界、服务连接和工作区数据。</p></div>
-          <span class="settings-save-state"><i></i>更改自动保存</span>
-        </header>
+    <div class="grid gap-6 grid-cols-1 xl:grid-cols-[200px_minmax(0,1fr)] items-start">
+      <!-- The index scrolls with the page until it reaches the top, then
+           stays. Settings is long enough that losing the map costs more than
+           the 200px it takes up. -->
+      <nav class="stack gap-0.5 xl:sticky xl:top-6" aria-label="设置分类">
+        <RouterLink
+          v-for="item in sections"
+          :key="item.id"
+          :to="{ path: '/settings', query: { section: item.id } }"
+          class="nav-item"
+          :class="activeSection === item.id ? 'nav-item-active' : ''"
+          :aria-current="activeSection === item.id ? 'page' : undefined"
+        >
+          <AppIcon :name="item.icon" :size="15" class="shrink-0" />
+          <span>{{ item.label }}</span>
+        </RouterLink>
 
-        <section id="config" class="settings-section">
-          <header><span><AppIcon name="settings" :size="18" /></span><div><h3>常规</h3><p>桌面窗口、导出与系统通知</p></div></header>
-          <div class="settings-panel">
-            <div class="setting-control"><span><b>默认输出目录</b><small>{{store.settings.outputDirectory||'尚未设置，首次导出时选择'}}</small></span><button class="quiet-button" :disabled="!desktop" @click="pickOutputDirectory">选择目录</button></div>
-            <div class="setting-control"><span><b>关闭窗口时</b><small>托盘菜单始终可以彻底退出</small></span><select :value="store.settings.closeBehavior" @change="store.updateSettings({closeBehavior:($event.target as HTMLSelectElement).value as any})"><option value="ask">每次询问</option><option value="tray">隐藏到托盘</option><option value="quit">彻底退出</option></select></div>
-            <label class="setting-toggle"><span><b>Markdown 自动保存</b><small>停笔后写入本地；大文档会自动延长间隔，Ctrl+S 始终可用</small></span><input type="checkbox" :checked="store.settings.documentAutoSave" @change="store.updateSettings({documentAutoSave:!store.settings.documentAutoSave})"/></label>
-            <label class="setting-toggle"><span><b>系统通知</b><small>长任务完成、失败、备份和更新时提醒</small></span><input type="checkbox" :checked="store.settings.notificationsEnabled" @change="store.updateSettings({notificationsEnabled:!store.settings.notificationsEnabled})"/></label>
-          </div>
+        <p class="row gap-2 mt-3 px-2.5 py-2.5 rounded-sm bg-surface-2 text-[11px] leading-snug text-fg-3">
+          <AppIcon name="shield" :size="15" class="shrink-0 text-success" />
+          没有遥测，不会静默上传
+        </p>
+      </nav>
+
+      <div class="stack gap-6 min-w-0">
+        <!-- ── 常规 ──────────────────────────────────────────────────────── -->
+        <section id="config" class="panel px-5 py-4 stack gap-1 scroll-mt-6">
+          <header class="stack gap-0.5 pb-2">
+            <h3 class="text-[15px] font-semibold text-fg">常规</h3>
+            <p class="text-[12px] text-fg-3">桌面窗口、导出位置与系统通知</p>
+          </header>
+
+          <SettingRow
+            interactive
+            title="默认输出目录"
+            :description="store.settings.outputDirectory || '尚未设置，首次导出时会问你要放在哪里'"
+            :disabled-note="desktop ? undefined : '浏览器模式下由下载目录接管'"
+          >
+            <button class="btn-default btn-sm" :disabled="!desktop" @click="pickOutputDirectory">选择目录</button>
+          </SettingRow>
+
+          <SettingRow interactive title="关闭窗口时" description="托盘菜单里始终可以彻底退出">
+            <select
+              class="field w-36"
+              :value="store.settings.closeBehavior"
+              aria-label="关闭窗口时的行为"
+              @change="store.updateSettings({ closeBehavior: ($event.target as HTMLSelectElement).value as any })"
+            >
+              <option value="ask">每次询问</option>
+              <option value="tray">隐藏到托盘</option>
+              <option value="quit">彻底退出</option>
+            </select>
+          </SettingRow>
+
+          <SettingRow title="Markdown 自动保存" description="停笔后写入本地；大文档会自动延长间隔，Ctrl+S 始终可用">
+            <ToggleSwitch
+              :model-value="store.settings.documentAutoSave"
+              label="Markdown 自动保存"
+              @update:model-value="store.updateSettings({ documentAutoSave: $event })"
+            />
+          </SettingRow>
+
+          <SettingRow title="系统通知" description="长任务完成、失败、备份和更新时提醒">
+            <ToggleSwitch
+              :model-value="store.settings.notificationsEnabled"
+              label="系统通知"
+              @update:model-value="store.updateSettings({ notificationsEnabled: $event })"
+            />
+          </SettingRow>
         </section>
 
-        <section id="appearance" class="settings-section appearance-settings">
-          <header><span><AppIcon name="palette" :size="18" /></span><div><h3>阅读与外观</h3><p>统一 Markdown 阅读、源码编辑与纸张对比度</p></div></header>
-          <div class="settings-panel appearance-panel">
-            <div class="appearance-controls">
-              <fieldset>
-                <legend><b>正文字号</b><small>同步调整源码编辑器，保持阅读与书写比例</small></legend>
-                <div class="appearance-segments">
-                  <button v-for="option in readingScaleOptions" :key="option.id" type="button" :class="{ active: store.settings.readingScale === option.id }" :aria-pressed="store.settings.readingScale === option.id" @click="store.updateSettings({ readingScale: option.id })"><b>{{ option.label }}</b><small>{{ option.detail }}</small></button>
+        <!-- ── 阅读与外观 ────────────────────────────────────────────────── -->
+        <section id="appearance" class="panel px-5 py-4 stack gap-4 scroll-mt-6">
+          <header class="stack gap-0.5">
+            <h3 class="text-[15px] font-semibold text-fg">阅读与外观</h3>
+            <p class="text-[12px] text-fg-3">界面主题，以及 Markdown 阅读与源码编辑的排版</p>
+          </header>
+
+          <div class="grid gap-5 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_280px]">
+            <div class="stack gap-4 min-w-0">
+              <!-- The theme lived only in the rail as a two-state flip, so
+                   "follow the system" was unreachable from anywhere. -->
+              <FieldRow label="界面主题" hint="跟随系统时会随 Windows 的深浅色设置切换">
+                <SegmentedControl
+                  :options="themeOptions"
+                  :model-value="themePreference"
+                  label="界面主题"
+                  @update:model-value="applyTheme($event as ThemePreference)"
+                />
+              </FieldRow>
+
+              <FieldRow label="正文字号" hint="同步调整源码编辑器，保持阅读与书写的比例">
+                <SegmentedControl
+                  :options="readingScaleOptions"
+                  :model-value="store.settings.readingScale"
+                  label="正文字号"
+                  @update:model-value="store.updateSettings({ readingScale: $event as any })"
+                />
+              </FieldRow>
+
+              <FieldRow label="行间距" hint="公式和代码块较多的长文也留得住呼吸感">
+                <SegmentedControl
+                  :options="readingDensityOptions"
+                  :model-value="store.settings.readingDensity"
+                  label="行间距"
+                  @update:model-value="store.updateSettings({ readingDensity: $event as any })"
+                />
+              </FieldRow>
+
+              <FieldRow label="阅读宽度" hint="限制单行长度，宽屏下视线不至于走得太远">
+                <SegmentedControl
+                  :options="readingWidthOptions"
+                  :model-value="store.settings.readingWidth"
+                  label="阅读宽度"
+                  @update:model-value="store.updateSettings({ readingWidth: $event as any })"
+                />
+              </FieldRow>
+
+              <FieldRow label="纸张底色" hint="只作用于阅读与编辑表面，不改变工具界面">
+                <div class="row gap-1.5 flex-wrap">
+                  <button
+                    v-for="option in paperToneOptions"
+                    :key="option.id"
+                    type="button"
+                    :aria-pressed="store.settings.readingPaperTone === option.id"
+                    class="row gap-1.5 h-8 pl-1.5 pr-2.5 rounded-sm border text-[12px] transition-colors"
+                    :class="store.settings.readingPaperTone === option.id
+                      ? 'border-accent bg-accent-soft text-fg'
+                      : 'border-line text-fg-2 hover:border-line-strong'"
+                    @click="store.updateSettings({ readingPaperTone: option.id })"
+                  >
+                    <i class="block w-5 h-5 rounded-[4px] border border-line" :style="{ background: option.color }" />
+                    {{ option.label }}
+                  </button>
                 </div>
-              </fieldset>
-              <fieldset>
-                <legend><b>行间距</b><small>长文、公式和代码块较多时仍保留呼吸感</small></legend>
-                <div class="appearance-segments">
-                  <button v-for="option in readingDensityOptions" :key="option.id" type="button" :class="{ active: store.settings.readingDensity === option.id }" :aria-pressed="store.settings.readingDensity === option.id" @click="store.updateSettings({ readingDensity: option.id })"><b>{{ option.label }}</b><small>{{ option.detail }}</small></button>
-                </div>
-              </fieldset>
-              <fieldset>
-                <legend><b>阅读宽度</b><small>限制单行长度，宽屏下也不让视线走得太远</small></legend>
-                <div class="appearance-segments">
-                  <button v-for="option in readingWidthOptions" :key="option.id" type="button" :class="{ active: store.settings.readingWidth === option.id }" :aria-pressed="store.settings.readingWidth === option.id" @click="store.updateSettings({ readingWidth: option.id })"><b>{{ option.label }}</b><small>{{ option.detail }}</small></button>
-                </div>
-              </fieldset>
-              <fieldset>
-                <legend><b>纸张底色</b><small>底色只作用于阅读与编辑表面，不改变工具界面</small></legend>
-                <div class="paper-tone-picker">
-                  <button v-for="option in paperToneOptions" :key="option.id" type="button" :class="{ active: store.settings.readingPaperTone === option.id }" :aria-pressed="store.settings.readingPaperTone === option.id" @click="store.updateSettings({ readingPaperTone: option.id })"><i :style="{ background: option.color }"></i><span>{{ option.label }}</span></button>
-                </div>
-              </fieldset>
-              <label class="setting-toggle appearance-motion"><span><b>减少动态效果</b><small>关闭页面入场、菜单缩放和非必要过渡，低性能设备更稳定</small></span><input type="checkbox" :checked="store.settings.reduceMotion" @change="store.updateSettings({ reduceMotion: !store.settings.reduceMotion })" /></label>
+              </FieldRow>
+
+              <SettingRow title="减少动态效果" description="关闭入场动画与非必要过渡，低性能设备更稳定">
+                <ToggleSwitch
+                  :model-value="store.settings.reduceMotion"
+                  label="减少动态效果"
+                  @update:model-value="store.updateSettings({ reduceMotion: $event })"
+                />
+              </SettingRow>
             </div>
-            <aside class="reading-preview" aria-label="阅读外观实时预览">
-              <header><span>实时预览</span><small>MARKDOWN</small></header>
-              <article>
-                <p class="reading-preview-kicker">本地数字工作台</p>
-                <h4>让记录回到思考本身</h4>
-                <p>清晰的层级、合适的行长和克制的纸张色，能让长时间阅读更轻松。</p>
-                <pre><code>const idea = notes.link(context)</code></pre>
-                <blockquote>设置会自动保存，并立即应用到文档。</blockquote>
+
+            <!-- Typography settings are unreadable as numbers. This is the
+                 same text the reader will see, under the current values. -->
+            <!-- On `well` rather than `surface`: it stands for the reading
+                 paper, and against the panel it sits in, a same-value plane
+                 would have no edge at all. -->
+            <aside class="pane self-start bg-well" aria-label="阅读外观实时预览">
+              <header class="pane-head"><p class="pane-title">实时预览</p><small class="text-[11px] text-fg-3">MARKDOWN</small></header>
+              <article class="stack gap-2 p-4">
+                <p class="text-[11px] font-semibold tracking-wide text-fg-3">本地数字工作台</p>
+                <h4 class="text-[16px] font-semibold text-fg">让记录回到思考本身</h4>
+                <p class="text-[13px] leading-relaxed text-fg-2">清晰的层级、合适的行长和克制的纸张色，能让长时间阅读更轻松。</p>
+                <pre class="m-0 px-2.5 py-2 rounded-sm bg-well overflow-x-auto"><code class="text-[12px] text-fg-2">const idea = notes.link(context)</code></pre>
+                <blockquote class="pl-3 border-l-2 border-accent text-[12px] text-fg-3">设置会自动保存，并立即应用到文档。</blockquote>
               </article>
             </aside>
           </div>
         </section>
 
-        <section id="clipboard" class="settings-section">
-          <header><span><AppIcon name="file-text" :size="18" /></span><div><h3>剪贴板</h3><p>控制是否记录，以及本地保留多久</p></div><RouterLink class="section-link" to="/clipboard">查看历史 →</RouterLink></header>
-          <div class="settings-panel">
-            <label class="setting-toggle"><span><b>后台监听</b><small>{{store.settings.clipboardEnabled?'正在本机保存复制的文本、代码和图片':'关闭时不会读取系统剪贴板'}}</small></span><input type="checkbox" :checked="store.settings.clipboardEnabled" @change="changeClipboardEnabled"/></label>
-            <div class="setting-retention">
-              <label><span>最多保留</span><div><input type="number" min="10" max="500" :value="store.settings.clipboardLimit" @change="store.updateSettings({clipboardLimit:Number(($event.target as HTMLInputElement).value)});store.pruneClipboard()"/><small>条</small></div></label>
-              <label><span>最长保留</span><div><input type="number" min="1" max="365" :value="store.settings.clipboardRetentionDays" @change="store.updateSettings({clipboardRetentionDays:Number(($event.target as HTMLInputElement).value)});store.pruneClipboard()"/><small>天</small></div></label>
+        <!-- ── 剪贴板 ────────────────────────────────────────────────────── -->
+        <section id="clipboard" class="panel px-5 py-4 stack gap-1 scroll-mt-6">
+          <header class="row-between gap-3 pb-2">
+            <div class="stack gap-0.5">
+              <h3 class="text-[15px] font-semibold text-fg">剪贴板</h3>
+              <p class="text-[12px] text-fg-3">是否记录，以及在本机保留多久</p>
             </div>
-            <p class="settings-caution"><AppIcon name="warning" :size="15" />监听不会过滤密码或敏感信息，请只保留你愿意存放在本机的内容。</p>
+            <RouterLink class="btn-ghost btn-sm shrink-0" to="/clipboard">查看历史</RouterLink>
+          </header>
+
+          <SettingRow
+            title="后台监听"
+            :description="store.settings.clipboardEnabled ? '正在本机保存你复制的文本、代码和图片' : '关闭时完全不读取系统剪贴板'"
+          >
+            <ToggleSwitch :model-value="store.settings.clipboardEnabled" label="后台监听剪贴板" @update:model-value="changeClipboardEnabled" />
+          </SettingRow>
+
+          <SettingRow interactive title="最多保留" description="超出条数后，最旧的记录会被删除">
+            <span class="row gap-2">
+              <input
+                type="number" min="10" max="500" class="field w-24 text-right tabular-nums" aria-label="最多保留条数"
+                :value="store.settings.clipboardLimit"
+                @change="store.updateSettings({ clipboardLimit: Number(($event.target as HTMLInputElement).value) }); store.pruneClipboard()"
+              />
+              <small class="text-[12px] text-fg-3">条</small>
+            </span>
+          </SettingRow>
+
+          <SettingRow interactive title="最长保留" description="超过天数的记录会在下次清理时移除">
+            <span class="row gap-2">
+              <input
+                type="number" min="1" max="365" class="field w-24 text-right tabular-nums" aria-label="最长保留天数"
+                :value="store.settings.clipboardRetentionDays"
+                @change="store.updateSettings({ clipboardRetentionDays: Number(($event.target as HTMLInputElement).value) }); store.pruneClipboard()"
+              />
+              <small class="text-[12px] text-fg-3">天</small>
+            </span>
+          </SettingRow>
+
+          <p class="row gap-2 mt-2 px-3 py-2.5 rounded-sm bg-warn-soft text-[12px] leading-snug text-warn">
+            <AppIcon name="warning" :size="15" class="shrink-0" />
+            监听不会过滤密码或敏感信息，请只保留你愿意存放在本机的内容。
+          </p>
+        </section>
+
+        <!-- ── AI 服务 ───────────────────────────────────────────────────── -->
+        <section id="ai" class="panel px-5 py-4 stack gap-4 scroll-mt-6">
+          <header class="stack gap-0.5">
+            <h3 class="text-[15px] font-semibold text-fg">AI 服务</h3>
+            <p class="text-[12px] text-fg-3">连接你自己的 OpenAI 兼容接口，Knitspace 不提供内置额度</p>
+          </header>
+
+          <p class="px-3 py-2.5 rounded-sm bg-surface-2 text-[12px] leading-snug text-fg-2">
+            只有在你主动执行 AI 操作、并确认过要发送的文本之后，内容才会离开这台机器。
+          </p>
+
+          <FieldRow label="服务预设" :hint="selectedPreset?.description">
+            <select v-model="selectedPresetId" class="field w-full" @change="applyProviderPreset">
+              <option v-for="preset in aiProviderPresets" :key="preset.id" :value="preset.id">{{ preset.name }}</option>
+            </select>
+          </FieldRow>
+
+          <div class="grid gap-3 grid-cols-1 sm:grid-cols-2">
+            <FieldRow label="配置名称"><input v-model="label" class="field w-full" placeholder="例如：我的 API" /></FieldRow>
+            <FieldRow label="模型名称">
+              <input v-model="model" list="ai-preset-models" class="field w-full" :placeholder="selectedPreset?.modelPlaceholder || '选择或填写模型 ID'" />
+              <datalist id="ai-preset-models"><option v-for="item in selectedPreset?.models" :key="item" :value="item" /></datalist>
+            </FieldRow>
+          </div>
+          <FieldRow label="Base URL"><input v-model="baseUrl" class="field w-full font-mono" :placeholder="selectedPreset?.baseUrlPlaceholder || 'https://.../v1'" /></FieldRow>
+          <FieldRow label="API Key" :hint="desktop ? '安全写入 Windows 凭据库，不进入备份或 Markdown' : '浏览器模式下只保留在当前会话'">
+            <input v-model="apiKey" type="password" class="field w-full" :placeholder="desktop ? '安全写入 Windows 凭据库' : '仅保留当前会话'" />
+          </FieldRow>
+
+          <div class="row justify-end">
+            <button class="btn-primary" @click="saveProfile">{{ editingProfileId ? '更新配置' : '保存配置' }}</button>
+          </div>
+          <p v-if="profileMessage" class="px-3 py-2.5 rounded-sm bg-accent-soft text-[12px] text-accent" role="status">{{ profileMessage }}</p>
+
+          <ul v-if="store.aiProfiles.length" class="stack gap-2">
+            <li
+              v-for="profile in store.aiProfiles"
+              :key="profile.id"
+              tabindex="0"
+              class="row-between gap-3 px-3 py-2.5 rounded-md border transition-colors"
+              :class="editingProfileId === profile.id ? 'border-accent bg-accent-soft' : 'border-line bg-surface-2'"
+              aria-haspopup="menu"
+              :aria-expanded="aiProfileMenu?.profile.id === profile.id"
+              :aria-label="`${profile.label}；右键或 Shift 加 F10 打开连接操作`"
+              @contextmenu="openAiProfileMenu($event, profile)"
+              @keydown="openAiProfileMenu($event, profile)"
+            >
+              <span class="stack gap-0.5 min-w-0">
+                <b class="text-[13px] font-medium text-fg truncate">{{ profile.label }}</b>
+                <small class="text-[12px] text-fg-3 truncate">{{ profile.model }} · {{ profile.hasKey ? '密钥已存入系统凭据库' : '密钥未持久化' }}</small>
+                <em
+                  v-if="aiConnectionStates[profile.id]"
+                  class="row gap-1.5 mt-1 text-[12px] not-italic"
+                  :class="{ 'text-warn': aiConnectionStates[profile.id].tone === 'working',
+                            'text-success': aiConnectionStates[profile.id].tone === 'success',
+                            'text-danger': aiConnectionStates[profile.id].tone === 'error',
+                            'text-fg-3': aiConnectionStates[profile.id].tone === 'neutral' }"
+                  :role="aiConnectionStates[profile.id].tone === 'error' ? 'alert' : 'status'"
+                  aria-live="polite"
+                >
+                  <i class="w-1.5 h-1.5 rounded-full bg-current shrink-0" />{{ aiConnectionStates[profile.id].message }}
+                </em>
+              </span>
+              <span class="row gap-1 shrink-0">
+                <button class="btn-ghost btn-sm" :class="aiTestControllers.has(profile.id) ? 'text-danger' : ''" @click.stop="testAiProfile(profile)">
+                  {{ aiTestControllers.has(profile.id) ? '停止' : '测试连接' }}
+                </button>
+                <button class="btn-ghost btn-sm" @click.stop="editProfile(profile)">{{ editingProfileId === profile.id ? '编辑中' : '编辑' }}</button>
+                <button
+                  class="btn-ghost btn-sm"
+                  :class="pendingProfileDelete === profile.id ? 'bg-danger text-white' : 'text-fg-3 hover:text-danger'"
+                  @click.stop="deleteProfile(profile.id, profile.label, profile.hasKey)"
+                >
+                  {{ pendingProfileDelete === profile.id ? '确认删除' : '删除' }}
+                </button>
+              </span>
+            </li>
+          </ul>
+        </section>
+
+        <!-- ── 本机引擎 ──────────────────────────────────────────────────── -->
+        <section id="engines" class="panel px-5 py-4 stack gap-1 scroll-mt-6">
+          <header class="row-between gap-3 pb-2">
+            <div class="stack gap-0.5">
+              <h3 class="text-[15px] font-semibold text-fg">本机引擎</h3>
+              <p class="text-[12px] text-fg-3">连接你自己安装的 CLI 与模型</p>
+            </div>
+            <RouterLink class="btn-ghost btn-sm shrink-0" to="/subtitles?transcribe=1">打开字幕台</RouterLink>
+          </header>
+
+          <p class="row gap-2 mb-2 px-3 py-2.5 rounded-sm bg-surface-2 text-[12px] leading-snug text-fg-2">
+            <AppIcon name="shield" :size="15" class="shrink-0 text-success" />
+            Knitspace 不捆绑模型，也不会上传媒体。只有点击验证或开始转写后，才会在本机启动你选定的 whisper.cpp 兼容 CLI；转写还需要系统可用的 FFmpeg。
+          </p>
+
+          <SettingRow interactive title="Whisper CLI" :description="store.settings.transcriptionExecutablePath || '尚未选择，例如 whisper-cli.exe'">
+            <button class="btn-default btn-sm" :disabled="!desktop || transcriptionChecking" @click="pickTranscriptionExecutable">选择程序</button>
+          </SettingRow>
+
+          <SettingRow interactive title="本机模型" :description="store.settings.transcriptionModelPath || '尚未选择 .bin 或 .gguf 模型'">
+            <button class="btn-default btn-sm" :disabled="!desktop || transcriptionChecking" @click="pickTranscriptionModel">选择模型</button>
+          </SettingRow>
+
+          <SettingRow interactive title="默认识别语言" description="自动检测更通用；确定语言时通常更稳定">
+            <select
+              class="field w-32"
+              aria-label="默认识别语言"
+              :value="store.settings.transcriptionLanguage"
+              @change="store.updateSettings({ transcriptionLanguage: ($event.target as HTMLSelectElement).value as any })"
+            >
+              <option value="auto">自动检测</option>
+              <option value="zh">中文</option>
+              <option value="en">英语</option>
+              <option value="ja">日语</option>
+              <option value="ko">韩语</option>
+            </select>
+          </SettingRow>
+
+          <div class="row-between gap-3 pt-3">
+            <p
+              v-if="transcriptionMessage"
+              class="row gap-1.5 text-[12px]"
+              :class="transcriptionReady ? 'text-success' : 'text-danger'"
+              :role="transcriptionReady ? 'status' : 'alert'"
+              aria-live="polite"
+            >
+              <i class="w-1.5 h-1.5 rounded-full bg-current shrink-0" />{{ transcriptionMessage }}
+            </p>
+            <p v-else class="text-[12px] text-fg-3">路径会自动保存，但不会自动执行外部程序。</p>
+            <button class="btn-primary btn-sm shrink-0" :disabled="!desktop || transcriptionChecking" @click="verifyTranscriptionEngine">
+              {{ transcriptionChecking ? '验证中…' : '验证本机引擎' }}
+            </button>
           </div>
         </section>
 
-        <section id="ai" class="settings-section">
-          <header><span><AppIcon name="sparkle" :size="18" /></span><div><h3>AI 服务</h3><p>连接你自己的 OpenAI 兼容接口</p></div></header>
-          <div class="settings-panel ai-settings-panel">
-            <p class="settings-explainer">只有在你主动执行 AI 操作时，确认过的文本才会发送到此服务。Knitspace 不提供内置额度。</p>
-            <div class="ai-preset-picker">
-              <label><span><b>服务预设</b><small>自动填写兼容地址和推荐模型</small></span><select v-model="selectedPresetId" @change="applyProviderPreset"><option v-for="preset in aiProviderPresets" :key="preset.id" :value="preset.id">{{ preset.name }}</option></select></label>
-              <p>{{ selectedPreset?.description }}</p>
-            </div>
-            <div class="ai-settings-form">
-              <label><span>配置名称</span><input v-model="label" placeholder="例如：我的 API" /></label>
-              <label><span>模型名称</span><input v-model="model" list="ai-preset-models" :placeholder="selectedPreset?.modelPlaceholder || '选择或填写模型 ID'" /><datalist id="ai-preset-models"><option v-for="item in selectedPreset?.models" :key="item" :value="item" /></datalist></label>
-              <label class="wide"><span>Base URL</span><input v-model="baseUrl" :placeholder="selectedPreset?.baseUrlPlaceholder || 'https://.../v1'" /></label>
-              <label class="wide"><span>API Key</span><input v-model="apiKey" type="password" :placeholder="desktop ? '安全写入 Windows 凭据库' : '浏览器模式仅保留当前会话'" /></label>
-            </div>
-            <div class="settings-form-footer"><span><AppIcon name="shield" :size="15" />密钥不会进入备份或 Markdown</span><button class="primary-button" @click="saveProfile">保存配置</button></div>
-            <p v-if="profileMessage" class="notice">{{ profileMessage }}</p>
-            <div v-if="store.aiProfiles.length" class="profile-list"><div v-for="profile in store.aiProfiles" :key="profile.id" tabindex="0" :class="{ editing: editingProfileId === profile.id }" aria-haspopup="menu" :aria-expanded="aiProfileMenu?.profile.id === profile.id" :aria-label="`${profile.label}；右键或 Shift 加 F10 打开连接操作`" @contextmenu="openAiProfileMenu($event, profile)" @keydown="openAiProfileMenu($event, profile)"><span><b>{{ profile.label }}</b><small>{{ profile.model }} · {{ profile.hasKey ? '系统凭据已保存' : '未持久化 Key' }}</small><em v-if="aiConnectionStates[profile.id]" :class="`is-${aiConnectionStates[profile.id].tone}`" :role="aiConnectionStates[profile.id].tone === 'error' ? 'alert' : 'status'" aria-live="polite"><i></i>{{ aiConnectionStates[profile.id].message }}</em></span><div class="profile-actions"><button class="profile-test" :class="{ running: aiTestControllers.has(profile.id) }" @click.stop="testAiProfile(profile)">{{ aiTestControllers.has(profile.id) ? '停止' : '测试连接' }}</button><button class="profile-edit" @click.stop="editProfile(profile)">{{ editingProfileId === profile.id ? '编辑中' : '编辑' }}</button><button class="profile-delete" :class="{ pending: pendingProfileDelete === profile.id }" @click.stop="deleteProfile(profile.id, profile.label, profile.hasKey)">{{ pendingProfileDelete === profile.id ? '确认删除' : '删除' }}</button></div></div></div>
-          </div>
-        </section>
+        <!-- ── 数据与备份 ────────────────────────────────────────────────── -->
+        <section id="backup" class="panel px-5 py-4 stack gap-4 scroll-mt-6">
+          <header class="stack gap-0.5">
+            <h3 class="text-[15px] font-semibold text-fg">数据与备份</h3>
+            <p class="text-[12px] text-fg-3">工作区数据和受管原始文件分开保护</p>
+          </header>
 
-        <section id="engines" class="settings-section">
-          <header><span><AppIcon name="play" :size="18" /></span><div><h3>本机引擎</h3><p>连接你自己安装的 CLI 与模型</p></div><RouterLink class="section-link" to="/subtitles?transcribe=1">打开字幕台 →</RouterLink></header>
-          <div class="settings-panel local-engine-panel">
-            <p class="settings-explainer"><AppIcon name="shield" :size="16" />Knitspace 不捆绑模型，也不会上传媒体。只有点击验证或开始转写后，才会在本机启动你选定的 whisper.cpp 兼容 CLI；转写还需要系统可用的 FFmpeg。</p>
-            <div class="setting-control local-engine-path"><span><b>Whisper CLI</b><small :title="store.settings.transcriptionExecutablePath">{{ store.settings.transcriptionExecutablePath || '尚未选择，例如 whisper-cli.exe' }}</small></span><button class="quiet-button" :disabled="!desktop || transcriptionChecking" @click="pickTranscriptionExecutable">选择程序</button></div>
-            <div class="setting-control local-engine-path"><span><b>本机模型</b><small :title="store.settings.transcriptionModelPath">{{ store.settings.transcriptionModelPath || '尚未选择 .bin 或 .gguf 模型' }}</small></span><button class="quiet-button" :disabled="!desktop || transcriptionChecking" @click="pickTranscriptionModel">选择模型</button></div>
-            <div class="setting-control"><span><b>默认识别语言</b><small>自动检测更通用；确定语言通常更稳定</small></span><select :value="store.settings.transcriptionLanguage" @change="store.updateSettings({ transcriptionLanguage: ($event.target as HTMLSelectElement).value as any })"><option value="auto">自动检测</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option><option value="ko">韩语</option></select></div>
-            <div class="local-engine-actions"><p v-if="transcriptionMessage" :class="{ ready: transcriptionReady }" :role="transcriptionReady ? 'status' : 'alert'" aria-live="polite"><i></i>{{ transcriptionMessage }}</p><span v-else>路径会自动保存，但不会自动执行外部程序。</span><button class="primary-button" :disabled="!desktop || transcriptionChecking" @click="verifyTranscriptionEngine">{{ transcriptionChecking ? '验证中…' : '验证本机引擎' }}</button></div>
-          </div>
-        </section>
+          <section
+            v-if="desktop"
+            class="stack gap-3 p-4 rounded-md border"
+            :class="vaultStorageLevel === 'critical' ? 'border-danger bg-danger-soft'
+              : !vaultHealthLoading && !vaultHealthy ? 'border-warn bg-warn-soft' : 'border-line bg-surface-2'"
+            tabindex="0"
+            role="group"
+            title="右键查看资料库路径、磁盘空间、完整性与归档操作"
+            aria-label="本地资料库健康状态；右键或 Shift 加 F10 打开操作菜单"
+            aria-haspopup="menu"
+            :aria-expanded="Boolean(vaultMenu)"
+            @contextmenu="openVaultMenu"
+            @keydown="openVaultMenuFromKeyboard"
+          >
+            <header class="row-between gap-3">
+              <b class="text-[13px] font-semibold text-fg">资料库健康度</b>
+              <p class="row gap-1.5 text-[12px]" :class="vaultHealthy ? 'text-success' : 'text-warn'" role="status" aria-live="polite">
+                <i class="w-1.5 h-1.5 rounded-full bg-current shrink-0" />{{ vaultStatusLabel }}
+              </p>
+            </header>
 
-        <section id="backup" class="settings-section">
-          <header><span><AppIcon name="inbox" :size="18" /></span><div><h3>数据与备份</h3><p>把工作区数据和受管原始文件分开保护</p></div></header>
-          <div class="settings-panel backup-panel">
-            <section v-if="desktop" class="vault-health-card" :class="{ 'vault-health-card--attention': !vaultHealthLoading && !vaultHealthy, 'vault-health-card--critical': vaultStorageLevel === 'critical' }" tabindex="0" role="group" title="右键查看资料库路径、磁盘空间、完整性与归档操作" aria-label="本地资料库健康状态；右键或 Shift 加 F10 打开操作菜单" aria-haspopup="menu" :aria-expanded="Boolean(vaultMenu)" @contextmenu="openVaultMenu" @keydown="openVaultMenuFromKeyboard">
-              <header><div><span>资料库健康度</span><b>本地数据健康</b></div><p :class="{ ready: vaultHealthy }" role="status" aria-live="polite"><i></i>{{ vaultStatusLabel }}</p></header>
-              <div v-if="vaultHealth" class="vault-health-grid">
-                <article><span>结构</span><b>v{{ vaultHealth.schemaVersion }}</b><small>{{ vaultHealth.schemaVersion === vaultHealth.latestSchemaVersion ? '迁移已是最新' : `应升级至 v${vaultHealth.latestSchemaVersion}` }}</small></article>
-                <article><span>内容</span><b>{{ vaultHealth.documentCount }}</b><small>{{ vaultHealth.noteCount }} 笔记 · {{ vaultHealth.questionCount }} 题目</small></article>
-                <article><span>结构化</span><b>{{ vaultHealth.vocabularyCount + vaultHealth.sourceCount }}</b><small>{{ vaultHealth.vocabularyCount }} 单词 · {{ vaultHealth.sourceCount }} 资料</small></article>
-                <article><span>搜索索引</span><b>{{ vaultHealth.ftsEntryCount }}</b><small>{{ vaultHealth.missingMarkdownCount ? `${vaultHealth.missingMarkdownCount} 个正文缺失` : '全文索引与正文可用' }}</small></article>
+            <div v-if="vaultHealth" class="grid gap-px grid-cols-2 sm:grid-cols-4 rounded-md bg-line border border-line overflow-hidden">
+              <article class="stack gap-0.5 px-3 py-2.5 bg-surface">
+                <span class="text-[11px] text-fg-3">结构</span>
+                <b class="text-[16px] font-semibold tabular-nums text-fg">v{{ vaultHealth.schemaVersion }}</b>
+                <small class="text-[11px] text-fg-3">{{ vaultHealth.schemaVersion === vaultHealth.latestSchemaVersion ? '迁移已是最新' : `应升级至 v${vaultHealth.latestSchemaVersion}` }}</small>
+              </article>
+              <article class="stack gap-0.5 px-3 py-2.5 bg-surface">
+                <span class="text-[11px] text-fg-3">内容</span>
+                <b class="text-[16px] font-semibold tabular-nums text-fg">{{ vaultHealth.documentCount }}</b>
+                <small class="text-[11px] text-fg-3">{{ vaultHealth.noteCount }} 笔记 · {{ vaultHealth.questionCount }} 题目</small>
+              </article>
+              <article class="stack gap-0.5 px-3 py-2.5 bg-surface">
+                <span class="text-[11px] text-fg-3">结构化</span>
+                <b class="text-[16px] font-semibold tabular-nums text-fg">{{ vaultHealth.vocabularyCount + vaultHealth.sourceCount }}</b>
+                <small class="text-[11px] text-fg-3">{{ vaultHealth.vocabularyCount }} 单词 · {{ vaultHealth.sourceCount }} 资料</small>
+              </article>
+              <article class="stack gap-0.5 px-3 py-2.5 bg-surface">
+                <span class="text-[11px] text-fg-3">搜索索引</span>
+                <b class="text-[16px] font-semibold tabular-nums text-fg">{{ vaultHealth.ftsEntryCount }}</b>
+                <small class="text-[11px] text-fg-3">{{ vaultHealth.missingMarkdownCount ? `${vaultHealth.missingMarkdownCount} 个正文缺失` : '全文索引与正文可用' }}</small>
+              </article>
+            </div>
+
+            <p v-else-if="vaultHealthLoading" class="row gap-2 text-[12px] text-fg-3" role="status">
+              <span class="w-3.5 h-3.5 rounded-full border-2 border-line-strong border-t-accent animate-spin" />
+              正在执行 SQLite 快速检查…
+            </p>
+
+            <div
+              v-if="vaultStorage || vaultStorageError"
+              class="stack gap-2 px-3 py-2.5 rounded-sm bg-surface"
+              :role="vaultStorageLevel === 'critical' ? 'alert' : 'status'"
+              :aria-live="vaultStorageLevel === 'critical' ? 'assertive' : 'polite'"
+            >
+              <div class="row-between gap-3">
+                <span class="row gap-2 min-w-0">
+                  <AppIcon
+                    :name="vaultStorageLevel === 'ready' ? 'shield' : 'warning'"
+                    :size="16"
+                    class="shrink-0"
+                    :class="vaultStorageLevel === 'critical' ? 'text-danger' : vaultStorageLevel === 'low' ? 'text-warn' : 'text-success'"
+                  />
+                  <span class="stack gap-0.5 min-w-0">
+                    <b class="text-[12px] font-medium text-fg">
+                      {{ vaultStorageLevel === 'critical' ? '磁盘空间严重不足'
+                        : vaultStorageLevel === 'low' ? '磁盘空间偏低'
+                          : vaultStorageLevel === 'ready' ? '磁盘空间可用' : '未能读取磁盘空间' }}
+                    </b>
+                    <small class="text-[11px] text-fg-3 truncate">{{ vaultStorageLabel }}</small>
+                  </span>
+                </span>
+                <strong v-if="vaultStorage" class="text-[12px] tabular-nums text-fg-2 shrink-0">
+                  剩余 {{ formatBytes(vaultStorage.availableBytes) }} / {{ formatBytes(vaultStorage.totalBytes) }}
+                </strong>
               </div>
-              <div v-else-if="vaultHealthLoading" class="vault-health-loading" role="status"><span></span><span></span><span></span><p>正在执行 SQLite 快速检查…</p></div>
-              <div v-if="vaultStorage || vaultStorageError" class="vault-storage-status" :class="`is-${vaultStorageLevel}`" :role="vaultStorageLevel === 'critical' ? 'alert' : 'status'" :aria-live="vaultStorageLevel === 'critical' ? 'assertive' : 'polite'">
-                <AppIcon :name="vaultStorageLevel === 'ready' ? 'shield' : 'warning'" :size="17" />
-                <div><b>{{ vaultStorageLevel === 'critical' ? 'Vault 所在磁盘空间严重不足' : vaultStorageLevel === 'low' ? 'Vault 所在磁盘空间偏低' : vaultStorageLevel === 'ready' ? 'Vault 磁盘空间可用' : '未能读取磁盘空间' }}</b><small>{{ vaultStorageLabel }}</small></div>
-                <strong v-if="vaultStorage">剩余 {{ formatBytes(vaultStorage.availableBytes) }}<small>共 {{ formatBytes(vaultStorage.totalBytes) }}</small></strong>
-                <progress v-if="vaultStorage" :value="vaultStorage.availableBytes" :max="vaultStorage.totalBytes" :aria-label="`资料库磁盘可用 ${vaultStoragePercent.toFixed(2)}%`"></progress>
+              <div v-if="vaultStorage" class="h-1.5 rounded-full bg-surface-3 overflow-hidden" role="progressbar" :aria-valuenow="Math.round(vaultStoragePercent)" aria-valuemin="0" aria-valuemax="100" :aria-label="`资料库磁盘可用 ${vaultStoragePercent.toFixed(2)}%`">
+                <span
+                  class="block h-full rounded-full"
+                  :class="vaultStorageLevel === 'critical' ? 'bg-danger' : vaultStorageLevel === 'low' ? 'bg-warn' : 'bg-success'"
+                  :style="{ width: `${Math.max(2, Math.min(100, vaultStoragePercent))}%` }"
+                />
               </div>
-              <p v-if="vaultHealthError" class="vault-health-error" role="alert"><AppIcon name="warning" :size="14" />{{ vaultHealthError }}<button @click.stop="loadVaultHealth">重试</button></p>
-              <footer><div><span>{{ vaultHealth?.root || store.vaultRoot || '正在读取资料库位置…' }}</span><small>{{ formatBytes(vaultHealth?.databaseSize) }}<template v-if="automaticBackupAt"> · 最近每日归档 {{ new Date(automaticBackupAt).toLocaleString('zh-CN') }}</template><template v-else> · 尚无每日归档</template></small></div><div><button class="quiet-button" :disabled="vaultHealthLoading" @click.stop="loadVaultHealth">{{ vaultHealthLoading ? '检查中…' : '重新检查' }}</button><button class="quiet-button" @click.stop="revealVault">打开位置</button></div></footer>
-            </section>
-            <div class="backup-summary"><div class="vault-path"><span>当前资料库</span><b>{{ vaultName }}</b><small>Markdown · SQLite 索引 · 受管原始文件</small></div><p>JSON 快照用于恢复笔记、任务、收藏和设置；它不包含受管原始文件。完整 Vault 归档会连同这些原件保存。<br><small v-if="manualBackupAt">最近手动导出 / 归档：{{ new Date(manualBackupAt).toLocaleString('zh-CN') }}</small><small v-else-if="legacyBackupAt">旧版最近备份记录：{{ new Date(legacyBackupAt).toLocaleString('zh-CN') }}</small><small v-if="automaticBackupAt">最近每日归档：{{ new Date(automaticBackupAt).toLocaleString('zh-CN') }}</small></p></div>
-            <div class="backup-options">
-              <article v-if="desktop" class="backup-option backup-option--vault"><div class="backup-option__icon"><AppIcon name="shield" :size="17" /></div><div><b>完整 Vault 归档</b><small>包含 SQLite、Markdown 与导入到资料库的原始文件</small></div><div class="backup-option__actions backup-option__actions--vault"><button class="primary-button" :disabled="vaultBackupCreating || vaultBackupRestoring || vaultBackupInspecting" @click="createVaultBackup">{{ vaultBackupCreating ? '正在打包…' : '选择位置并归档' }}</button><button class="quiet-button" :disabled="vaultBackupCreating || vaultBackupRestoring || vaultBackupInspecting" @click="restoreVaultBackup">{{ vaultBackupInspecting ? '正在检查归档…' : vaultBackupRestoring ? '正在恢复…' : '从完整归档恢复' }}</button></div></article>
-              <article class="backup-option"><div class="backup-option__icon"><AppIcon name="file-text" :size="17" /></div><div><b>工作区 JSON 快照</b><small>可直接恢复资料索引、笔记、任务、收藏和设置</small></div><div class="backup-option__actions"><button class="quiet-button" :disabled="backupExporting" @click="downloadBackup">{{ backupExporting ? '正在整理正文…' : '导出 JSON' }}</button><button class="quiet-button" :disabled="backupExporting" @click="backupInput?.click()">从 JSON 恢复</button></div><input ref="backupInput" class="visually-hidden" type="file" accept=".json,.knitspace-backup.json,.toolknit-backup.json" @change="restoreBackup" /></article>
             </div>
-            <section v-if="vaultRestorePhase === 'working' || vaultRestorePhase === 'reloading'" class="vault-restore-progress" role="status" aria-live="polite" aria-atomic="true">
-              <header><span><i></i>{{ vaultRestorePhase === 'reloading' ? '恢复完成，准备重新载入' : '正在执行安全恢复' }}</span><small>请保持 Knitspace 打开</small></header>
-              <ol>
-                <li class="done"><i></i><span><b>已选择归档</b><small>不会直接覆盖当前资料库</small></span></li>
-                <li :class="vaultRestorePhase === 'working' ? 'active' : 'done'"><i></i><span><b>验证并保护当前数据</b><small>检查 SQLite 与 Markdown，再创建恢复前归档</small></span></li>
-                <li :class="vaultRestorePhase === 'reloading' ? 'active' : ''"><i></i><span><b>替换并重新载入</b><small>完成后由新的 Vault 重建当前界面</small></span></li>
-              </ol>
-            </section>
-            <section v-if="desktop" class="backup-retention" aria-label="每日 Vault 归档"><AppIcon name="clock" :size="14" /><span>启动后的空闲时间会检查每日 Vault 归档，本机只保留最近 7 份；API Key 和剪贴板历史不会进入归档。</span><div><button class="quiet-button" :disabled="vaultAutoBackupCreating || vaultBackupCreating || vaultBackupRestoring || vaultBackupInspecting" @click="runAutomaticVaultBackup">{{ vaultAutoBackupCreating ? '正在检查…' : '立即检查今日归档' }}</button><button v-if="vaultHealth?.lastAutomaticBackup" class="quiet-button" @click="revealAutomaticBackup">查看最近归档</button></div></section>
-            <p v-if="backupMessage" class="notice backup-notice" :class="`is-${backupNoticeTone}`" :role="backupNoticeTone === 'error' ? 'alert' : 'status'" :aria-live="backupNoticeTone === 'error' ? 'assertive' : 'polite'">{{ backupMessage }}</p>
-          </div>
-        </section>
 
-        <section id="update" class="settings-section">
-          <header><span><AppIcon name="clock" :size="18" /></span><div><h3>版本与实验功能</h3><p>检查更新，了解正在开发的本地能力</p></div></header>
-          <div class="settings-panel">
-            <article class="build-profile-card" :class="`is-${buildProfile.id}`" tabindex="0" role="group" :aria-label="`${buildProfile.label}；右键或 Shift 加 F10 查看版本操作`" aria-haspopup="menu" :aria-expanded="Boolean(buildMenu)" title="右键查看版本信息与构建命令" @contextmenu="openBuildMenu" @keydown="openBuildMenuFromKeyboard">
-              <header><span><AppIcon :name="personalPackEnabled ? 'terminal' : 'shield'" :size="17" /></span><div><small>CURRENT BUILD · {{ buildProfile.badge }}</small><h4>{{ buildProfile.title }}</h4></div><b>{{ buildProfile.label }}</b></header>
-              <p>{{ buildProfile.summary }}</p>
-              <footer><span><i></i>{{ buildProfile.capability }}</span><button class="quiet-button" type="button" @click.stop="openBuildPrimaryAction">{{ buildProfile.primaryAction }}</button></footer>
+            <p v-if="vaultHealthError" class="row gap-2 text-[12px] text-danger" role="alert">
+              <AppIcon name="warning" :size="14" class="shrink-0" />{{ vaultHealthError }}
+              <button class="underline" @click.stop="loadVaultHealth">重试</button>
+            </p>
+
+            <footer class="row-between gap-3 pt-2 border-t border-line">
+              <div class="stack gap-0.5 min-w-0">
+                <span class="text-[12px] text-fg-2 truncate">{{ vaultHealth?.root || store.vaultRoot || '正在读取资料库位置…' }}</span>
+                <small class="text-[11px] text-fg-3">
+                  {{ formatBytes(vaultHealth?.databaseSize) }}
+                  <template v-if="automaticBackupAt"> · 最近每日归档 {{ new Date(automaticBackupAt).toLocaleString('zh-CN') }}</template>
+                  <template v-else> · 尚无每日归档</template>
+                </small>
+              </div>
+              <div class="row gap-1 shrink-0">
+                <button class="btn-default btn-sm" :disabled="vaultHealthLoading" @click.stop="loadVaultHealth">{{ vaultHealthLoading ? '检查中…' : '重新检查' }}</button>
+                <button class="btn-ghost btn-sm" @click.stop="revealVault">打开位置</button>
+              </div>
+            </footer>
+          </section>
+
+          <div class="stack gap-2 px-3 py-3 rounded-md bg-surface-2">
+            <div class="row gap-2">
+              <AppIcon name="archive" :size="16" class="shrink-0 text-fg-3" />
+              <span class="stack gap-0.5 min-w-0">
+                <b class="text-[13px] font-medium text-fg">{{ vaultName }}</b>
+                <small class="text-[11px] text-fg-3">Markdown · SQLite 索引 · 受管原始文件</small>
+              </span>
+            </div>
+            <p class="text-[12px] leading-snug text-fg-3">
+              JSON 快照用于恢复笔记、任务、收藏和设置，它<b class="font-medium text-fg-2">不包含</b>受管原始文件；完整 Vault 归档会连同这些原件一起保存。
+            </p>
+            <p v-if="manualBackupAt" class="text-[11px] text-fg-3">最近手动导出 / 归档：{{ new Date(manualBackupAt).toLocaleString('zh-CN') }}</p>
+            <p v-else-if="legacyBackupAt" class="text-[11px] text-fg-3">旧版最近备份记录：{{ new Date(legacyBackupAt).toLocaleString('zh-CN') }}</p>
+          </div>
+
+          <div class="grid gap-3 grid-cols-1 sm:grid-cols-2">
+            <article v-if="desktop" class="stack gap-3 p-3 rounded-md border border-line">
+              <div class="row gap-2">
+                <span class="center w-8 h-8 rounded-sm bg-accent-soft text-accent shrink-0"><AppIcon name="shield" :size="17" /></span>
+                <span class="stack gap-0.5 min-w-0">
+                  <b class="text-[13px] font-medium text-fg">完整 Vault 归档</b>
+                  <small class="text-[11px] leading-snug text-fg-3">SQLite、Markdown 与导入资料库的原始文件</small>
+                </span>
+              </div>
+              <div class="row gap-1.5 flex-wrap [&>*]:flex-1 [&>*]:min-w-32">
+                <button class="btn-primary btn-sm w-full" :disabled="vaultBackupCreating || vaultBackupRestoring || vaultBackupInspecting" @click="createVaultBackup">
+                  {{ vaultBackupCreating ? '正在打包…' : '选择位置并归档' }}
+                </button>
+                <button class="btn-default btn-sm w-full" :disabled="vaultBackupCreating || vaultBackupRestoring || vaultBackupInspecting" @click="restoreVaultBackup">
+                  {{ vaultBackupInspecting ? '正在检查归档…' : vaultBackupRestoring ? '正在恢复…' : '从完整归档恢复' }}
+                </button>
+              </div>
             </article>
-            <div class="setting-control"><span><b>Knitspace v{{appVersion}}</b><small>{{store.settings.lastUpdateCheck?`上次检查 ${new Date(store.settings.lastUpdateCheck).toLocaleString('zh-CN')}`:'尚未检查更新'}}</small></span><button class="quiet-button" :disabled="checkingUpdate||!desktop" @click="checkUpdate">{{checkingUpdate?'检查中…':'检查更新'}}</button></div>
-            <label class="setting-toggle"><span><b>每日自动检查</b><small>离线时会静默跳过，不自动下载安装</small></span><input type="checkbox" :checked="store.settings.autoCheckUpdates" @change="store.updateSettings({autoCheckUpdates:!store.settings.autoCheckUpdates})"/></label>
-            <div class="setting-control"><span><b>Windows 离线 OCR</b><small>已作为正式本机能力接入；实际语言包状态会在工具页检查</small></span><RouterLink class="quiet-button" to="/ocr">打开 OCR</RouterLink></div>
-            <div class="setting-control"><span><b>公式图片识别</b><small>已接入可校对草稿流程；图片只会在明确确认后发送到选定服务</small></span><RouterLink class="quiet-button" to="/documents?kind=note&create=note&mode=split&insert=formula&recognize=formula">打开识别</RouterLink></div>
-            <p v-if="updateMessage" class="notice">{{updateMessage}}</p><button v-if="updateResult && updateResult.tag_name.replace(/^v/,'')!==appVersion" class="new-task" @click="openExternalUrl(updateResult.html_url)">打开 GitHub Release →</button>
+
+            <article class="stack gap-3 p-3 rounded-md border border-line">
+              <div class="row gap-2">
+                <span class="center w-8 h-8 rounded-sm bg-surface-3 text-fg-2 shrink-0"><AppIcon name="file-text" :size="17" /></span>
+                <span class="stack gap-0.5 min-w-0">
+                  <b class="text-[13px] font-medium text-fg">工作区 JSON 快照</b>
+                  <small class="text-[11px] leading-snug text-fg-3">资料索引、笔记、任务、收藏与设置</small>
+                </span>
+              </div>
+              <div class="row gap-1.5 flex-wrap [&>*]:flex-1 [&>*]:min-w-32">
+                <button class="btn-default btn-sm w-full" :disabled="backupExporting" @click="downloadBackup">{{ backupExporting ? '正在整理正文…' : '导出 JSON' }}</button>
+                <button class="btn-default btn-sm w-full" :disabled="backupExporting" @click="backupInput?.click()">从 JSON 恢复</button>
+              </div>
+              <input ref="backupInput" class="hidden" type="file" accept=".json,.knitspace-backup.json,.toolknit-backup.json" @change="restoreBackup" />
+            </article>
           </div>
+
+          <!-- Restoring replaces the whole vault. Showing which of the three
+               steps is running is the difference between "wait" and "did it
+               hang". -->
+          <section v-if="vaultRestorePhase === 'working' || vaultRestorePhase === 'reloading'" class="stack gap-3 p-4 rounded-md border border-accent bg-accent-soft" role="status" aria-live="polite" aria-atomic="true">
+            <header class="row-between gap-3">
+              <span class="row gap-2 text-[13px] font-medium text-fg">
+                <span class="w-3.5 h-3.5 rounded-full border-2 border-line-strong border-t-accent animate-spin shrink-0" />
+                {{ vaultRestorePhase === 'reloading' ? '恢复完成，准备重新载入' : '正在执行安全恢复' }}
+              </span>
+              <small class="text-[11px] text-fg-3">请保持 Knitspace 打开</small>
+            </header>
+            <ol class="stack gap-2">
+              <li
+                v-for="step in restoreSteps"
+                :key="step.title"
+                class="row gap-2.5"
+                :class="step.state === 'pending' ? 'opacity-45' : ''"
+              >
+                <span
+                  class="center w-4 h-4 mt-0.5 rounded-full shrink-0 text-[10px]"
+                  :class="step.state === 'done' ? 'bg-success text-white' : step.state === 'active' ? 'bg-accent text-white' : 'bg-surface-3 text-fg-3'"
+                >
+                  <AppIcon v-if="step.state === 'done'" name="check" :size="10" />
+                </span>
+                <span class="stack gap-0.5">
+                  <b class="text-[12px] font-medium text-fg">{{ step.title }}</b>
+                  <small class="text-[11px] text-fg-3">{{ step.detail }}</small>
+                </span>
+              </li>
+            </ol>
+          </section>
+
+          <div v-if="desktop" class="row-between gap-3 flex-wrap px-3 py-2.5 rounded-sm bg-surface-2" aria-label="每日 Vault 归档">
+            <p class="row gap-2 flex-1 min-w-60 text-[12px] leading-snug text-fg-3">
+              <AppIcon name="clock" :size="15" class="shrink-0" />
+              启动后的空闲时间会检查每日 Vault 归档，本机只保留最近 7 份。API Key 和剪贴板历史不会进入归档。
+            </p>
+            <div class="row gap-1 shrink-0">
+              <button class="btn-ghost btn-sm" :disabled="vaultAutoBackupCreating || vaultBackupCreating || vaultBackupRestoring || vaultBackupInspecting" @click="runAutomaticVaultBackup">
+                {{ vaultAutoBackupCreating ? '正在检查…' : '立即检查今日归档' }}
+              </button>
+              <button v-if="vaultHealth?.lastAutomaticBackup" class="btn-ghost btn-sm" @click="revealAutomaticBackup">查看最近归档</button>
+            </div>
+          </div>
+
+          <p
+            v-if="backupMessage"
+            class="px-3 py-2.5 rounded-sm text-[12px] leading-snug"
+            :class="backupNoticeTone === 'error' ? 'bg-danger-soft text-danger'
+              : backupNoticeTone === 'success' ? 'bg-success-soft text-success'
+                : backupNoticeTone === 'working' ? 'bg-warn-soft text-warn' : 'bg-surface-2 text-fg-2'"
+            :role="backupNoticeTone === 'error' ? 'alert' : 'status'"
+            :aria-live="backupNoticeTone === 'error' ? 'assertive' : 'polite'"
+          >
+            {{ backupMessage }}
+          </p>
         </section>
-      </main>
+
+        <!-- ── 版本更新 ──────────────────────────────────────────────────── -->
+        <section id="update" class="panel px-5 py-4 stack gap-1 scroll-mt-6">
+          <header class="stack gap-0.5 pb-2">
+            <h3 class="text-[15px] font-semibold text-fg">版本与实验功能</h3>
+            <p class="text-[12px] text-fg-3">检查更新，了解正在开发的本地能力</p>
+          </header>
+
+          <article
+            class="stack gap-2.5 mb-3 p-4 rounded-md border border-line bg-surface-2"
+            tabindex="0"
+            role="group"
+            :aria-label="`${buildProfile.label}；右键或 Shift 加 F10 查看版本操作`"
+            aria-haspopup="menu"
+            :aria-expanded="Boolean(buildMenu)"
+            title="右键查看版本信息与构建命令"
+            @contextmenu="openBuildMenu"
+            @keydown="openBuildMenuFromKeyboard"
+          >
+            <header class="row-between gap-3">
+              <span class="row gap-2.5 min-w-0">
+                <span class="center w-8 h-8 rounded-sm bg-surface-3 text-fg-2 shrink-0">
+                  <AppIcon :name="personalPackEnabled ? 'terminal' : 'shield'" :size="17" />
+                </span>
+                <span class="stack gap-0.5 min-w-0">
+                  <small class="text-[11px] tracking-wide text-fg-3">当前构建 · {{ buildProfile.badge }}</small>
+                  <h4 class="text-[14px] font-semibold text-fg truncate">{{ buildProfile.title }}</h4>
+                </span>
+              </span>
+              <b class="chip-accent shrink-0">{{ buildProfile.label }}</b>
+            </header>
+            <p class="text-[12px] leading-snug text-fg-2">{{ buildProfile.summary }}</p>
+            <footer class="row-between gap-3 pt-2 border-t border-line">
+              <span class="row gap-1.5 text-[12px] text-fg-3">
+                <i class="w-1.5 h-1.5 rounded-full bg-success shrink-0" />{{ buildProfile.capability }}
+              </span>
+              <button class="btn-ghost btn-sm shrink-0" type="button" @click.stop="openBuildPrimaryAction">{{ buildProfile.primaryAction }}</button>
+            </footer>
+          </article>
+
+          <SettingRow
+            interactive
+            :title="`Knitspace v${appVersion}`"
+            :description="store.settings.lastUpdateCheck ? `上次检查 ${new Date(store.settings.lastUpdateCheck).toLocaleString('zh-CN')}` : '尚未检查更新'"
+          >
+            <button class="btn-default btn-sm" :disabled="checkingUpdate || !desktop" @click="checkUpdate">{{ checkingUpdate ? '检查中…' : '检查更新' }}</button>
+          </SettingRow>
+
+          <SettingRow title="每日自动检查" description="离线时会静默跳过，不会自动下载或安装">
+            <ToggleSwitch
+              :model-value="store.settings.autoCheckUpdates"
+              label="每日自动检查更新"
+              @update:model-value="store.updateSettings({ autoCheckUpdates: $event })"
+            />
+          </SettingRow>
+
+          <SettingRow interactive title="Windows 离线 OCR" description="已作为正式本机能力接入，语言包状态在工具页检查">
+            <RouterLink class="btn-default btn-sm" to="/ocr">打开 OCR</RouterLink>
+          </SettingRow>
+
+          <SettingRow interactive title="公式图片识别" description="已接入可校对草稿流程，图片只在明确确认后发送到选定服务">
+            <RouterLink class="btn-default btn-sm" to="/documents?kind=note&create=note&mode=split&insert=formula&recognize=formula">打开识别</RouterLink>
+          </SettingRow>
+
+          <p v-if="updateMessage" class="mt-3 px-3 py-2.5 rounded-sm bg-accent-soft text-[12px] text-accent" role="status">{{ updateMessage }}</p>
+          <button
+            v-if="updateResult && updateResult.tag_name.replace(/^v/, '') !== appVersion"
+            class="btn-primary mt-2 self-start"
+            @click="openExternalUrl(updateResult.html_url)"
+          >
+            打开 GitHub Release
+          </button>
+        </section>
+      </div>
     </div>
-    <VaultRestorePreviewDialog v-if="vaultRestoreReview" :inspection="vaultRestoreReview.inspection" :current="vaultHealth" :busy="vaultBackupRestoring" :error="vaultRestoreError" @cancel="cancelVaultRestoreReview" @confirm="confirmVaultRestore" />
-    <section v-if="vaultMenu" ref="vaultMenuElement" class="settings-vault-menu" role="menu" aria-label="资料库快捷操作" :style="{ left: `${vaultMenu.x}px`, top: `${vaultMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleVaultMenuKeydown">
-      <header><span>本地资料库</span><b>{{ vaultName }}</b></header>
-      <button role="menuitem" @click="closeVaultMenu(); loadVaultHealth()"><AppIcon name="shield" :size="15" />重新检查完整性</button>
-      <button role="menuitem" @click="revealVault"><AppIcon name="inbox" :size="15" />在资源管理器中查看</button>
-      <button role="menuitem" @click="copyVaultPath"><AppIcon name="duplicate" :size="15" />复制资料库路径</button>
-      <button role="menuitem" @click="copyStorageDiagnosis"><AppIcon name="warning" :size="15" />复制磁盘空间诊断</button>
-      <button role="menuitem" :disabled="vaultAutoBackupCreating || vaultBackupCreating || vaultBackupRestoring || vaultBackupInspecting" @click="runAutomaticVaultBackup"><AppIcon name="clock" :size="15" />检查今日每日归档</button>
-      <button v-if="vaultHealth?.lastAutomaticBackup" role="menuitem" @click="revealAutomaticBackup"><AppIcon name="archive" :size="15" />查看最近每日归档</button>
-      <button role="menuitem" @click="closeVaultMenu(); createVaultBackup()"><AppIcon name="archive" :size="15" />创建完整归档</button>
-      <button class="danger" role="menuitem" @click="closeVaultMenu(); restoreVaultBackup()"><AppIcon name="refresh" :size="15" />从完整归档恢复…</button>
-    </section>
-    <section v-if="buildMenu" ref="buildMenuElement" class="settings-vault-menu build-profile-menu" role="menu" aria-label="当前构建版本操作" :style="{ left: `${buildMenu.x}px`, top: `${buildMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleBuildMenuKeydown">
-      <header><span>BUILD · {{ buildProfile.badge }}</span><b>{{ buildProfile.title }}</b></header>
-      <button role="menuitem" @click="openBuildPrimaryAction"><AppIcon :name="personalPackEnabled ? 'terminal' : 'toolbox'" :size="15" />{{ buildProfile.primaryAction }}</button>
-      <button role="menuitem" @click="copyBuildDetails"><AppIcon name="duplicate" :size="15" />复制当前版本信息</button>
-      <button role="menuitem" @click="copyBuildCommand"><AppIcon name="code" :size="15" />复制对应构建命令</button>
-    </section>
-    <section v-if="aiProfileMenu" ref="aiProfileMenuElement" class="settings-vault-menu ai-profile-menu" role="menu" aria-label="AI 配置连接操作" :style="{ left: `${aiProfileMenu.x}px`, top: `${aiProfileMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleAiProfileMenuKeydown">
-      <header><span>自带模型 · 密钥不外传</span><b>{{ aiProfileMenu.profile.label }}</b></header>
-      <button role="menuitem" @click="testAiProfile(aiProfileMenu.profile)"><AppIcon :name="aiTestControllers.has(aiProfileMenu.profile.id) ? 'close' : 'play'" :size="15" />{{ aiTestControllers.has(aiProfileMenu.profile.id) ? '停止连接检查' : '测试连接' }}</button>
-      <button role="menuitem" @click="editAiProfileFromMenu(aiProfileMenu.profile)"><AppIcon name="settings" :size="15" />编辑配置</button>
-      <button role="menuitem" @click="copyAiProfileDiagnosis(aiProfileMenu.profile)"><AppIcon name="duplicate" :size="15" />复制连接诊断</button>
-      <button role="menuitem" @click="openAiWorkbench(aiProfileMenu.profile)"><AppIcon name="sparkle" :size="15" />使用此配置打开 AI 工作台</button>
-    </section>
+
+    <VaultRestorePreviewDialog
+      v-if="vaultRestoreReview"
+      :inspection="vaultRestoreReview.inspection"
+      :current="vaultHealth"
+      :busy="vaultBackupRestoring"
+      :error="vaultRestoreError"
+      @cancel="cancelVaultRestoreReview"
+      @confirm="confirmVaultRestore"
+    />
+
+    <Teleport to="body">
+      <div
+        v-if="vaultMenu"
+        ref="vaultMenuElement"
+        class="fixed z-[120] w-60 p-1 rounded-md bg-surface border border-line-strong shadow-lg"
+        role="menu"
+        aria-label="资料库快捷操作"
+        :style="{ left: `${vaultMenu.x}px`, top: `${vaultMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleVaultMenuKeydown"
+      >
+        <p class="px-2.5 py-1.5 text-[11px] text-fg-3 truncate">本地资料库 · {{ vaultName }}</p>
+        <button class="nav-item w-full" role="menuitem" @click="closeVaultMenu(); loadVaultHealth()"><AppIcon name="shield" :size="15" />重新检查完整性</button>
+        <button class="nav-item w-full" role="menuitem" @click="revealVault"><AppIcon name="inbox" :size="15" />在资源管理器中查看</button>
+        <button class="nav-item w-full" role="menuitem" @click="copyVaultPath"><AppIcon name="duplicate" :size="15" />复制资料库路径</button>
+        <button class="nav-item w-full" role="menuitem" @click="copyStorageDiagnosis"><AppIcon name="warning" :size="15" />复制磁盘空间诊断</button>
+        <button class="nav-item w-full" role="menuitem" :disabled="vaultAutoBackupCreating || vaultBackupCreating || vaultBackupRestoring || vaultBackupInspecting" @click="runAutomaticVaultBackup"><AppIcon name="clock" :size="15" />检查今日每日归档</button>
+        <button v-if="vaultHealth?.lastAutomaticBackup" class="nav-item w-full" role="menuitem" @click="revealAutomaticBackup"><AppIcon name="archive" :size="15" />查看最近每日归档</button>
+        <button class="nav-item w-full" role="menuitem" @click="closeVaultMenu(); createVaultBackup()"><AppIcon name="archive" :size="15" />创建完整归档</button>
+        <button class="nav-item w-full hover:bg-danger-soft hover:text-danger" role="menuitem" @click="closeVaultMenu(); restoreVaultBackup()"><AppIcon name="refresh" :size="15" />从完整归档恢复…</button>
+      </div>
+
+      <div
+        v-if="buildMenu"
+        ref="buildMenuElement"
+        class="fixed z-[120] w-60 p-1 rounded-md bg-surface border border-line-strong shadow-lg"
+        role="menu"
+        aria-label="当前构建版本操作"
+        :style="{ left: `${buildMenu.x}px`, top: `${buildMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleBuildMenuKeydown"
+      >
+        <p class="px-2.5 py-1.5 text-[11px] text-fg-3 truncate">{{ buildProfile.badge }} · {{ buildProfile.title }}</p>
+        <button class="nav-item w-full" role="menuitem" @click="openBuildPrimaryAction"><AppIcon :name="personalPackEnabled ? 'terminal' : 'toolbox'" :size="15" />{{ buildProfile.primaryAction }}</button>
+        <button class="nav-item w-full" role="menuitem" @click="copyBuildDetails"><AppIcon name="duplicate" :size="15" />复制当前版本信息</button>
+        <button class="nav-item w-full" role="menuitem" @click="copyBuildCommand"><AppIcon name="code" :size="15" />复制对应构建命令</button>
+      </div>
+
+      <div
+        v-if="aiProfileMenu"
+        ref="aiProfileMenuElement"
+        class="fixed z-[120] w-64 p-1 rounded-md bg-surface border border-line-strong shadow-lg"
+        role="menu"
+        aria-label="AI 配置连接操作"
+        :style="{ left: `${aiProfileMenu.x}px`, top: `${aiProfileMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleAiProfileMenuKeydown"
+      >
+        <p class="px-2.5 py-1.5 text-[11px] text-fg-3 truncate">{{ aiProfileMenu.profile.label }} · 密钥不外传</p>
+        <button class="nav-item w-full" role="menuitem" @click="testAiProfile(aiProfileMenu.profile)">
+          <AppIcon :name="aiTestControllers.has(aiProfileMenu.profile.id) ? 'close' : 'play'" :size="15" />
+          {{ aiTestControllers.has(aiProfileMenu.profile.id) ? '停止连接检查' : '测试连接' }}
+        </button>
+        <button class="nav-item w-full" role="menuitem" @click="editAiProfileFromMenu(aiProfileMenu.profile)"><AppIcon name="settings" :size="15" />编辑配置</button>
+        <button class="nav-item w-full" role="menuitem" @click="copyAiProfileDiagnosis(aiProfileMenu.profile)"><AppIcon name="duplicate" :size="15" />复制连接诊断</button>
+        <button class="nav-item w-full" role="menuitem" @click="openAiWorkbench(aiProfileMenu.profile)"><AppIcon name="sparkle" :size="15" />用此配置打开 AI 工作台</button>
+      </div>
+    </Teleport>
   </div>
 </template>
-
-<style scoped>
-.profile-list > div.editing {
-  border-color: color-mix(in srgb, var(--green) 38%, var(--line));
-  background: var(--green-bg);
-}
-.profile-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 6px;
-}
-.profile-list > div:focus-visible { outline: 2px solid color-mix(in srgb, var(--green) 45%, transparent); outline-offset: 2px; }
-.profile-list > div > span { min-width: 0; }
-.profile-list em { display: flex; align-items: center; gap: 5px; margin-top: 5px; color: var(--muted); font: 9px/1.4 var(--font-ui); font-style: normal; }
-.profile-list em i { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--muted); }
-.profile-list em.is-working i { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
-.profile-list em.is-success { color: var(--green-strong); }.profile-list em.is-success i { background: var(--green); }
-.profile-list em.is-error { color: var(--danger); }.profile-list em.is-error i { background: var(--danger); }
-.profile-test { padding: 5px 7px; border: 1px solid color-mix(in srgb, var(--green) 25%, var(--line)); border-radius: 5px; color: var(--green-strong); background: var(--green-bg); font-size: 9px; }
-.profile-test.running { color: var(--danger); border-color: var(--danger-soft); background: var(--danger-soft); }
-.ai-profile-menu { z-index: var(--z-context-menu); }
-.profile-edit {
-  padding: 5px 7px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  color: var(--text-secondary);
-  background: var(--surface);
-  font-size: 9px;
-}
-.profile-edit:hover {
-  border-color: color-mix(in srgb, var(--green) 36%, var(--line));
-  color: var(--green-strong);
-  background: var(--green-bg);
-}
-.backup-summary > p > small {
-  display: block;
-  margin-top: 4px;
-}
-.backup-retention {
-  align-items: center;
-}
-.backup-retention > span {
-  min-width: 0;
-  flex: 1;
-}
-.backup-retention > div {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 6px;
-}
-.backup-retention .quiet-button {
-  min-height: 30px;
-  padding-inline: 9px;
-  font-size: 9px;
-}
-@media (max-width: 760px) {
-  .backup-retention {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-  .backup-retention > div {
-    width: 100%;
-  }
-  .backup-retention .quiet-button {
-    flex: 1;
-  }
-}
-</style>

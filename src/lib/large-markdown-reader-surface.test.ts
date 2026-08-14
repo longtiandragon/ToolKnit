@@ -19,6 +19,9 @@ describe('large Markdown reader surface', () => {
     expect(documents).toContain('正在铺开阅读内容')
     expect(documents).toContain('停止加载')
     expect(documents).toContain('Shift+F10 打开大文档阅读菜单')
-    expect(documents).toContain('role="menu" aria-label="大文档阅读操作"')
+    // Attribute order is formatting, not contract: the menu has to exist
+    // with that accessible name, not to write its attributes in one order.
+    expect(documents).toMatch(/aria-label="大文档阅读操作"/)
+    expect(documents).toMatch(/ref="largePreviewMenuElement"[\s\S]{0,400}?role="menu"/)
   })
 })

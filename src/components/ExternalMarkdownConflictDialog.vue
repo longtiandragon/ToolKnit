@@ -22,50 +22,76 @@ onMounted(() => { void nextTick(() => stayButton.value?.focus({ preventScroll: t
 
 <template>
   <Teleport to="body">
-    <div class="external-conflict-backdrop" @keydown.esc.prevent="!busy && emit('decision', 'stay')">
-      <section class="external-conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="external-conflict-title" aria-describedby="external-conflict-description" :aria-busy="busy">
-        <header>
-          <span aria-hidden="true"><AppIcon name="warning" :size="19" /></span>
-          <div>
-            <p class="eyebrow">{{ managedVault ? '资料库 Markdown 冲突' : '外部 Markdown 冲突' }}</p>
-            <h3 id="external-conflict-title">{{ preview.draftChanged ? '草稿和磁盘文件都发生了变化' : '磁盘文件已有新的修改' }}</h3>
-            <p id="external-conflict-description">“{{ title }}”的{{ managedVault ? ' Vault Markdown' : `关联文件 ${fileName}` }}被其他程序修改。先比较首个变化附近，再选择如何同步；任何选项都不会静默丢弃版本。</p>
+    <div class="fixed inset-0 z-150 center px-4 bg-[var(--scrim)] backdrop-blur-[3px]" @keydown.esc.prevent="!busy && emit('decision', 'stay')">
+      <section class="stack gap-3 w-full max-w-200 max-h-[86vh] p-5 panel shadow-lg" role="alertdialog" aria-modal="true" aria-labelledby="external-conflict-title" aria-describedby="external-conflict-description" :aria-busy="busy">
+        <header class="row items-start gap-3 shrink-0">
+          <span class="center w-9 h-9 shrink-0 rounded-sm bg-warn-soft text-warn" aria-hidden="true"><AppIcon name="warning" :size="19" /></span>
+          <div class="stack gap-1 min-w-0">
+            <p class="text-[11px] font-semibold text-warn">{{ managedVault ? '资料库 Markdown 冲突' : '外部 Markdown 冲突' }}</p>
+            <h3 id="external-conflict-title" class="text-[16px] font-semibold text-fg">{{ preview.draftChanged ? '草稿和磁盘文件都发生了变化' : '磁盘文件已有新的修改' }}</h3>
+            <p id="external-conflict-description" class="text-[12px] leading-relaxed text-fg-2">“{{ title }}”的{{ managedVault ? ' Vault Markdown' : `关联文件 ${fileName}` }}被其他程序修改。先比较首个变化附近，再选择如何同步；任何选项都不会静默丢弃版本。</p>
           </div>
         </header>
 
-        <div class="external-conflict-summary" aria-label="版本摘要">
-          <article :class="{ changed: preview.draftChanged }"><span>当前草稿</span><b>{{ preview.draftLines.toLocaleString('zh-CN') }} 行</b><small>{{ preview.draftCharacters.toLocaleString('zh-CN') }} 字符 · {{ preview.draftChanged ? '相对上次保存有修改' : '未修改' }}</small></article>
-          <article :class="{ changed: preview.diskChanged }"><span>磁盘版本</span><b>{{ preview.diskLines.toLocaleString('zh-CN') }} 行</b><small>{{ preview.diskCharacters.toLocaleString('zh-CN') }} 字符 · {{ preview.diskChanged ? '由其他程序更新' : '与上次保存一致' }}</small></article>
-          <article class="recommended"><span>安全建议</span><b>保留两份</b><small>先把当前草稿存为独立副本，再载入磁盘版本。</small></article>
+        <!-- Three states side by side: what you have, what the disk has, and
+             the one option that loses nothing. The recommended card carries
+             the accent so the safe route is legible before the diff is read. -->
+        <div class="grid gap-2 shrink-0 grid-cols-1 sm:grid-cols-3" aria-label="版本摘要">
+          <article class="stack gap-1 min-w-0 px-3 py-2.5 rounded-md bg-surface-2 border" :class="preview.draftChanged ? 'border-warn' : 'border-line'">
+            <span class="text-[11px] font-medium text-fg-3">当前草稿</span>
+            <b class="text-[13px] font-semibold text-fg">{{ preview.draftLines.toLocaleString('zh-CN') }} 行</b>
+            <small class="text-[11px] leading-snug text-fg-3">{{ preview.draftCharacters.toLocaleString('zh-CN') }} 字符 · {{ preview.draftChanged ? '相对上次保存有修改' : '未修改' }}</small>
+          </article>
+          <article class="stack gap-1 min-w-0 px-3 py-2.5 rounded-md bg-surface-2 border" :class="preview.diskChanged ? 'border-warn' : 'border-line'">
+            <span class="text-[11px] font-medium text-fg-3">磁盘版本</span>
+            <b class="text-[13px] font-semibold text-fg">{{ preview.diskLines.toLocaleString('zh-CN') }} 行</b>
+            <small class="text-[11px] leading-snug text-fg-3">{{ preview.diskCharacters.toLocaleString('zh-CN') }} 字符 · {{ preview.diskChanged ? '由其他程序更新' : '与上次保存一致' }}</small>
+          </article>
+          <article class="stack gap-1 min-w-0 px-3 py-2.5 rounded-md bg-accent-soft border border-accent">
+            <span class="text-[11px] font-medium text-fg-3">安全建议</span>
+            <b class="text-[13px] font-semibold text-accent">保留两份</b>
+            <small class="text-[11px] leading-snug text-fg-2">先把当前草稿存为独立副本，再载入磁盘版本。</small>
+          </article>
         </div>
 
-        <section class="external-conflict-diff" aria-label="首个变化附近的行差异">
-          <header><div><b>第 {{ preview.firstChangedLine.toLocaleString('zh-CN') }} 行附近</b><small>{{ preview.truncated ? '有界预览 · 不加载整篇差异' : '完整差异' }}</small></div><span><i></i>草稿删除 <i></i>磁盘新增</span></header>
-          <div role="list" tabindex="0">
-            <p v-for="(line, index) in preview.lines" :key="`${index}:${line.leftLine}:${line.rightLine}`" :class="line.kind" role="listitem"><span>{{ line.leftLine ?? '' }}</span><span>{{ line.rightLine ?? '' }}</span><b>{{ line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : ' ' }}</b><code>{{ line.text || ' ' }}</code></p>
+        <!-- The diff is the evidence, so it takes whatever height the summary
+             and the actions leave, and recesses into a well rather than
+             repeating the dialog's own surface. -->
+        <section class="stack min-w-0 min-h-40 flex-1 overflow-hidden rounded-lg border border-line bg-well" aria-label="首个变化附近的行差异">
+          <header class="row-between gap-3 shrink-0 px-3 h-9 border-b border-line bg-surface-2">
+            <div class="row items-baseline gap-2 min-w-0">
+              <b class="text-[12px] font-medium text-fg">第 {{ preview.firstChangedLine.toLocaleString('zh-CN') }} 行附近</b>
+              <small class="text-[11px] text-fg-3 truncate">{{ preview.truncated ? '有界预览 · 不加载整篇差异' : '完整差异' }}</small>
+            </div>
+            <span class="row gap-1.5 shrink-0 text-[11px] text-fg-3"><i class="w-1.5 h-1.5 rounded-[2px] bg-danger"></i>草稿删除 <i class="w-1.5 h-1.5 ml-1.5 rounded-[2px] bg-success"></i>磁盘新增</span>
+          </header>
+          <div class="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable] focus-visible:outline-none" role="list" tabindex="0">
+            <p
+              v-for="(line, index) in preview.lines"
+              :key="`${index}:${line.leftLine}:${line.rightLine}`"
+              class="grid grid-cols-[40px_40px_22px_minmax(0,1fr)] min-h-6 border-b border-line font-mono text-[11px] leading-relaxed"
+              :class="line.kind === 'added' ? 'bg-success-soft' : line.kind === 'removed' ? 'bg-danger-soft' : ''"
+              role="listitem"
+            >
+              <!-- The gutter needs a rule, not just a tint: in light mode
+                   `surface-2` and `well` are four values apart and the two
+                   number columns would dissolve into the code. -->
+              <span class="px-1.5 py-1 bg-surface-2 text-right text-fg-3">{{ line.leftLine ?? '' }}</span>
+              <span class="px-1.5 py-1 bg-surface-2 border-r border-line text-right text-fg-3">{{ line.rightLine ?? '' }}</span>
+              <b class="py-1 text-center" :class="line.kind === 'added' ? 'text-success' : line.kind === 'removed' ? 'text-danger' : 'text-fg-3'">{{ line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : ' ' }}</b>
+              <code class="px-2 py-1 text-fg whitespace-pre-wrap [overflow-wrap:anywhere]">{{ line.text || ' ' }}</code>
+            </p>
           </div>
         </section>
 
-        <p v-if="error" class="external-conflict-error" role="alert"><AppIcon name="warning" :size="13" />{{ error }}</p>
-        <footer>
-          <button ref="stayButton" class="quiet-button" :disabled="busy" @click="emit('decision', 'stay')">继续编辑</button>
-          <button class="quiet-button destructive" :disabled="busy" @click="emit('decision', 'use-disk')">使用磁盘版本</button>
-          <button class="quiet-button destructive" :disabled="busy" @click="emit('decision', 'overwrite-disk')">用草稿覆盖磁盘</button>
-          <button class="primary-button" :disabled="busy" @click="emit('decision', 'keep-both')">{{ busy ? '正在安全处理…' : '保留两份（推荐）' }}</button>
+        <p v-if="error" class="row gap-2 shrink-0 px-3 py-2 rounded-md bg-danger-soft border border-danger text-[11px] leading-snug text-danger" role="alert"><AppIcon name="warning" :size="13" class="shrink-0" />{{ error }}</p>
+        <footer class="row flex-wrap justify-end gap-2 shrink-0 pt-3 border-t border-line">
+          <button ref="stayButton" class="btn-default" :disabled="busy" @click="emit('decision', 'stay')">继续编辑</button>
+          <button class="btn-danger" :disabled="busy" @click="emit('decision', 'use-disk')">使用磁盘版本</button>
+          <button class="btn-danger" :disabled="busy" @click="emit('decision', 'overwrite-disk')">用草稿覆盖磁盘</button>
+          <button class="btn-primary" :disabled="busy" @click="emit('decision', 'keep-both')">{{ busy ? '正在安全处理…' : '保留两份（推荐）' }}</button>
         </footer>
       </section>
     </div>
   </Teleport>
 </template>
-
-<style scoped>
-.external-conflict-backdrop{position:fixed;inset:0;z-index:var(--z-global-modal);display:grid;place-items:center;padding:20px;background:var(--line-strong);backdrop-filter:blur(3px)}
-.external-conflict-dialog{display:grid;width:min(940px,calc(100vw - 40px));max-height:calc(100vh - 40px);gap:14px;overflow:hidden;padding:20px;border:1px solid var(--accent-soft);border-radius:16px;color:var(--text);background:linear-gradient(145deg,var(--surface),var(--surface-2));box-shadow:0 28px 90px var(--accent-soft)}
-.external-conflict-dialog>header{display:grid;grid-template-columns:42px minmax(0,1fr);gap:13px}.external-conflict-dialog>header>span{display:grid;width:40px;height:40px;place-items:center;border:1px solid var(--warn-soft);border-radius:11px;color:var(--warn);background:var(--surface-2)}.external-conflict-dialog .eyebrow{color:var(--warn)}.external-conflict-dialog h3{margin:5px 0 0;color:var(--accent);font:720 20px/1.25 var(--font-display);letter-spacing:-.02em}.external-conflict-dialog>header p:last-child{margin-top:6px;color:var(--fg-2);font:11px/1.6 var(--font-ui)}
-.external-conflict-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.external-conflict-summary article{display:grid;gap:4px;min-width:0;padding:11px 12px;border:1px solid var(--accent-soft);border-radius:10px;background:var(--surface-2)}.external-conflict-summary span{color:var(--fg-2);font:700 9px var(--font-mono);letter-spacing:.05em}.external-conflict-summary b{color:var(--fg);font:700 13px var(--font-ui)}.external-conflict-summary small{color:var(--fg-2);font:10px/1.45 var(--font-ui)}.external-conflict-summary article.changed{border-color:var(--warn-soft);background:var(--surface-2)}.external-conflict-summary article.recommended{border-color:var(--accent-soft);background:var(--surface-2)}.external-conflict-summary article.recommended b{color:var(--accent)}
-.external-conflict-diff{display:grid;min-height:180px;overflow:hidden;border:1px solid var(--accent-soft);border-radius:11px;background:var(--surface)}.external-conflict-diff>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;border-bottom:1px solid var(--accent-soft);background:var(--surface-2)}.external-conflict-diff>header div{display:flex;align-items:baseline;gap:8px}.external-conflict-diff>header b{color:var(--fg);font:700 11px var(--font-ui)}.external-conflict-diff>header small,.external-conflict-diff>header span{color:var(--fg-2);font:9px var(--font-mono)}.external-conflict-diff>header span{display:flex;align-items:center;gap:5px}.external-conflict-diff>header i{width:7px;height:7px;border-radius:2px;background:var(--surface-3)}.external-conflict-diff>header i:last-of-type{margin-left:5px;background:var(--surface-2)}.external-conflict-diff>div{max-height:min(330px,42vh);overflow:auto;scrollbar-gutter:stable}.external-conflict-diff p{display:grid;min-height:24px;grid-template-columns:42px 42px 24px minmax(0,1fr);margin:0;border-bottom:1px solid var(--accent-soft);color:var(--fg);background:var(--surface);font:10px/1.55 var(--font-mono)}.external-conflict-diff p>span{padding:4px 7px;color:var(--fg-3);background:var(--surface-2);text-align:right}.external-conflict-diff p>b{padding:4px 5px;color:var(--fg-3);text-align:center}.external-conflict-diff code{overflow-wrap:anywhere;padding:4px 8px;white-space:pre-wrap}.external-conflict-diff p.removed{background:var(--surface-2)}.external-conflict-diff p.removed>b{color:var(--danger)}.external-conflict-diff p.added{background:var(--surface-2)}.external-conflict-diff p.added>b{color:var(--accent)}
-.external-conflict-error{display:flex;align-items:center;gap:7px;margin:0;padding:8px 10px;border:1px solid var(--danger-soft);border-radius:8px;color:var(--danger);background:var(--danger-soft);font:10px/1.45 var(--font-ui)}
-.external-conflict-dialog>footer{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px;padding-top:13px;border-top:1px solid var(--accent-soft)}.external-conflict-dialog>footer button{min-height:35px}.external-conflict-dialog .destructive{color:var(--danger);border-color:var(--danger-soft)}.external-conflict-dialog .destructive:hover,.external-conflict-dialog .destructive:focus-visible{border-color:var(--danger);background:var(--danger-soft)}
-@media(max-width:760px){.external-conflict-summary{grid-template-columns:1fr}.external-conflict-dialog{width:calc(100vw - 24px);max-height:calc(100vh - 24px);padding:14px}.external-conflict-diff>header span{display:none}.external-conflict-dialog>footer{justify-content:stretch}.external-conflict-dialog>footer button{flex:1 1 42%}}
-@media(prefers-reduced-motion:reduce){.external-conflict-backdrop{backdrop-filter:none}}
-</style>

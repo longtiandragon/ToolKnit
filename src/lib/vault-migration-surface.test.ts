@@ -43,7 +43,11 @@ describe('resumable browser to SQLite migration contract', () => {
   it('exposes progress and an announced recovery path with mouse and keyboard menus', () => {
     expect(app).toContain('vaultBootstrapStages')
     expect(app).toContain('role="progressbar"')
-    expect(app).toContain('class="vault-notice" role="alert"')
+    // Matched on the role and the handlers rather than on a class name and a
+    // fixed attribute order: the contract is that the recovery notice is
+    // announced as an alert and reachable from both a right-click and the
+    // keyboard, not that it is styled by `.vault-notice`.
+    expect(app).toMatch(/role="alert"[\s\S]{0,800}?openVaultNoticeContext/)
     expect(app).toContain('@contextmenu="openVaultNoticeContext"')
     expect(app).toContain('@keydown="openVaultNoticeContextFromKeyboard"')
     expect(app).toContain('重试连接')

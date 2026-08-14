@@ -50,6 +50,25 @@ let searchTimer: number | undefined
 let listFrame: number | undefined
 let listResizeObserver: ResizeObserver | undefined
 const vocabularyRowHeight = 60
+
+/* Field metadata, so four near-identical inputs are one loop instead of four
+   hand-written labels that drift apart. */
+const wordFormFields = [
+  { key: 'base', label: '原形', placeholder: 'run' },
+  { key: 'past', label: '过去式', placeholder: 'ran' },
+  { key: 'participle', label: '过去分词', placeholder: 'run' },
+  { key: 'presentParticiple', label: '现在分词', placeholder: 'running' },
+] as const
+const senseListFields = [
+  { key: 'examples', label: '例句', placeholder: '每条例句用；分隔' },
+  { key: 'collocations', label: '常用搭配', placeholder: 'run a program；run out of' },
+  { key: 'synonyms', label: '近义 / 易混', placeholder: '每项用；分隔' },
+] as const
+const onboardingSteps = [
+  { index: '01', title: '补全词条', detail: '拼写、读音与常用词形' },
+  { index: '02', title: '按词性拆义', detail: '记录常用搭配、例句与易混词' },
+  { index: '03', title: '加入复习', detail: '只让需要巩固的词义进入队列' },
+]
 const vocabularyListOverscan = 8
 const reviewFacetChoices: VocabularyReviewFacet[] = ['meaning', 'spelling', 'example']
 const { speakingEntryId, speakVocabularyEntry: speakVocabulary, disposeVocabularySpeech } = useVocabularySpeech()
@@ -419,58 +438,244 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="vocabulary page-enter" @click="closeMenu">
-    <aside class="vocabulary-list panel">
-      <header><div><p class="eyebrow">词汇</p><h2>单词库</h2><span>{{ words.length }} 个词条{{ searchPending ? ' · 正在筛选' : '' }}</span></div><div class="vocabulary-list__actions"><button class="quiet-button" title="从 CSV、TSV 或文本批量导入" @click.stop="openBatchImport"><AppIcon name="inbox" :size="13" />批量</button><button class="icon-button" title="新建单词" @click.stop="addWord">＋</button></div></header>
-      <label class="vocabulary-search"><span class="visually-hidden">搜索单词</span><input v-model="query" placeholder="词形、词义、例句…" /></label>
-      <div ref="listViewport" class="vocabulary-list__rows" :aria-busy="searchPending" @scroll.passive="handleListScroll">
-        <div v-if="words.length" class="vocabulary-list__spacer" :style="{ height: `${words.length * vocabularyRowHeight}px` }">
-          <div class="vocabulary-list__window" :style="{ transform: `translateY(${vocabularyWindowOffset}px)` }">
-            <button v-for="entry in visibleWords" :key="entry.id" v-memo="[entry.id, entry.lemma, entry.updatedAt, entry.id === selectedId, entry.id === selectedId && draftDirty, store.isContentFavorite('word', entry.id)]" class="vocabulary-row" :class="{ selected: entry.id === selectedId, dirty: entry.id === selectedId && draftDirty }" @click="pick(entry)" @contextmenu.prevent.stop="openMenu($event, entry)" @keydown="handleEntryKeydown($event, entry)">
-              <span><b>{{ entry.lemma }}</b><small>{{ entry.pronunciation || entry.language }}</small></span><i><span v-if="entry.id === selectedId && draftDirty" class="vocabulary-row__dirty">未保存</span><template v-else><AppIcon v-if="store.isContentFavorite('word', entry.id)" name="star" :size="10" />{{ entry.senses.length }} 义</template></i>
+  <!-- No `vocabulary*` classes; the scoped block goes with them. This route
+       had no PageHeader at all — it is a two-pane workspace, so it gets one
+       header line and then gives the rest of the window to the list and the
+       entry. -->
+  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6" @click="closeMenu">
+    <div class="flex-1 min-h-0 grid gap-4 grid-cols-[minmax(260px,300px)_minmax(0,1fr)]">
+      <aside class="pane h-full min-h-0" aria-label="单词库">
+        <header class="pane-head">
+          <span class="row gap-2 min-w-0">
+            <b class="text-[13px] font-semibold text-fg">单词库</b>
+            <span class="chip h-5 px-1.5 text-[11px] tabular-nums">{{ words.length }}</span>
+            <small v-if="searchPending" class="text-[11px] text-fg-3">筛选中…</small>
+          </span>
+          <span class="row gap-0.5 shrink-0">
+            <button class="center w-7 h-7 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" title="从 CSV、TSV 或文本批量导入" aria-label="批量导入" @click.stop="openBatchImport">
+              <AppIcon name="inbox" :size="15" />
             </button>
+            <button class="center w-7 h-7 rounded-sm text-accent hover:bg-accent-soft" title="新建单词" aria-label="新建单词" @click.stop="addWord">
+              <AppIcon name="plus" :size="15" />
+            </button>
+          </span>
+        </header>
+
+        <div class="shrink-0 p-2 border-b border-line">
+          <input v-model="query" class="field h-8 w-full text-[12px]" aria-label="搜索单词" placeholder="词形、词义、例句…" />
+        </div>
+
+        <!-- Windowed with a translated inner block, so the row height here is
+             `vocabularyRowHeight` and the two have to stay in step. -->
+        <div ref="listViewport" class="flex-1 min-h-0 overflow-y-auto" :aria-busy="searchPending" @scroll.passive="handleListScroll">
+          <div v-if="words.length" class="relative" :style="{ height: `${words.length * vocabularyRowHeight}px` }">
+            <div class="absolute inset-x-0 top-0" :style="{ transform: `translateY(${vocabularyWindowOffset}px)` }">
+              <button
+                v-for="entry in visibleWords"
+                :key="entry.id"
+                v-memo="[entry.id, entry.lemma, entry.updatedAt, entry.id === selectedId, entry.id === selectedId && draftDirty, store.isContentFavorite('word', entry.id)]"
+                class="row-between gap-2 w-full h-15 px-3 text-left border-b border-line border-l-2 transition-colors duration-120"
+                :class="entry.id === selectedId ? 'border-l-accent bg-accent-soft' : 'border-l-transparent hover:bg-surface-2'"
+                @click="pick(entry)"
+                @contextmenu.prevent.stop="openMenu($event, entry)"
+                @keydown="handleEntryKeydown($event, entry)"
+              >
+                <span class="stack gap-0.5 min-w-0">
+                  <b class="text-[13px] font-medium truncate" :class="entry.id === selectedId ? 'text-accent' : 'text-fg'">{{ entry.lemma }}</b>
+                  <small class="text-[11px] truncate font-mono text-fg-3">{{ entry.pronunciation || entry.language }}</small>
+                </span>
+                <i class="row gap-1 shrink-0 text-[11px] not-italic" :class="entry.id === selectedId && draftDirty ? 'font-medium text-warn' : 'text-fg-3'">
+                  <template v-if="entry.id === selectedId && draftDirty">未保存</template>
+                  <template v-else>
+                    <AppIcon v-if="store.isContentFavorite('word', entry.id)" name="star" :size="11" />{{ entry.senses.length }} 义
+                  </template>
+                </i>
+              </button>
+            </div>
+          </div>
+          <div v-else class="stack items-center gap-2 px-4 py-12 text-center">
+            <template v-if="hasVocabulary || query.trim()">
+              <b class="text-[12px] font-medium text-fg">没有匹配的单词</b>
+              <p class="text-[11px] leading-relaxed text-fg-3">试试词形、词义或例句中的关键词。</p>
+              <button class="btn-tool" @click="clearSearch">清除搜索</button>
+            </template>
+            <template v-else>
+              <AppIcon name="book" :size="20" class="text-fg-3" />
+              <b class="text-[12px] font-medium text-fg">词条会在这里出现</b>
+              <p class="text-[11px] leading-relaxed text-fg-3">可以逐个录入，也可以批量粘贴现有词表。</p>
+              <button class="btn-tool" @click="openBatchImport">批量导入</button>
+            </template>
           </div>
         </div>
-        <div v-if="!words.length" class="vocabulary-empty" :class="{ 'vocabulary-empty--quiet': !hasVocabulary && !query.trim() }">
-          <template v-if="hasVocabulary || query.trim()"><b>没有匹配的单词</b><p>试试词形、词义或例句中的关键词。</p><button class="quiet-button" @click="clearSearch">清除搜索</button></template>
-          <template v-else><AppIcon name="book" :size="20" /><b>词条会在这里出现</b><p>可以逐个录入，也可以批量粘贴现有词表。</p><button class="quiet-button" @click="openBatchImport">批量导入</button></template>
-        </div>
-      </div>
-      <footer><span>右键或 Shift+F10 管理词条</span><div><button class="quiet-button" @click="openBatchImport">批量导入</button><button class="quiet-button" @click="addWord">＋ 新建</button></div></footer>
-    </aside>
 
-    <section v-if="draft" class="vocabulary-editor panel" @input="markDraftDirty" @change="markDraftDirty">
-      <header class="vocabulary-editor__header">
-        <div><p class="eyebrow">结构化词条</p><input v-model="draft.lemma" aria-label="单词" class="vocabulary-lemma" placeholder="run" /><div class="vocabulary-meta"><input v-model="draft.pronunciation" aria-label="音标或读音" placeholder="/rʌn/" /><select v-model="draft.language" aria-label="语言"><option>英语</option><option>日语</option><option>其他</option></select><button type="button" class="vocabulary-speak-button" :class="{ active: speakingEntryId === draft.id }" :aria-pressed="speakingEntryId === draft.id" :aria-label="speakingEntryId === draft.id ? `停止朗读 ${draft.lemma || '当前单词'}` : `朗读 ${draft.lemma || '当前单词'}`" @click.stop="speakVocabularyEntry(draft)"><AppIcon :name="speakingEntryId === draft.id ? 'pause' : 'play'" :size="13" />{{ speakingEntryId === draft.id ? '停止' : '朗读' }}</button></div></div>
-        <div class="vocabulary-editor__actions"><span class="save-state" :class="{ 'is-dirty': draftDirty }" role="status" aria-live="polite"><i></i>{{ draftDirty ? crashDraftState === 'saved' ? '未保存 · 已留恢复点' : '未保存修改' : saved ? '已保存 · 本地' : '已同步 · 本地' }}</span><button class="primary-button" @click="save">保存 <kbd>Ctrl S</kbd></button><button class="more-button" aria-label="更多单词操作" @click.stop="openMenu($event, draft)">•••</button></div>
-      </header>
-      <EditorRecoveryBanner v-if="crashDraft" :saved-at="crashDraft.savedAt" item-kind="单词" :busy="crashDraftBusy" @restore="restoreCrashDraft" @discard="discardCrashDraft" />
-      <section class="word-forms"><header><span>词形</span><small>用于查找和复习时提示</small></header><div><label><span>原形</span><input v-model="draft.forms.base" placeholder="run" /></label><label><span>过去式</span><input v-model="draft.forms.past" placeholder="ran" /></label><label><span>过去分词</span><input v-model="draft.forms.participle" placeholder="run" /></label><label><span>现在分词</span><input v-model="draft.forms.presentParticiple" placeholder="running" /></label></div></section>
-      <section class="sense-section"><header><div><p class="eyebrow">义项</p><h3>词义与卡片</h3><small>每个复习方向独立安排 FSRS{{ dueCount ? ` · ${dueCount} 张已到期` : '' }}</small></div><button class="quiet-button" @click="addSense">＋ 添加词义</button></header>
-        <article v-for="(sense, index) in draft.senses" :key="sense.id" class="sense-card"><header><span>0{{ index + 1 }}</span><div><select v-model="sense.partOfSpeech" :aria-label="`词义 ${index + 1} 词性`"><option value="">词性</option><option>noun</option><option>verb</option><option>adjective</option><option>adverb</option><option>phrase</option><option>other</option></select></div><button class="icon-button" :disabled="draft.senses.length === 1" :aria-label="`删除词义 ${index + 1}`" @click="removeSense(sense.id)">×</button></header><textarea v-model="sense.definition" :aria-label="`词义 ${index + 1} 释义`" placeholder="用自己的话写下这个词义…" /><div class="sense-fields"><label><span>例句</span><input :value="sense.examples.join('；')" placeholder="每条例句用；分隔" @input="setList(sense, 'examples', ($event.target as HTMLInputElement).value)" /></label><label><span>常用搭配</span><input :value="sense.collocations.join('；')" placeholder="run a program；run out of" @input="setList(sense, 'collocations', ($event.target as HTMLInputElement).value)" /></label><label><span>近义 / 易混</span><input :value="sense.synonyms.join('；')" placeholder="每项用；分隔" @input="setList(sense, 'synonyms', ($event.target as HTMLInputElement).value)" /></label></div><div class="sense-review-facets" :aria-label="`词义 ${index + 1} 的复习方向`"><div><span>复习方向</span><small>各自独立记忆强度</small></div><div class="sense-review-facets__choices"><label v-for="facet in reviewFacetChoices" :key="facet" :class="{ active: reviewFacetEnabled(sense, facet) }"><input type="checkbox" :checked="reviewFacetEnabled(sense, facet)" @change="toggleReviewFacet(sense, facet)" /><span>{{ vocabularyReviewFacetLabels[facet] }}</span></label></div></div></article>
+        <footer class="row gap-1.5 shrink-0 p-2 border-t border-line">
+          <button class="btn-default btn-sm flex-1" @click="addWord"><AppIcon name="plus" :size="13" />新建</button>
+          <button class="btn-default btn-sm shrink-0" @click="openBatchImport"><AppIcon name="inbox" :size="13" />批量导入</button>
+        </footer>
+      </aside>
+
+      <section v-if="draft" class="pane h-full min-h-0" @input="markDraftDirty" @change="markDraftDirty">
+        <header class="row-between gap-3 shrink-0 px-3 h-12 border-b border-line">
+          <span class="row gap-2 min-w-0 flex-1">
+            <input v-model="draft.lemma" class="min-w-0 max-w-56 h-8 bg-transparent border-0 shadow-none! text-[16px] font-semibold text-fg focus:outline-none" aria-label="单词" placeholder="run" />
+            <input v-model="draft.pronunciation" class="field h-7 w-28 px-2 font-mono text-[12px]" aria-label="音标或读音" placeholder="/rʌn/" />
+            <select v-model="draft.language" class="field h-7 px-2 text-[12px]" aria-label="语言">
+              <option>英语</option><option>日语</option><option>其他</option>
+            </select>
+            <button
+              type="button"
+              class="btn-tool"
+              :class="speakingEntryId === draft.id ? 'btn-tool-active' : ''"
+              :aria-pressed="speakingEntryId === draft.id"
+              :aria-label="speakingEntryId === draft.id ? `停止朗读 ${draft.lemma || '当前单词'}` : `朗读 ${draft.lemma || '当前单词'}`"
+              @click.stop="speakVocabularyEntry(draft)"
+            >
+              <AppIcon :name="speakingEntryId === draft.id ? 'pause' : 'play'" :size="13" />{{ speakingEntryId === draft.id ? '停止' : '朗读' }}
+            </button>
+          </span>
+          <span class="row gap-2 shrink-0">
+            <span class="row gap-1.5 text-[11px]" :class="draftDirty ? 'text-warn' : 'text-fg-3'" role="status" aria-live="polite">
+              <i class="w-1.5 h-1.5 rounded-full" :class="draftDirty ? 'bg-warn' : 'bg-success'" aria-hidden="true" />
+              {{ draftDirty ? (crashDraftState === 'saved' ? '未保存 · 已留恢复点' : '未保存修改') : saved ? '已保存 · 本地' : '已同步 · 本地' }}
+            </span>
+            <button class="btn-primary btn-sm" @click="save">保存<kbd class="kbd ml-1">Ctrl S</kbd></button>
+            <button class="center w-7 h-7 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-fg" aria-label="更多单词操作" @click.stop="openMenu($event, draft)">
+              <AppIcon name="more" :size="15" />
+            </button>
+          </span>
+        </header>
+
+        <EditorRecoveryBanner v-if="crashDraft" :saved-at="crashDraft.savedAt" item-kind="单词" :busy="crashDraftBusy" @restore="restoreCrashDraft" @discard="discardCrashDraft" />
+
+        <div class="flex-1 min-h-0 overflow-y-auto stack gap-3 p-3">
+          <section class="stack gap-2">
+            <div class="row-between gap-2">
+              <h3 class="text-[11px] font-semibold text-fg-3">词形</h3>
+              <small class="text-[11px] text-fg-3">用于查找和复习时提示</small>
+            </div>
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
+              <label v-for="form in wordFormFields" :key="form.key" class="stack gap-1.5">
+                <span class="text-[11px] text-fg-3">{{ form.label }}</span>
+                <input v-model="draft.forms[form.key]" class="field h-8 text-[12px]" :placeholder="form.placeholder" />
+              </label>
+            </div>
+          </section>
+
+          <div class="divider" role="presentation" />
+
+          <section class="stack gap-2">
+            <div class="row-between gap-2">
+              <span class="row gap-2">
+                <h3 class="text-[11px] font-semibold text-fg-3">义项</h3>
+                <small class="text-[11px] text-fg-3">每个复习方向独立安排 FSRS{{ dueCount ? ` · ${dueCount} 张已到期` : '' }}</small>
+              </span>
+              <button class="btn-tool" @click="addSense"><AppIcon name="plus" :size="13" />添加词义</button>
+            </div>
+
+            <article v-for="(sense, index) in draft.senses" :key="sense.id" class="stack gap-2.5 p-3 rounded-md border border-line bg-well">
+              <header class="row gap-2">
+                <span class="center w-6 h-6 shrink-0 rounded-sm bg-surface border border-line font-mono text-[11px] tabular-nums text-fg-2">{{ String(index + 1).padStart(2, '0') }}</span>
+                <select v-model="sense.partOfSpeech" class="field h-7 px-2 text-[12px]" :aria-label="`词义 ${index + 1} 词性`">
+                  <option value="">词性</option>
+                  <option>noun</option><option>verb</option><option>adjective</option><option>adverb</option><option>phrase</option><option>other</option>
+                </select>
+                <button
+                  class="center w-7 h-7 ml-auto shrink-0 rounded-sm text-fg-3 hover:not-disabled:bg-surface-2 hover:not-disabled:text-danger disabled:opacity-35 disabled:cursor-not-allowed"
+                  :disabled="draft.senses.length === 1"
+                  :aria-label="`删除词义 ${index + 1}`"
+                  @click="removeSense(sense.id)"
+                >
+                  <AppIcon name="close" :size="14" />
+                </button>
+              </header>
+              <textarea v-model="sense.definition" class="field-area min-h-16 text-[12px]" :aria-label="`词义 ${index + 1} 释义`" placeholder="用自己的话写下这个词义…" />
+              <div class="grid grid-cols-1 lg:grid-cols-3 gap-2">
+                <label v-for="list in senseListFields" :key="list.key" class="stack gap-1.5">
+                  <span class="text-[11px] text-fg-3">{{ list.label }}</span>
+                  <input
+                    :value="sense[list.key].join('；')"
+                    class="field h-8 text-[12px]"
+                    :placeholder="list.placeholder"
+                    @input="setList(sense, list.key, ($event.target as HTMLInputElement).value)"
+                  />
+                </label>
+              </div>
+              <div class="row-between flex-wrap gap-2 pt-2 border-t border-line" :aria-label="`词义 ${index + 1} 的复习方向`">
+                <span class="stack gap-0.5">
+                  <b class="text-[11px] font-medium text-fg">复习方向</b>
+                  <small class="text-[11px] text-fg-3">各自独立记忆强度</small>
+                </span>
+                <div class="row flex-wrap gap-1.5">
+                  <label
+                    v-for="facet in reviewFacetChoices"
+                    :key="facet"
+                    class="row gap-1.5 h-7 px-2.5 rounded-full border text-[11px] cursor-pointer transition-colors duration-120"
+                    :class="reviewFacetEnabled(sense, facet) ? 'border-accent bg-accent-soft text-accent' : 'border-line text-fg-2 hover:border-line-strong hover:text-fg'"
+                  >
+                    <input type="checkbox" class="visually-hidden" :checked="reviewFacetEnabled(sense, facet)" @change="toggleReviewFacet(sense, facet)" />
+                    <AppIcon :name="reviewFacetEnabled(sense, facet) ? 'check' : 'plus'" :size="11" />
+                    {{ vocabularyReviewFacetLabels[facet] }}
+                  </label>
+                </div>
+              </div>
+            </article>
+          </section>
+        </div>
       </section>
-    </section>
-    <section v-else class="vocabulary-detail-empty panel">
-      <div class="vocabulary-detail-empty__content">
-        <div class="vocabulary-detail-empty__mark"><AppIcon name="book" :size="23" /></div>
-        <p class="eyebrow">本地词库</p>
-        <h2>把一个单词，织成多张可复习的卡。</h2>
-        <p class="vocabulary-detail-empty__description">词形、不同词性、常用搭配、例句与易混词都归在同一词条下；启用的每条词义会独立安排复习。</p>
-        <ol class="vocabulary-onboarding" aria-label="单词卡录入流程">
-          <li><span>01</span><div><b>补全词条</b><small>拼写、读音与常用词形</small></div></li>
-          <li><span>02</span><div><b>按词性拆义</b><small>记录常用搭配、例句与易混词</small></div></li>
-          <li><span>03</span><div><b>加入复习</b><small>只让需要巩固的词义进入队列</small></div></li>
-        </ol>
-        <div class="vocabulary-detail-empty__actions"><button class="primary-button" @click="addWord"><AppIcon name="plus" :size="15" />录入第一个单词</button><button class="quiet-button" @click="openBatchImport"><AppIcon name="inbox" :size="14" />批量导入词表</button></div>
-        <small class="vocabulary-detail-empty__hint">所有内容仅保存到本地 Vault；词条支持右键或 Shift+F10 管理。</small>
-      </div>
-    </section>
-    <section v-if="menu" ref="menuElement" class="vocabulary-context-menu" role="menu" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }" @click.stop @keydown="handleMenuKeydown"><p>{{ menu.entry.lemma }}</p><button v-if="menu.entry.id === selectedId && draftDirty" role="menuitem" @click="saveEntryFromMenu">保存当前修改 <kbd>Ctrl+S</kbd></button><template v-if="menu.entry.id === selectedId && crashDraft"><button role="menuitem" @click="closeMenu(); restoreCrashDraft()">恢复异常退出草稿</button><button role="menuitem" @click="closeMenu(); discardCrashDraft()">放弃恢复点</button></template><button role="menuitem" @click="openEntryFromMenu(menu.entry)">打开词条</button><button role="menuitem" @click="speakVocabularyEntry(menu.entry)">{{ speakingEntryId === menu.entry.id ? '停止朗读' : '朗读单词' }} <kbd>本机</kbd></button><button role="menuitem" @click="toggleEntryFavorite(menu.entry)">{{ store.isContentFavorite('word', menu.entry.id) ? '取消收藏' : '加入收藏' }}</button><button v-if="store.isContentRecent('word', menu.entry.id)" role="menuitem" @click="removeEntryFromRecents(menu.entry)">从最近使用移除</button><button v-if="entryCollocations(menu.entry).length" role="menuitem" @click="copyEntryCollocations(menu.entry)">复制常用搭配</button><button role="menuitem" @click="copyEntryAsMarkdown(menu.entry)">复制为 Markdown</button><button role="menuitem" @click="createEntryNote(menu.entry)">创建关联笔记</button><button class="danger" role="menuitem" @click="removeEntry(menu.entry); closeMenu()">删除单词</button></section>
+
+      <section v-else class="pane h-full min-h-0 center">
+        <div class="stack items-center gap-4 max-w-140 px-6 text-center">
+          <span class="center w-12 h-12 rounded-lg bg-accent-soft text-accent"><AppIcon name="book" :size="24" /></span>
+          <div class="stack gap-1.5">
+            <strong class="text-[16px] font-semibold text-fg">把一个单词，织成多张可复习的卡</strong>
+            <p class="text-[12px] leading-relaxed text-fg-3">词形、不同词性、常用搭配、例句与易混词都归在同一词条下；启用的每条词义会独立安排复习。</p>
+          </div>
+          <ol class="grid grid-cols-3 gap-2 w-full" aria-label="单词卡录入流程">
+            <li v-for="step in onboardingSteps" :key="step.index" class="stack gap-1 p-3 rounded-sm border border-line bg-well text-left">
+              <span class="font-mono text-[11px] font-semibold text-accent">{{ step.index }}</span>
+              <b class="text-[12px] font-medium text-fg">{{ step.title }}</b>
+              <small class="text-[11px] leading-relaxed text-fg-3">{{ step.detail }}</small>
+            </li>
+          </ol>
+          <div class="row flex-wrap justify-center gap-2">
+            <button class="btn-primary" @click="addWord"><AppIcon name="plus" :size="15" />录入第一个单词</button>
+            <button class="btn-default" @click="openBatchImport"><AppIcon name="inbox" :size="14" />批量导入词表</button>
+          </div>
+          <small class="text-[11px] leading-relaxed text-fg-3">所有内容仅保存到本地 Vault；词条支持右键或 Shift+F10 管理。</small>
+        </div>
+      </section>
+    </div>
+
+    <Teleport to="body">
+      <section
+        v-if="menu"
+        ref="menuElement"
+        class="menu-panel w-64"
+        role="menu"
+        :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
+        @click.stop
+        @keydown="handleMenuKeydown"
+      >
+        <p class="menu-title"><span class="min-w-0 truncate">{{ menu.entry.lemma }}</span></p>
+        <button v-if="menu.entry.id === selectedId && draftDirty" class="menu-item" role="menuitem" @click="saveEntryFromMenu">保存当前修改<kbd class="kbd">Ctrl+S</kbd></button>
+        <template v-if="menu.entry.id === selectedId && crashDraft">
+          <button class="menu-item" role="menuitem" @click="closeMenu(); restoreCrashDraft()">恢复异常退出草稿</button>
+          <button class="menu-item" role="menuitem" @click="closeMenu(); discardCrashDraft()">放弃恢复点</button>
+        </template>
+        <button class="menu-item" role="menuitem" @click="openEntryFromMenu(menu.entry)">打开词条</button>
+        <button class="menu-item" role="menuitem" @click="speakVocabularyEntry(menu.entry)">{{ speakingEntryId === menu.entry.id ? '停止朗读' : '朗读单词' }}<kbd class="kbd">本机</kbd></button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item" role="menuitem" @click="toggleEntryFavorite(menu.entry)">{{ store.isContentFavorite('word', menu.entry.id) ? '取消收藏' : '加入收藏' }}</button>
+        <button v-if="store.isContentRecent('word', menu.entry.id)" class="menu-item" role="menuitem" @click="removeEntryFromRecents(menu.entry)">从最近使用移除</button>
+        <button v-if="entryCollocations(menu.entry).length" class="menu-item" role="menuitem" @click="copyEntryCollocations(menu.entry)">复制常用搭配</button>
+        <button class="menu-item" role="menuitem" @click="copyEntryAsMarkdown(menu.entry)">复制为 Markdown</button>
+        <button class="menu-item" role="menuitem" @click="createEntryNote(menu.entry)">创建关联笔记</button>
+        <i class="menu-sep" aria-hidden="true" />
+        <button class="menu-item menu-item-danger" role="menuitem" @click="removeEntry(menu.entry); closeMenu()">删除单词</button>
+      </section>
+    </Teleport>
+
     <UnsavedChangesDialog v-if="unsavedPrompt" :item-label="draft?.lemma || '未命名单词'" :target-label="unsavedPrompt.targetLabel" item-kind="单词" @decision="resolveUnsavedDecision" />
     <VocabularyImportDialog v-if="importDialogOpen" @cancel="closeBatchImport" @complete="completeBatchImport" />
   </div>
 </template>
-
-<style scoped>
-.vocabulary-speak-button{display:inline-flex;min-height:30px;flex:0 0 auto;align-items:center;gap:5px;padding:0 9px;border:1px solid var(--accent-soft);border-radius:7px;color:var(--green-strong);background:var(--accent-soft);font:650 10px var(--font-ui);white-space:nowrap;cursor:pointer;transition:color .16s ease,border-color .16s ease,background .16s ease}.vocabulary-speak-button:hover,.vocabulary-speak-button.active{border-color:var(--accent);background:var(--green-bg)}.vocabulary-speak-button:focus-visible{outline:2px solid color-mix(in srgb,var(--green) 48%,transparent);outline-offset:2px}@media (prefers-reduced-motion:reduce){.vocabulary-speak-button{transition:none}}
-</style>

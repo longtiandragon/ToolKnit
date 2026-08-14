@@ -11,7 +11,10 @@ export const appRoutes: RouteRecordRaw[] = [
   { path: '/knowledge', name: 'knowledge', component: () => import('@/views/KnowledgeSpaceView.vue'), meta: { title: '知识空间' } },
   { path: '/relations', name: 'knowledge-relations', component: () => import('@/views/KnowledgeRelationsView.vue'), meta: { title: '知识关系图谱' } },
   { path: '/library', name: 'library', component: () => import('@/views/LibraryView.vue'), meta: { title: '收集与归档' } },
-  { path: '/tools', name: 'tools', component: () => import('@/views/BatchView.vue'), meta: { title: '文件处理中心' } },
+  { path: '/tools', name: 'tools', component: () => import('@/views/BatchView.vue'), // The top bar says where you are; the page heading says what you are about
+// to do. Titling the route with the operation as well left both lines
+// claiming to be the same thing.
+meta: { title: '文件工具' } },
   { path: '/tool-space', name: 'tool-space', component: () => import('@/views/ToolsSpaceView.vue'), meta: { title: '工具空间' } },
   { path: '/media', name: 'media', component: () => import('@/views/MediaDeskView.vue'), meta: { title: '媒体转换台' } },
   { path: '/subtitles', name: 'subtitles', component: () => import('@/views/SubtitleView.vue'), meta: { title: '字幕校对台' } },

@@ -28,6 +28,15 @@ const ui = useUiStore()
 const route = useRoute()
 const router = useRouter()
 const desktop = isDesktop()
+
+/* Two onboarding lists said almost the same thing — one for "no desktop", one
+   for "no manifest". The empty state is the same either way: this is what the
+   three steps are. */
+const onboardingSteps = [
+  { index: '01', title: '准备清单', detail: '外部 JSON 描述脚本、字段和操作；路径不进入 Core' },
+  { index: '02', title: '生成预览', detail: '修改文件前先核对影响，写入操作必须有 Dry Run' },
+  { index: '03', title: '确认执行', detail: '输出、日志、取消与历史都在本机留痕' },
+]
 const manifestPath = ref(store.settings.privateToolsManifestPath)
 const tools = ref<PrivateToolDefinition[]>([])
 const activeToolId = ref('')
@@ -410,8 +419,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="private-tools page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeContext">
-    <PageHeader title="私人工具包" subtitle="按清单加载你自己的脚本;改文件的操作一律先预览再执行">
+  <!-- No `private-tools__*` classes. The 01 参数 / 02 预览 / 03 执行 order
+       stays — running someone's own script against their own files is the one
+       flow in this app where the steps are the safety story. -->
+  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6" @click="closeContext">
+    <PageHeader title="私人工具包" subtitle="按清单加载你自己的脚本；改文件的操作一律先预览再执行">
       <template #actions>
         <span class="row gap-1.5 h-9 px-3 rounded-sm bg-surface-2 border border-line text-[12px] text-fg-2">
           <i class="w-1.5 h-1.5 rounded-full shrink-0" :class="desktop ? 'bg-success' : 'bg-warn'" aria-hidden="true" />
@@ -420,89 +432,295 @@ onBeforeUnmount(() => {
       </template>
     </PageHeader>
 
-    <section v-if="!desktop" class="private-tools__empty panel">
-      <b><AppIcon name="terminal" :size="24" /></b><strong>私人工具包需要桌面端</strong><p>浏览器模式不会执行本地 Python、PowerShell 或其他脚本，避免网页获取不必要的系统权限。</p>
-      <div class="private-tools__onboarding"><span><i>01</i><b>外部清单</b><small>脚本路径不进入 Core</small></span><span><i>02</i><b>先看预览</b><small>写入操作必须有 Dry Run</small></span><span><i>03</i><b>本机留痕</b><small>日志、取消与历史统一管理</small></span></div>
-      <div class="private-tools__empty-actions"><button class="quiet-button" @click.stop="copyManifestTemplate"><AppIcon name="duplicate" :size="14" />复制清单模板</button><RouterLink class="quiet-button" to="/history?kind=script"><AppIcon name="clock" :size="14" />查看脚本历史</RouterLink></div>
+    <section v-if="!desktop || !tools.length" class="flex-1 min-h-0 center panel">
+      <div class="stack items-center gap-4 max-w-140 px-6 text-center">
+        <span class="center w-12 h-12 rounded-lg bg-accent-soft text-accent"><AppIcon name="terminal" :size="24" /></span>
+        <div class="stack gap-1.5">
+          <strong class="text-[15px] font-semibold text-fg">
+            {{ !desktop ? '私人工具包需要桌面端' : loading ? '正在读取清单…' : '还没有加载私人工具清单' }}
+          </strong>
+          <p class="text-[12px] leading-relaxed text-fg-3">
+            {{ !desktop ? '浏览器模式不会执行本地 Python、PowerShell 或其他脚本，避免网页获取不必要的系统权限。' : notice }}
+          </p>
+        </div>
+        <ol class="grid grid-cols-3 gap-2 w-full" aria-label="私人工具执行流程">
+          <li v-for="step in onboardingSteps" :key="step.index" class="stack gap-1 p-3 rounded-sm border border-line bg-well text-left">
+            <span class="font-mono text-[11px] font-semibold text-accent">{{ step.index }}</span>
+            <b class="text-[12px] font-medium text-fg">{{ step.title }}</b>
+            <small class="text-[11px] leading-relaxed text-fg-3">{{ step.detail }}</small>
+          </li>
+        </ol>
+        <div class="row flex-wrap justify-center gap-2">
+          <button v-if="desktop" class="btn-primary" :disabled="loading" @click="chooseManifest">选择本机 JSON 清单</button>
+          <button class="btn-default" @click.stop="copyManifestTemplate"><AppIcon name="duplicate" :size="14" />复制清单模板</button>
+          <RouterLink v-if="!desktop" class="btn-default" to="/history?kind=script"><AppIcon name="clock" :size="14" />查看脚本历史</RouterLink>
+        </div>
+        <small class="text-[11px] leading-relaxed text-fg-3">清单由你自己保管；Knitspace 不会扫描磁盘或自动运行脚本。</small>
+      </div>
     </section>
 
-    <section v-else-if="!tools.length" class="private-tools__empty panel">
-      <b><AppIcon name="terminal" :size="24" /></b><strong>{{ loading ? '正在读取清单…' : '还没有加载私人工具清单' }}</strong><p>{{ notice }}</p>
-      <div class="private-tools__onboarding"><span><i>01</i><b>准备清单</b><small>描述脚本、字段和操作</small></span><span><i>02</i><b>生成预览</b><small>修改文件前核对影响</small></span><span><i>03</i><b>确认执行</b><small>输出、日志和历史可追溯</small></span></div>
-      <div class="private-tools__empty-actions"><button class="primary-button" :disabled="loading" @click="chooseManifest">选择本机 JSON 清单</button><button class="quiet-button" @click.stop="copyManifestTemplate"><AppIcon name="duplicate" :size="14" />复制清单模板</button></div><small>清单由你自己保管；Knitspace 不会扫描磁盘或自动运行脚本。</small>
-    </section>
-
-    <section v-else class="private-tools__shell panel">
-      <aside class="private-tools__nav" aria-label="私人工具列表">
-        <header><p class="eyebrow">本地工具包</p><b>{{ tools.length }} 个工具</b><small :title="manifestPath">{{ manifestPath.split(/[\\/]/).pop() }}</small></header>
-        <div>
-          <button v-for="tool in tools" :key="tool.id" :disabled="running" :class="{ active: tool.id === activeToolId }" :aria-pressed="tool.id === activeToolId" aria-haspopup="menu" :aria-expanded="contextMenu?.target === 'tool' && contextMenu.toolId === tool.id" @click.stop="activate(tool.id)" @contextmenu.stop="openContext($event, 'tool', tool.id)" @keydown="handleContextTriggerKeydown($event, 'tool', tool.id)">
-            <span><AppIcon :name="tool.icon || 'terminal'" :size="16" /></span><b>{{ tool.title }}</b><small>{{ tool.description || '本地脚本工具' }}</small>
+    <section v-else class="flex-1 min-h-0 grid grid-cols-[minmax(220px,260px)_minmax(0,1fr)] panel overflow-hidden">
+      <aside class="stack min-h-0 border-r border-line" aria-label="私人工具列表">
+        <header class="row-between gap-2 shrink-0 px-3 h-10 border-b border-line">
+          <span class="row gap-2 min-w-0">
+            <b class="text-[11px] font-semibold text-fg-3">本地工具包</b>
+            <span class="chip h-5 px-1.5 text-[11px] tabular-nums">{{ tools.length }}</span>
+          </span>
+          <small class="min-w-0 truncate font-mono text-[11px] text-fg-3" :title="manifestPath">{{ manifestPath.split(/[\\/]/).pop() }}</small>
+        </header>
+        <div class="flex-1 min-h-0 overflow-y-auto stack gap-0.5 p-1.5">
+          <button
+            v-for="tool in tools"
+            :key="tool.id"
+            class="row gap-2 px-2 py-2 rounded-sm text-left transition-colors duration-120 disabled:opacity-45 disabled:cursor-not-allowed"
+            :class="tool.id === activeToolId ? 'bg-accent-soft' : 'hover:not-disabled:bg-surface-2'"
+            :disabled="running"
+            :aria-pressed="tool.id === activeToolId"
+            aria-haspopup="menu"
+            :aria-expanded="contextMenu?.target === 'tool' && contextMenu.toolId === tool.id"
+            @click.stop="activate(tool.id)"
+            @contextmenu.stop="openContext($event, 'tool', tool.id)"
+            @keydown="handleContextTriggerKeydown($event, 'tool', tool.id)"
+          >
+            <span class="center w-7 h-7 shrink-0 rounded-sm bg-surface-2" :class="tool.id === activeToolId ? 'text-accent' : 'text-fg-2'">
+              <AppIcon :name="tool.icon || 'terminal'" :size="15" />
+            </span>
+            <span class="stack gap-0.5 min-w-0 flex-1">
+              <b class="text-[12px] font-medium truncate" :class="tool.id === activeToolId ? 'text-accent' : 'text-fg'">{{ tool.title }}</b>
+              <small class="text-[11px] truncate text-fg-3">{{ tool.description || '本地脚本工具' }}</small>
+            </span>
           </button>
         </div>
-        <footer><button class="quiet-button" :disabled="loading || running" @click.stop="loadManifest()"><AppIcon name="rotate" :size="14" />重新读取清单</button></footer>
+        <footer class="shrink-0 p-2 border-t border-line">
+          <button class="btn-default btn-sm w-full" :disabled="loading || running" @click.stop="loadManifest()"><AppIcon name="rotate" :size="13" />重新读取清单</button>
+        </footer>
       </aside>
 
-      <main v-if="activeTool && activeOperation" class="private-tools__main">
-        <header class="private-tools__tool-header">
-          <div><p class="eyebrow">本地脚本工具</p><h3>{{ activeTool.title }}</h3><p>{{ activeTool.description }}</p></div>
-          <span :class="{ danger: operationChangesFiles }">{{ operationChangesFiles ? '先预览 · 再修改' : '只读执行' }}</span>
+      <main v-if="activeTool && activeOperation" class="stack min-h-0">
+        <header class="row-between gap-3 shrink-0 px-3 py-2 border-b border-line">
+          <span class="stack gap-0.5 min-w-0">
+            <h3 class="text-[14px] font-semibold truncate text-fg">{{ activeTool.title }}</h3>
+            <p class="text-[11px] truncate text-fg-3">{{ activeTool.description }}</p>
+          </span>
+          <span class="chip h-6 px-2 text-[11px] shrink-0" :class="operationChangesFiles ? 'bg-warn-soft text-warn' : 'bg-success-soft text-success'">
+            {{ operationChangesFiles ? '先预览 · 再修改' : '只读执行' }}
+          </span>
         </header>
 
-        <nav class="private-tools__operations" aria-label="工具操作">
-          <button v-for="operation in activeTool.operations" :key="operation.id" :disabled="running" :class="{ active: operation.id === activeOperationId }" :aria-pressed="operation.id === activeOperationId" @click="activate(activeTool.id, operation.id)"><b>{{ operation.title }}</b><small>{{ operation.description || (operation.risk === 'changesFiles' ? '需预览确认' : '不修改文件') }}</small></button>
+        <nav class="row flex-wrap gap-1.5 shrink-0 px-3 py-2 border-b border-line" aria-label="工具操作">
+          <button
+            v-for="operation in activeTool.operations"
+            :key="operation.id"
+            class="stack gap-0.5 px-2.5 py-1.5 rounded-sm border text-left transition-colors duration-120 disabled:opacity-45 disabled:cursor-not-allowed"
+            :class="operation.id === activeOperationId ? 'border-accent bg-accent-soft' : 'border-line hover:not-disabled:border-line-strong'"
+            :disabled="running"
+            :aria-pressed="operation.id === activeOperationId"
+            @click="activate(activeTool.id, operation.id)"
+          >
+            <b class="text-[12px] font-medium" :class="operation.id === activeOperationId ? 'text-accent' : 'text-fg'">{{ operation.title }}</b>
+            <small class="text-[11px] text-fg-3">{{ operation.description || (operation.risk === 'changesFiles' ? '需预览确认' : '不修改文件') }}</small>
+          </button>
         </nav>
 
-        <div class="private-tools__workspace">
-          <form ref="formElement" class="private-tools__form" @submit.prevent="run(operationChangesFiles ? 'preview' : 'apply')">
-            <header><p class="eyebrow">01 · 参数</p><span>{{ operationChangesFiles ? '预览后才能执行' : '不会修改原文件' }}</span></header>
-            <div class="private-tools__fields">
-              <label v-for="field in currentFields" :key="field.key" :class="{ wide: field.kind === 'text' || field.kind === 'file' || field.kind === 'directory', invalid: showFieldError(field) }">
-                <span>{{ field.label }}<i v-if="field.required">必填</i></span>
-                <div v-if="field.kind === 'file' || field.kind === 'directory'" class="private-tools__path-field"><input v-model="values[field.key]" :disabled="running" :aria-invalid="showFieldError(field)" maxlength="32768" :placeholder="field.placeholder || (field.kind === 'file' ? '选择文件…' : '选择目录…')" spellcheck="false" @blur="touchField(field)" /><button type="button" class="quiet-button" :disabled="running" @click="chooseField(field)">选择</button></div>
-                <select v-else-if="field.kind === 'select'" v-model="values[field.key]" :disabled="running" :aria-invalid="showFieldError(field)" @blur="touchField(field)" @change="touchField(field)"><option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option></select>
-                <input v-else v-model="values[field.key]" :disabled="running" :aria-invalid="showFieldError(field)" :type="field.kind === 'integer' ? 'number' : 'text'" :min="field.min" :max="field.max" :step="field.kind === 'integer' ? 1 : undefined" maxlength="32768" :placeholder="field.placeholder" :inputmode="field.kind === 'integer' ? 'numeric' : undefined" @blur="touchField(field)" />
-                <small v-if="showFieldError(field)" class="private-tools__field-error" role="alert">{{ fieldError(field) }}</small>
-                <small v-else-if="field.help">{{ field.help }}</small>
+        <div class="flex-1 min-h-0 grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <form ref="formElement" class="stack min-h-0 border-r border-line" @submit.prevent="run(operationChangesFiles ? 'preview' : 'apply')">
+            <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
+              <span class="row gap-2">
+                <span class="center w-5.5 h-5.5 rounded-sm bg-accent-soft font-mono text-[11px] font-semibold text-accent">01</span>
+                <b class="text-[11px] font-semibold text-fg-3">参数</b>
+              </span>
+              <small class="text-[11px] text-fg-3">{{ operationChangesFiles ? '预览后才能执行' : '不会修改原文件' }}</small>
+            </header>
+            <div class="flex-1 min-h-0 overflow-y-auto grid grid-cols-2 gap-2.5 p-3 content-start">
+              <label
+                v-for="field in currentFields"
+                :key="field.key"
+                class="stack gap-1.5"
+                :class="field.kind === 'text' || field.kind === 'file' || field.kind === 'directory' ? 'col-span-2' : ''"
+              >
+                <span class="row gap-1.5 text-[12px] text-fg-3">
+                  {{ field.label }}
+                  <i v-if="field.required" class="text-[11px] not-italic text-warn">必填</i>
+                </span>
+                <span v-if="field.kind === 'file' || field.kind === 'directory'" class="row gap-1.5">
+                  <input
+                    v-model="values[field.key]"
+                    class="field h-8 min-w-0 flex-1 text-[12px]"
+                    :class="showFieldError(field) ? 'border-danger!' : ''"
+                    :disabled="running"
+                    :aria-invalid="showFieldError(field)"
+                    maxlength="32768"
+                    :placeholder="field.placeholder || (field.kind === 'file' ? '选择文件…' : '选择目录…')"
+                    spellcheck="false"
+                    @blur="touchField(field)"
+                  />
+                  <button type="button" class="btn-default btn-sm shrink-0" :disabled="running" @click="chooseField(field)">选择</button>
+                </span>
+                <select
+                  v-else-if="field.kind === 'select'"
+                  v-model="values[field.key]"
+                  class="field h-8 text-[12px]"
+                  :class="showFieldError(field) ? 'border-danger!' : ''"
+                  :disabled="running"
+                  :aria-invalid="showFieldError(field)"
+                  @blur="touchField(field)"
+                  @change="touchField(field)"
+                >
+                  <option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+                <input
+                  v-else
+                  v-model="values[field.key]"
+                  class="field h-8 text-[12px]"
+                  :class="showFieldError(field) ? 'border-danger!' : ''"
+                  :disabled="running"
+                  :aria-invalid="showFieldError(field)"
+                  :type="field.kind === 'integer' ? 'number' : 'text'"
+                  :min="field.min"
+                  :max="field.max"
+                  :step="field.kind === 'integer' ? 1 : undefined"
+                  maxlength="32768"
+                  :placeholder="field.placeholder"
+                  :inputmode="field.kind === 'integer' ? 'numeric' : undefined"
+                  @blur="touchField(field)"
+                />
+                <small v-if="showFieldError(field)" class="text-[11px] leading-relaxed text-danger" role="alert">{{ fieldError(field) }}</small>
+                <small v-else-if="field.help" class="text-[11px] leading-relaxed text-fg-3">{{ field.help }}</small>
               </label>
             </div>
           </form>
 
-          <aside class="private-tools__result" tabindex="0" role="region" aria-label="本机工具结果；按菜单键打开结果操作" aria-haspopup="menu" :aria-expanded="contextMenu?.target === 'result'" @contextmenu.stop="openContext($event, 'result')" @keydown="handleContextTriggerKeydown($event, 'result')">
-            <header><div><p class="eyebrow">02 · {{ resultFailed ? '执行错误' : finalResult ? '执行结果' : '安全预览' }}</p><h4>{{ resultFailed ? '脚本未能完成' : finalResult ? '本机结果' : previewResult ? '预览已就绪' : '等待预览' }}</h4><div class="private-tools__result-tabs" role="tablist" aria-label="结果内容"><button role="tab" :aria-selected="resultView === 'payload'" :class="{ active: resultView === 'payload' }" @click.stop="resultView = 'payload'">JSON 结果</button><button role="tab" :aria-selected="resultView === 'log'" :class="{ active: resultView === 'log' }" :disabled="!resultLog" @click.stop="resultView = 'log'">运行日志</button></div></div><span v-if="activeResult">{{ (activeResult.elapsedMs / 1000).toFixed(1) }}s</span></header>
-            <div v-if="resultView === 'payload' && payloadText" class="private-tools__payload"><pre>{{ displayedPayload.text }}</pre><small v-if="displayedPayload.truncated">界面少渲染 {{ displayedPayload.hiddenCharacters.toLocaleString('zh-CN') }} 个字符；右键复制仍保留完整 JSON。</small></div>
-            <div v-else-if="resultView === 'log' && resultLog" class="private-tools__payload private-tools__payload--log"><pre>{{ displayedLog.text }}</pre><small v-if="activeResult?.logTruncated">进程日志已在 512 KB 安全边界截断；请让脚本输出摘要。</small><small v-else-if="displayedLog.truncated">界面少渲染 {{ displayedLog.hiddenCharacters.toLocaleString('zh-CN') }} 个字符；右键复制仍保留完整日志。</small></div>
-            <div v-else class="private-tools__result-empty"><AppIcon name="file-text" :size="20" /><b>{{ resultFailed ? '脚本未能完成' : resultView === 'log' ? '这次运行没有返回日志' : operationChangesFiles ? '先生成安全预览' : '执行后显示 JSON 结果' }}</b><p>{{ notice }}</p></div>
-            <footer v-if="outputPaths.length"><span><b>输出位置</b><small>{{ outputPaths.length }} 项已由脚本返回</small></span><button class="quiet-button" @click.stop="revealOutput(outputPaths[0])">打开位置</button></footer>
+          <aside
+            class="stack min-h-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)] focus-visible:ring-inset"
+            tabindex="0"
+            role="region"
+            aria-label="本机工具结果；按菜单键打开结果操作"
+            aria-haspopup="menu"
+            :aria-expanded="contextMenu?.target === 'result'"
+            @contextmenu.stop="openContext($event, 'result')"
+            @keydown="handleContextTriggerKeydown($event, 'result')"
+          >
+            <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
+              <span class="row gap-2 min-w-0">
+                <span class="center w-5.5 h-5.5 shrink-0 rounded-sm font-mono text-[11px] font-semibold" :class="resultFailed ? 'bg-danger-soft text-danger' : 'bg-accent-soft text-accent'">02</span>
+                <b class="text-[11px] font-semibold truncate" :class="resultFailed ? 'text-danger' : 'text-fg-3'">
+                  {{ resultFailed ? '脚本未能完成' : finalResult ? '本机结果' : previewResult ? '预览已就绪' : '等待预览' }}
+                </b>
+              </span>
+              <span class="row gap-2 shrink-0">
+                <span class="row gap-0.5 p-0.5 rounded-sm bg-well border border-line" role="tablist" aria-label="结果内容">
+                  <button
+                    class="center h-6 px-2 rounded-[4px] text-[11px] transition-colors duration-120"
+                    :class="resultView === 'payload' ? 'bg-surface text-fg font-medium shadow-sm' : 'text-fg-3 hover:text-fg'"
+                    role="tab"
+                    :aria-selected="resultView === 'payload'"
+                    @click.stop="resultView = 'payload'"
+                  >
+                    JSON
+                  </button>
+                  <button
+                    class="center h-6 px-2 rounded-[4px] text-[11px] transition-colors duration-120 disabled:opacity-40 disabled:cursor-not-allowed"
+                    :class="resultView === 'log' ? 'bg-surface text-fg font-medium shadow-sm' : 'text-fg-3 hover:not-disabled:text-fg'"
+                    role="tab"
+                    :aria-selected="resultView === 'log'"
+                    :disabled="!resultLog"
+                    @click.stop="resultView = 'log'"
+                  >
+                    日志
+                  </button>
+                </span>
+                <small v-if="activeResult" class="font-mono text-[11px] tabular-nums text-fg-3">{{ (activeResult.elapsedMs / 1000).toFixed(1) }}s</small>
+              </span>
+            </header>
+
+            <div v-if="resultView === 'payload' && payloadText" class="flex-1 min-h-0 overflow-auto stack gap-1.5 p-3 bg-well">
+              <pre class="font-mono text-[11px] leading-relaxed text-fg-2 whitespace-pre-wrap break-all">{{ displayedPayload.text }}</pre>
+              <small v-if="displayedPayload.truncated" class="text-[11px] leading-relaxed text-fg-3">
+                界面少渲染 {{ displayedPayload.hiddenCharacters.toLocaleString('zh-CN') }} 个字符；右键复制仍保留完整 JSON。
+              </small>
+            </div>
+            <div v-else-if="resultView === 'log' && resultLog" class="flex-1 min-h-0 overflow-auto stack gap-1.5 p-3 bg-well">
+              <pre class="font-mono text-[11px] leading-relaxed text-fg-2 whitespace-pre-wrap break-all">{{ displayedLog.text }}</pre>
+              <small v-if="activeResult?.logTruncated" class="text-[11px] leading-relaxed text-warn">进程日志已在 512 KB 安全边界截断；请让脚本输出摘要。</small>
+              <small v-else-if="displayedLog.truncated" class="text-[11px] leading-relaxed text-fg-3">
+                界面少渲染 {{ displayedLog.hiddenCharacters.toLocaleString('zh-CN') }} 个字符；右键复制仍保留完整日志。
+              </small>
+            </div>
+            <div v-else class="flex-1 min-h-0 stack items-center justify-center gap-2 p-6 text-center">
+              <AppIcon name="file-text" :size="20" class="text-fg-3" />
+              <b class="text-[12px] font-medium text-fg">
+                {{ resultFailed ? '脚本未能完成' : resultView === 'log' ? '这次运行没有返回日志' : operationChangesFiles ? '先生成安全预览' : '执行后显示 JSON 结果' }}
+              </b>
+              <p class="max-w-80 text-[11px] leading-relaxed text-fg-3">{{ notice }}</p>
+            </div>
+
+            <footer v-if="outputPaths.length" class="row-between gap-2 shrink-0 px-3 h-10 border-t border-line">
+              <span class="row gap-2 min-w-0 text-[11px]">
+                <b class="shrink-0 font-medium text-fg">输出位置</b>
+                <small class="min-w-0 truncate text-fg-3">{{ outputPaths.length }} 项已由脚本返回</small>
+              </span>
+              <button class="btn-tool shrink-0" @click.stop="revealOutput(outputPaths[0])">打开位置</button>
+            </footer>
           </aside>
         </div>
 
-        <footer class="private-tools__execution">
-          <div><p class="eyebrow">03 · 执行</p><strong aria-live="polite">{{ notice }}</strong><small v-if="invalidFields.length">还需修正 {{ invalidFields.map((field) => field.label).join('、') }}。</small><small v-else-if="operationChangesFiles && previewFingerprint && previewFingerprint !== currentFingerprint">参数已改变，需要重新预览。</small><small v-else-if="operationChangesFiles">预览与当前参数一致后，才会启用确认执行。</small><div v-if="running" class="private-tools__progress" role="progressbar" :aria-label="operationChangesFiles ? '私人工具正在本机执行' : '本机工具正在运行'" aria-valuetext="运行中"><i></i></div></div>
-          <div>
-            <button v-if="running" class="quiet-button danger" :disabled="cancelling" @click="cancelRun">{{ cancelling ? '正在停止…' : '停止任务' }}</button>
-            <button v-else-if="operationChangesFiles" class="quiet-button" @click="run('preview')">{{ previewResult ? '重新预览' : '生成预览' }}</button>
-            <button class="primary-button" :disabled="!canExecute" @click="run('apply')">{{ running ? '执行中…' : operationChangesFiles ? '确认执行' : '执行本机工具' }}</button>
-          </div>
+        <footer class="row-between gap-3 shrink-0 px-3 py-2.5 border-t border-line">
+          <span class="stack gap-0.5 min-w-0">
+            <span class="row gap-2">
+              <span class="center w-5.5 h-5.5 shrink-0 rounded-sm bg-accent-soft font-mono text-[11px] font-semibold text-accent">03</span>
+              <strong class="min-w-0 truncate text-[12px] font-medium text-fg" aria-live="polite">{{ notice }}</strong>
+            </span>
+            <small v-if="invalidFields.length" class="text-[11px] text-warn">还需修正 {{ invalidFields.map((field) => field.label).join('、') }}。</small>
+            <small v-else-if="operationChangesFiles && previewFingerprint && previewFingerprint !== currentFingerprint" class="text-[11px] text-warn">参数已改变，需要重新预览。</small>
+            <small v-else-if="operationChangesFiles" class="text-[11px] text-fg-3">预览与当前参数一致后，才会启用确认执行。</small>
+            <div
+              v-if="running"
+              class="h-1 mt-1 rounded-full bg-surface-2 overflow-hidden"
+              role="progressbar"
+              :aria-label="operationChangesFiles ? '私人工具正在本机执行' : '本机工具正在运行'"
+              aria-valuetext="运行中"
+            >
+              <i class="block h-full w-1/3 rounded-full bg-accent-solid animate-pulse" aria-hidden="true" />
+            </div>
+          </span>
+          <span class="row gap-2 shrink-0">
+            <button v-if="running" class="btn-danger btn-sm" :disabled="cancelling" @click="cancelRun">{{ cancelling ? '正在停止…' : '停止任务' }}</button>
+            <button v-else-if="operationChangesFiles" class="btn-default btn-sm" @click="run('preview')">{{ previewResult ? '重新预览' : '生成预览' }}</button>
+            <button class="btn-primary btn-sm" :disabled="!canExecute" @click="run('apply')">
+              {{ running ? '执行中…' : operationChangesFiles ? '确认执行' : '执行本机工具' }}
+            </button>
+          </span>
         </footer>
       </main>
     </section>
 
-    <div v-if="contextMenu" ref="contextMenuElement" class="private-tools__context" role="menu" :aria-label="contextMenu.target === 'tool' ? '工具操作' : '结果操作'" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop @contextmenu.prevent @keydown.stop="handleContextMenuKeydown">
-      <p>{{ contextMenu.target === 'tool' ? '工具操作' : '结果操作' }}</p>
-      <template v-if="contextMenu.target === 'tool'">
-        <button role="menuitem" @click="copyText(contextMenu.toolId ?? activeToolId, '工具标识已复制')">复制工具标识</button>
-        <button role="menuitem" @click="copyCurrentToolLink">复制当前工具深链</button>
-        <button role="menuitem" @click="openContextTool">打开此工具</button>
-        <button role="menuitem" @click="openToolHistory">查看此工具历史</button>
-        <button role="menuitem" :disabled="running" @click="loadManifest(); closeContext()">重新读取清单</button>
-      </template>
-      <template v-else>
-        <button role="menuitem" :disabled="!payloadText" @click="copyText(payloadText, 'JSON 结果已复制')">复制 JSON 结果</button>
-        <button role="menuitem" :disabled="!resultLog" @click="copyText(resultLog, '运行日志已复制')">复制运行日志</button>
-        <button role="menuitem" :disabled="!outputPaths.length" @click="revealOutput(outputPaths[0]); closeContext()">打开首个输出位置</button>
-        <button role="menuitem" @click="closeContext">关闭菜单</button>
-      </template>
-    </div>
+    <Teleport to="body">
+      <div
+        v-if="contextMenu"
+        ref="contextMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        :aria-label="contextMenu.target === 'tool' ? '工具操作' : '结果操作'"
+        :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown"
+      >
+        <p class="menu-title">{{ contextMenu.target === 'tool' ? '工具操作' : '结果操作' }}</p>
+        <template v-if="contextMenu.target === 'tool'">
+          <button class="menu-item" role="menuitem" @click="copyText(contextMenu.toolId ?? activeToolId, '工具标识已复制')">复制工具标识</button>
+          <button class="menu-item" role="menuitem" @click="copyCurrentToolLink">复制当前工具深链</button>
+          <button class="menu-item" role="menuitem" @click="openContextTool">打开此工具</button>
+          <button class="menu-item" role="menuitem" @click="openToolHistory">查看此工具历史</button>
+          <i class="menu-sep" aria-hidden="true" />
+          <button class="menu-item" role="menuitem" :disabled="running" @click="loadManifest(); closeContext()">重新读取清单</button>
+        </template>
+        <template v-else>
+          <button class="menu-item" role="menuitem" :disabled="!payloadText" @click="copyText(payloadText, 'JSON 结果已复制')">复制 JSON 结果</button>
+          <button class="menu-item" role="menuitem" :disabled="!resultLog" @click="copyText(resultLog, '运行日志已复制')">复制运行日志</button>
+          <button class="menu-item" role="menuitem" :disabled="!outputPaths.length" @click="revealOutput(outputPaths[0]); closeContext()">打开首个输出位置</button>
+        </template>
+      </div>
+    </Teleport>
   </div>
 </template>

@@ -300,7 +300,12 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 </script>
 
 <template>
-  <div ref="host" class="annotation-canvas" :data-tool="tool" tabindex="0" role="application" aria-label="图片标注画布；选择工具后在图片上绘制，选中后可拖动、缩放和旋转" @pointerdown="focusCanvas" @keydown="handleKeydown">
+  <!-- `annotation-canvas` is a DOM hook, not a style: VisualStudioView finds
+       this element with `document.querySelector('.annotation-canvas')` to
+       anchor its context menus. The Konva stage is generated markup, so the
+       two rules it needs — fill the host, and take the tool's cursor — are
+       written here as arbitrary variants rather than left in a stylesheet. -->
+  <div ref="host" class="annotation-canvas [&_.konvajs-content]:w-full! [&_.konvajs-content]:h-full! data-[tool=select]:cursor-default data-[tool=box]:cursor-crosshair data-[tool=arrow]:cursor-crosshair data-[tool=text]:cursor-crosshair focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]" :data-tool="tool" tabindex="0" role="application" aria-label="图片标注画布；选择工具后在图片上绘制，选中后可拖动、缩放和旋转" @pointerdown="focusCanvas" @keydown="handleKeydown">
     <VStage ref="stageRef" :config="stageConfig" @mousedown="beginDrawing" @mousemove="moveDrawing" @mouseup="finishDrawing" @mouseleave="finishDrawing" @contextmenu="openCanvasContext">
       <VLayer>
         <template v-for="annotation in annotations" :key="annotation.id">
@@ -313,6 +318,9 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
         <VTransformer ref="transformerRef" :config="transformerConfig" />
       </VLayer>
     </VStage>
-    <p v-if="tool !== 'select'" class="annotation-canvas__hint">{{ tool === 'text' ? '单击放置文字' : '按住并拖动绘制' }}</p>
+    <!-- The pill lies on the user's own picture, which can be anything from a
+         white screenshot to a night photo, so it is fixed white-on-scrim in
+         both themes on purpose — the same call the crop overlay makes. -->
+    <p v-if="tool !== 'select'" class="absolute left-3 bottom-3 z-4 px-2 py-1 rounded-full bg-[rgb(0_0_0_/_0.68)] text-[12px] font-medium leading-tight text-white select-none pointer-events-none">{{ tool === 'text' ? '单击放置文字' : '按住并拖动绘制' }}</p>
   </div>
 </template>
