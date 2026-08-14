@@ -187,8 +187,15 @@ onBeforeUnmount(() => { window.clearTimeout(parseTimer); worker?.terminate(); wi
           <button class="btn-ghost btn-icon w-8 h-8 shrink-0 text-[18px]" aria-label="关闭批量导入" :disabled="importing" @click="requestClose">×</button>
         </header>
 
-        <div class="grid gap-3 flex-1 min-h-0 p-3 grid-cols-1 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
-          <section class="stack min-w-0 min-h-0 overflow-hidden rounded-lg border border-line bg-surface transition-colors focus-within:border-line-strong">
+        <!-- Below `lg` the panes stack, and a 760px-tall window cannot hold two
+             of them plus the settings row: sized by `flex-1` they split what is
+             left and both clip their own content — the paste area lost its last
+             line, the preview lost its privacy note. So the whole body scrolls
+             as one and the panes keep a floor; only at `lg`, where the panes sit
+             side by side and fit, do they flex to fill instead. -->
+        <div class="stack flex-1 min-h-0 overflow-y-auto lg:overflow-visible">
+        <div class="grid gap-3 shrink-0 p-3 grid-cols-1 lg:shrink lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+          <section class="stack min-w-0 min-h-52 lg:min-h-0 overflow-hidden rounded-lg border border-line bg-surface transition-colors focus-within:border-line-strong">
             <header class="row-between gap-3 shrink-0 px-3 py-2 border-b border-line">
               <div class="stack gap-0.5 min-w-0">
                 <b class="text-[12px] font-medium text-fg">原始词表</b>
@@ -204,7 +211,7 @@ onBeforeUnmount(() => { window.clearTimeout(parseTimer); worker?.terminate(); wi
             <input ref="fileInput" class="hidden" type="file" tabindex="-1" aria-hidden="true" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" @change="readFile" />
           </section>
 
-          <section class="stack min-w-0 min-h-0 overflow-hidden rounded-lg border border-line bg-surface" :aria-busy="parsing">
+          <section class="stack min-w-0 min-h-52 lg:min-h-0 overflow-hidden rounded-lg border border-line bg-surface" :aria-busy="parsing">
             <header class="row-between gap-3 shrink-0 px-3 py-2 border-b border-line">
               <div class="stack gap-0.5 min-w-0">
                 <b class="text-[12px] font-medium text-fg">结构化预览</b>
@@ -287,6 +294,7 @@ onBeforeUnmount(() => { window.clearTimeout(parseTimer); worker?.terminate(); wi
           </div>
         </section>
 
+        </div>
         <footer class="row-between gap-4 shrink-0 px-4 h-14 border-t border-line bg-surface-2">
           <p class="row gap-2 min-w-0">
             <AppIcon name="shield" :size="14" class="shrink-0 text-success" />

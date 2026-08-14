@@ -158,9 +158,11 @@ function collect() {
 
   const findings = []
   const seen = new Set()
+  let checked = 0
 
   for (const element of document.querySelectorAll('body *')) {
     if (isContent(element)) continue
+    checked += 1
     const rect = element.getBoundingClientRect()
     if (rect.width < 12 || rect.height < 8) continue
     const style = getComputedStyle(element)
@@ -224,7 +226,7 @@ function collect() {
       text: (element.textContent || '').trim().slice(0, 28),
     })
   }
-  return findings
+  return { findings, checked }
 }
 
 /* Every custom property the stylesheets declare, checked for a real value. */
@@ -254,6 +256,11 @@ const page = await context.newPage()
 
 const report = []
 let total = 0
+// `checked` is not a statistic, it is the audit auditing itself. A regex in
+// isContent() once matched the shell root, so every element was skipped and
+// this script reported "0 problems" for a whole night while inspecting
+// nothing. A zero here now fails loudly instead of reading like a pass.
+let checked = 0
 
 await page.goto(`${BASE}/`, { waitUntil: 'networkidle' })
 await page.waitForTimeout(900)
@@ -263,7 +270,9 @@ if (dead.length) console.log(`\n!! 解析不出值的 CSS 变量 (${dead.length}
 for (const route of ROUTES) {
   await page.goto(`${BASE}${route}`, { waitUntil: 'networkidle' })
   await page.waitForTimeout(700)
-  const findings = await page.evaluate(collect)
+  const result = await page.evaluate(collect)
+  const findings = result.findings
+  checked += result.checked
   total += findings.length
   if (!findings.length) continue
   report.push({ route, findings })
@@ -275,8 +284,12 @@ for (const route of ROUTES) {
   if (findings.length > 8) console.log(`   … 另外 ${findings.length - 8} 条`)
 }
 
-console.log(`\n${theme}: ${total} 处问题，分布在 ${report.length} 个路由`)
+console.log(`\n${theme}: ${total} 处问题，分布在 ${report.length} 个路由（检查了 ${checked} 个元素）`)
+if (!checked) {
+  console.error('审计一个元素都没检查到 —— 跳过规则把整个应用排除了，这个 0 不算通过。')
+  process.exitCode = 1
+}
 const out = join(process.env.TEMP || '.', `audit-${theme}.json`)
-writeFileSync(out, JSON.stringify({ theme, dead, report }, null, 2))
+writeFileSync(out, JSON.stringify({ theme, checked, dead, report }, null, 2))
 console.log(`明细 → ${out}`)
 await browser.close()
