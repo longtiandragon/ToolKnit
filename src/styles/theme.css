@@ -133,9 +133,15 @@
      status chip often sits inside a tinted card (a warn pill inside a warn
      notice). Measured worst grounds: rgb(232 229 223), rgb(238 227 229),
      rgb(224 236 233). On plain white they now measure ~5.6:1.
-     Dark mode was never affected (7.5 / 7.0 / 6.6). */
-  --success: #0f774f;
-  --success-soft: rgb(15 119 79 / 0.1);
+     Dark mode was never affected (7.5 / 7.0 / 6.6).
+
+     `--success` was darkened a second time, from #0f774f: the desktop shell
+     running against a real vault puts a 「已就绪」 pill on rgb(219 232 230) in
+     /lab — a third tint on top of the two above, and darker than anything the
+     browser run could produce because that card only appears with real data.
+     4.41:1 there; 4.80:1 now, 6.0:1 on white. */
+  --success: #0e7149;
+  --success-soft: rgb(14 113 73 / 0.1);
   --warn: #8a5708;
   --warn-soft: rgb(138 87 8 / 0.1);
   --danger: #ba352d;

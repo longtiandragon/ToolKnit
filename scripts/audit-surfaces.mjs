@@ -248,11 +248,25 @@ function deadTokens() {
   return [...names].filter((name) => root.getPropertyValue(name).trim() === '').sort()
 }
 
-const theme = process.argv[2] === 'light' ? 'light' : 'dark'
-const browser = await chromium.launch({ executablePath: CHROME, headless: true })
-const context = await browser.newContext({ viewport: { width: 1600, height: 950 } })
-await context.addInitScript((value) => window.localStorage.setItem('knitspace:theme', value), theme)
-const page = await context.newPage()
+const theme = process.argv.includes('light') ? 'light' : 'dark'
+const cdp = process.argv.find((arg) => arg.startsWith('--cdp='))?.slice(6)
+
+/* `--cdp` attaches to a WebView2 that is already running — the desktop shell,
+   launched with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port.
+   Three routes only exist there (FFmpeg media, Windows OCR, the private-tool
+   runner) and no browser run has ever seen them, nor seen any route with a
+   real vault behind it. */
+const browser = cdp
+  ? await chromium.connectOverCDP(cdp)
+  : await chromium.launch({ executablePath: CHROME, headless: true })
+const context = cdp ? browser.contexts()[0] : await browser.newContext({ viewport: { width: 1600, height: 950 } })
+if (!cdp) await context.addInitScript((value) => window.localStorage.setItem('knitspace:theme', value), theme)
+const page = cdp ? context.pages()[0] : await context.newPage()
+if (cdp) {
+  await page.evaluate((value) => window.localStorage.setItem('knitspace:theme', value), theme)
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForTimeout(1200)
+}
 
 const report = []
 let total = 0
@@ -289,7 +303,7 @@ if (!checked) {
   console.error('审计一个元素都没检查到 —— 跳过规则把整个应用排除了，这个 0 不算通过。')
   process.exitCode = 1
 }
-const out = join(process.env.TEMP || '.', `audit-${theme}.json`)
+const out = join(process.env.TEMP || '.', `audit-${theme}${cdp ? '-desktop' : ''}.json`)
 writeFileSync(out, JSON.stringify({ theme, checked, dead, report }, null, 2))
 console.log(`明细 → ${out}`)
 await browser.close()

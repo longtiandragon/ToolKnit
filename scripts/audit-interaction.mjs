@@ -109,7 +109,12 @@ function collect() {
        regions count — a container whose children carry the content is not
        itself empty. */
     if (rect.width > 260 && rect.height > 180 && element.matches('main, section, article, aside, div')) {
-      const speaks = (element.textContent || '').trim().length > 0 ||
+      // A surface that says it is working is not an empty surface. A 478k
+      // character note takes a beat to lay out, and catching it mid-render is
+      // the audit's problem, not the product's.
+      const marker = '[aria-busy="true"], [class*="--pending"], [class*="loading"]'
+      const busy = element.closest(marker) || element.querySelector(marker)
+      const speaks = Boolean(busy) || (element.textContent || '').trim().length > 0 ||
         element.querySelector('img, svg, canvas, video, input, textarea, select, button')
       const painted = style.backgroundColor !== 'rgba(0, 0, 0, 0)' ||
         Number.parseFloat(style.borderTopWidth) > 0 || style.backgroundImage !== 'none'
@@ -158,10 +163,26 @@ function collect() {
 
 const theme = process.argv.includes('light') ? 'light' : 'dark'
 const width = Number(process.argv.find((arg) => arg.startsWith('--width='))?.slice(8)) || 1600
-const browser = await chromium.launch({ executablePath: CHROME, headless: true })
-const context = await browser.newContext({ viewport: { width, height: 950 } })
-await context.addInitScript((value) => window.localStorage.setItem('knitspace:theme', value), theme)
-const page = await context.newPage()
+const cdp = process.argv.find((arg) => arg.startsWith('--cdp='))?.slice(6)
+
+/* `--cdp` attaches to a WebView2 that is already running — the desktop shell,
+   started with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port.
+   It is the only way to audit the routes that exist solely inside Tauri:
+   FFmpeg media, Windows OCR, the private-tool runner. The window is whatever
+   size the user's window is, so `--width` does not apply there. */
+const browser = cdp
+  ? await chromium.connectOverCDP(cdp)
+  : await chromium.launch({ executablePath: CHROME, headless: true })
+const context = cdp
+  ? browser.contexts()[0]
+  : await browser.newContext({ viewport: { width, height: 950 } })
+if (!cdp) await context.addInitScript((value) => window.localStorage.setItem('knitspace:theme', value), theme)
+const page = cdp ? context.pages()[0] : await context.newPage()
+if (cdp) {
+  await page.evaluate((value) => window.localStorage.setItem('knitspace:theme', value), theme)
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForTimeout(1200)
+}
 
 const report = {}
 let total = 0
@@ -185,10 +206,12 @@ for (const route of ROUTES) {
   }
 }
 
+// Over CDP this closes the connection, not the user's window.
 await browser.close()
 
-const file = join(process.env.TEMP || '.', `audit-interaction-${theme}-${width}.json`)
+const label = cdp ? 'desktop' : `${width}px`
+const file = join(process.env.TEMP || '.', `audit-interaction-${theme}-${cdp ? 'desktop' : width}.json`)
 writeFileSync(file, JSON.stringify(report, null, 2))
-console.log(`\n${theme} @ ${width}px: ${total} 处,分布在 ${Object.keys(report).length} 个路由(检查了 ${elements} 个元素)`)
+console.log(`\n${theme} @ ${label}: ${total} 处,分布在 ${Object.keys(report).length} 个路由(检查了 ${elements} 个元素)`)
 console.log(`明细 → ${file}`)
 if (!elements) { console.error('检查了 0 个元素——页面根本没渲染'); process.exitCode = 1 }

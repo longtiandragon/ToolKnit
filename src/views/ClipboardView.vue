@@ -469,6 +469,8 @@ const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN', { 
               class="center w-7 h-7 ml-auto shrink-0 rounded-sm transition-colors"
               :class="item.pinned ? 'text-accent' : 'text-fg-3 hover:bg-surface-2 hover:text-fg'"
               :title="item.pinned ? '移出常用片段' : '固定为常用片段'"
+              :aria-label="item.pinned ? '移出常用片段' : '固定为常用片段'"
+              :aria-pressed="item.pinned"
               @click.stop="store.toggleClipboardPin(item.id)"
             >
               <AppIcon name="clipboard" :size="14" />

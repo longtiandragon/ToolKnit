@@ -737,7 +737,7 @@ const formatBytes = (value: number) => value < 1024
                 <h4 class="text-[13px] font-medium text-fg truncate">{{ job.label }}</h4>
                 <p class="text-[11px] text-fg-3 truncate">{{ job.outputNames?.join('、') || job.detail || job.inputNames?.join('、') }}</p>
               </span>
-              <time class="text-[11px] text-fg-3 shrink-0">{{ formatTime(job.createdAt) }}</time>
+              <time class="text-[11px] tabular-nums text-fg-3 shrink-0">{{ formatTime(job.createdAt) }}</time>
             </li>
           </ul>
           <div v-else class="p-3">
@@ -791,7 +791,7 @@ const formatBytes = (value: number) => value < 1024
                 <span class="center w-8 h-8 rounded-sm bg-surface-2 text-fg-2 shrink-0"><AppIcon :name="item.tool!.icon" :size="16" /></span>
                 <span class="stack gap-0.5 min-w-0 flex-1">
                   <strong class="text-[13px] font-medium text-fg truncate">{{ item.tool!.title }}</strong>
-                  <small class="text-[11px] text-fg-3">{{ formatTime(item.usage.usedAt) }}</small>
+                  <small class="text-[11px] tabular-nums text-fg-3">{{ formatTime(item.usage.usedAt) }}</small>
                 </span>
               </RouterLink>
             </li>

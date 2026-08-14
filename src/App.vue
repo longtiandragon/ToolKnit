@@ -410,7 +410,7 @@ onBeforeUnmount(()=>{store.persist();window.removeEventListener('keydown',handle
   <main class="app-shell" :class="[appearanceClasses(store.settings), { 'has-desktop-titlebar': desktop, 'document-focus-mode': ui.documentFocusMode }]" :style="appearanceVariables(store.settings)" @click="closeShellMenus">
     <header
       v-if="desktop"
-      class="row-between gap-3 shrink-0 h-[var(--titlebar-h)] px-2 border-b border-line bg-surface-2 select-none"
+      class="fixed left-0 right-0 top-0 z-30 row-between gap-3 shrink-0 h-[var(--titlebar-h)] px-2 border-b border-line bg-surface-2 select-none"
       data-tauri-drag-region
       tabindex="0"
       aria-label="Knitspace 窗口标题栏；右键打开窗口菜单"
