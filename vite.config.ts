@@ -26,6 +26,23 @@ export default defineConfig(({ mode }) => {
   },
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   build: {
+    // Rollup warns at 500 kB. Two chunks are above it and neither can be made
+    // smaller from here, because both are Mermaid's own code: `mermaid.core`,
+    // and the Langium parser that eleven of its diagram types share. That
+    // second one is reported under the name `cynefin-*` — Rollup names a
+    // shared chunk after whichever module reached it first, and it is not a
+    // 670 kB cynefin diagram. (Naming it properly needs the function form of
+    // `manualChunks`; the object form below cannot address a transitive
+    // dependency, and rewriting the whole map to reach one label is a worse
+    // trade than this comment.)
+    //
+    // Both are dynamic imports reached only when a document actually contains
+    // a diagram, so neither is on the startup path — that path is what
+    // `scripts/check-startup-budget.mjs` measures, and it is an order of
+    // magnitude smaller. The limit is raised to just above the larger of the
+    // two rather than switched off, so a *new* oversized chunk still gets
+    // reported.
+    chunkSizeWarningLimit: 700,
     rollupOptions: {
       output: {
         manualChunks: {

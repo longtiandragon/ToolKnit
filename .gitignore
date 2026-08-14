@@ -25,3 +25,6 @@ models/
 coverage/
 benchmarks/generated/
 *.log
+
+# Written by `vite.analyze.config.ts`, not source.
+chunk-analysis.json
