@@ -6,7 +6,7 @@ export type ReviewRating = 'Again' | 'Hard' | 'Good' | 'Easy'
 export type QuestionReviewFacet = 'answer' | 'error'
 /** A word sense can be recalled from more than one direction. Every
  * direction owns an independent FSRS state instead of sharing mastery. */
-export type VocabularyReviewFacet = 'meaning' | 'spelling' | 'example'
+export type VocabularyReviewFacet = 'meaning' | 'spelling' | 'example' | 'comparison'
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 export type JobKind = 'pdf' | 'image' | 'text' | 'code' | 'ocr' | 'ai' | 'archive' | 'script' | 'media'
 
@@ -82,7 +82,7 @@ export interface VocabularySense {
    * Vaults and browser backups. */
   review?: ReviewState
   /** Extra recall directions. `meaning` stays in `review` for backwards
-   * compatibility, while spelling and cloze cards schedule independently. */
+   * compatibility, while spelling, cloze and comparison cards schedule independently. */
   reviewFacets?: Partial<Record<Exclude<VocabularyReviewFacet, 'meaning'>, ReviewState>>
 }
 
@@ -96,6 +96,11 @@ export interface VocabularyEntry {
   senses: VocabularySense[]
   createdAt: string
   updatedAt: string
+  /** Desktop list rows omit heavy structured fields until the entry opens. */
+  summaryOnly?: boolean
+  senseCount?: number
+  partOfSpeechPreview?: string
+  definitionPreview?: string
 }
 
 /** Structured fields for a question. Markdown remains available for free-form notes. */
@@ -163,6 +168,9 @@ export interface Job {
   retryable?: boolean
   detail?: string
   createdAt: string
+  /** Native SQLite revision. Browser snapshots created before the native job
+   * ledger omit it, so consumers must continue treating it as optional. */
+  updatedAt?: string
 }
 
 export interface FileReference {

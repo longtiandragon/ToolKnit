@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import type { ClipboardItem as WorkbenchClipboardItem, ContentFavorite, ContentFavoriteKind, ContentRecent, EntityRelation, Source, StudyDocument, TimelineEvent, VocabularyEntry } from '@/types'
+import type { ClipboardItem as WorkbenchClipboardItem, ContentFavorite, ContentFavoriteKind, ContentRecent, EntityRelation, Job, ReviewRating, ReviewState, Source, StudyDocument, TimelineEvent, VocabularyEntry } from '@/types'
 
 export function isDesktop() {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -9,9 +9,61 @@ export function isDesktop() {
 export interface DesktopVaultHydration {
   root: string
   documents: StudyDocument[]
-  vocabulary: VocabularyEntry[]
+  vocabulary: DesktopVocabularySummary[]
   relations: EntityRelation[]
   migrated: boolean
+}
+
+export interface DesktopVocabularySummary {
+  id: string
+  lemma: string
+  language: string
+  pronunciation?: string
+  senseCount: number
+  partOfSpeechPreview: string
+  definitionPreview: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DesktopProcessingJobHydration {
+  jobs: Job[]
+  migrated: boolean
+  importedCount: number
+  skippedCount: number
+  hasMore: boolean
+}
+
+/** Imports the former bounded renderer history exactly once. Active jobs in
+ * that snapshot are normalized as interrupted by Rust because they belonged
+ * to an earlier renderer lifetime. */
+export async function hydrateDesktopProcessingJobs(browserJobs: Job[]) {
+  if (!isDesktop()) return undefined
+  return invoke<DesktopProcessingJobHydration>('hydrate_default_processing_jobs', { browserJobs })
+}
+
+export async function listDesktopProcessingJobs(limit = 500, before?: Pick<Job, 'createdAt' | 'id'>) {
+  if (!isDesktop()) return [] as Job[]
+  return invoke<Job[]>('list_default_processing_jobs', {
+    limit,
+    beforeCreatedAt: before?.createdAt,
+    beforeId: before?.id,
+  })
+}
+
+export async function saveDesktopProcessingJob(job: Job) {
+  if (!isDesktop()) return undefined
+  return invoke<Job>('save_default_processing_job', { job })
+}
+
+export async function deleteDesktopProcessingJob(id: string) {
+  if (!isDesktop()) return
+  await invoke('delete_default_processing_job', { id })
+}
+
+export async function deleteDesktopProcessingJobs(ids: string[]) {
+  if (!isDesktop() || !ids.length) return 0
+  return invoke<number>('delete_default_processing_jobs', { ids })
 }
 
 export interface DesktopVaultHealth {
@@ -392,6 +444,11 @@ export async function exportDesktopVaultDocuments() {
   return invoke<StudyDocument[]>('export_default_vault_documents')
 }
 
+export async function exportDesktopVocabulary() {
+  if (!isDesktop()) return [] as VocabularyEntry[]
+  return invoke<VocabularyEntry[]>('export_default_vocabulary')
+}
+
 export async function deleteDesktopVaultDocument(id: string) {
   if (!isDesktop()) return
   await invoke('delete_default_vault_document', { id })
@@ -546,6 +603,147 @@ export async function saveDesktopVocabularyBatch(entries: VocabularyEntry[]) {
   await invoke('save_default_vocabulary_batch', { entries })
 }
 
+export async function getDesktopVocabulary(id: string) {
+  if (!isDesktop()) return undefined
+  return invoke<VocabularyEntry>('get_default_vocabulary', { id })
+}
+
+export async function searchDesktopVocabulary(query: string, limit = 120) {
+  if (!isDesktop()) return [] as DesktopVocabularySummary[]
+  return invoke<DesktopVocabularySummary[]>('search_default_vocabulary', { query, limit })
+}
+
+export type DesktopReviewKind = 'all' | 'question' | 'error' | 'word'
+
+export interface DesktopReviewCursor {
+  dueEpoch: number
+  id: string
+}
+
+export interface DesktopReviewCardSummary {
+  id: string
+  entityId: string
+  entityKind: 'question' | 'word'
+  title: string
+  facet: 'answer' | 'error' | 'meaning' | 'spelling' | 'example' | 'comparison'
+  due: string
+  dueEpoch: number
+  review: ReviewState
+  senseId?: string
+  context: string
+  detail: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DesktopReviewQueuePage {
+  cards: DesktopReviewCardSummary[]
+  hasMore: boolean
+  nextCursor?: DesktopReviewCursor
+}
+
+export interface DesktopReviewQueueSummary {
+  scheduledCount: number
+  reviewedCount: number
+  dueCount: number
+  dueQuestionCount: number
+  dueErrorCount: number
+  dueWordCount: number
+  questionMaterialCount: number
+  vocabularyMaterialCount: number
+  earliestDue?: string
+  nextFutureDue?: string
+}
+
+export interface DesktopReviewDailyCount {
+  date: string
+  count: number
+}
+
+export interface DesktopReviewAnalytics {
+  totalReviews: number
+  reviewedToday: number
+  reviewed7Days: number
+  reviewed30Days: number
+  studyDays30: number
+  currentStreakDays: number
+  longestStreak365Days: number
+  again30Days: number
+  hard30Days: number
+  good30Days: number
+  easy30Days: number
+  daily14Days: DesktopReviewDailyCount[]
+}
+
+export interface DesktopReviewGradeResult {
+  eventId: string
+  cardId: string
+  review: ReviewState
+  reviewedAt: string
+  updatedAt: string
+}
+
+export interface DesktopReviewHistoryEntry {
+  id: string
+  cardId: string
+  entityId: string
+  facet: string
+  rating: ReviewRating
+  previousReview: ReviewState
+  nextReview: ReviewState
+  reviewedAt: string
+  undoneAt?: string
+}
+
+/** Keyset pagination keeps the session stable while graded cards leave the
+ * due queue. No document body or unrelated word sense crosses this boundary. */
+export async function listDesktopDueReviewCards(input: {
+  asOf?: string
+  limit?: number
+  cursor?: DesktopReviewCursor
+  reviewKind?: DesktopReviewKind
+}) {
+  if (!isDesktop()) return { cards: [], hasMore: false } satisfies DesktopReviewQueuePage
+  return invoke<DesktopReviewQueuePage>('list_default_due_review_cards', input)
+}
+
+export async function getDesktopReviewQueueSummary(asOf?: string) {
+  if (!isDesktop()) return undefined
+  return invoke<DesktopReviewQueueSummary>('get_default_review_queue_summary', { asOf })
+}
+
+export async function getDesktopReviewAnalytics(asOf = new Date().toISOString()) {
+  if (!isDesktop()) return undefined
+  return invoke<DesktopReviewAnalytics>('get_default_review_analytics', {
+    asOf,
+    utcOffsetMinutes: -new Date(asOf).getTimezoneOffset(),
+  })
+}
+
+export async function gradeDesktopReviewCard(input: {
+  cardId: string
+  rating: ReviewRating
+  nextReview: ReviewState
+  reviewedAt?: string
+  expectedUpdatedAt: string
+}) {
+  if (!isDesktop()) throw new Error('原生复习评分仅支持桌面模式。')
+  return invoke<DesktopReviewGradeResult>('grade_default_review_card', { input })
+}
+
+export async function undoDesktopReviewGrade(input: {
+  eventId: string
+  expectedCardUpdatedAt: string
+}) {
+  if (!isDesktop()) throw new Error('原生复习撤销仅支持桌面模式。')
+  return invoke<DesktopReviewGradeResult>('undo_default_review_grade', { input })
+}
+
+export async function listDesktopReviewHistory(cardId: string, limit = 50) {
+  if (!isDesktop()) return [] as DesktopReviewHistoryEntry[]
+  return invoke<DesktopReviewHistoryEntry[]>('list_default_review_history', { cardId, limit })
+}
+
 export async function deleteDesktopVocabulary(id: string) {
   if (!isDesktop()) return
   await invoke('delete_default_vocabulary', { id })
@@ -578,14 +776,65 @@ export async function listDesktopPersonalEvents(limitPerType = 120) {
   return invoke<TimelineEvent[]>('list_default_personal_events', { limitPerType })
 }
 
-export async function listDesktopActivityEvents(limit = 300) {
+export type DesktopFocusCursor = Pick<TimelineEvent, 'startsAt' | 'updatedAt' | 'id'>
+
+/** Pages only focus sessions. Anniversaries stay in the small personal feed,
+ * while a long-running time ledger can be traversed without hydrating it all. */
+export async function listDesktopFocusEvents(limit = 120, before?: DesktopFocusCursor) {
   if (!isDesktop()) return [] as TimelineEvent[]
-  return invoke<TimelineEvent[]>('list_default_activity_events', { limit })
+  return invoke<TimelineEvent[]>('list_default_focus_events', {
+    limit,
+    beforeStartsAt: before?.startsAt,
+    beforeUpdatedAt: before?.updatedAt,
+    beforeId: before?.id,
+  })
+}
+
+export interface DesktopFocusDailyCount {
+  date: string
+  sessions: number
+  minutes: number
+}
+
+export interface DesktopFocusAnalytics {
+  sessionsToday: number
+  minutesToday: number
+  sessions7Days: number
+  minutes7Days: number
+  daily7Days: DesktopFocusDailyCount[]
+}
+
+export async function getDesktopFocusAnalytics(asOf = new Date().toISOString()) {
+  if (!isDesktop()) return undefined
+  return invoke<DesktopFocusAnalytics>('get_default_focus_analytics', {
+    asOf,
+    utcOffsetMinutes: -new Date().getTimezoneOffset(),
+  })
+}
+
+export type DesktopActivityCursor = Pick<TimelineEvent, 'startsAt' | 'updatedAt' | 'id'>
+
+export async function listDesktopActivityEvents(limit = 300, before?: DesktopActivityCursor) {
+  if (!isDesktop()) return [] as TimelineEvent[]
+  return invoke<TimelineEvent[]>('list_default_activity_events', {
+    limit,
+    beforeStartsAt: before?.startsAt,
+    beforeUpdatedAt: before?.updatedAt,
+    beforeId: before?.id,
+  })
 }
 
 export async function saveDesktopEvent(event: TimelineEvent) {
   if (!isDesktop()) return
   await invoke('save_default_event', { event })
+}
+
+/** One-time import for the browser-era Today timeline. The native transaction
+ * keeps existing rows on ID conflicts, so retrying after a renderer crash is
+ * safe and cannot overwrite a newer desktop edit. */
+export async function importDesktopLegacyEvents(events: TimelineEvent[]) {
+  if (!isDesktop() || !events.length) return
+  await invoke('import_default_legacy_events', { events })
 }
 
 export async function deleteDesktopEvent(id: string) {

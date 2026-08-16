@@ -18,7 +18,7 @@ import { appendRelationRecoveryChange, parseDesktopRelationRecovery, replayDeskt
 import { activityToTimelineEvent, isRecentToolActivityDuplicate, MAX_TIMELINE_ACTIVITIES, timelineActivities } from '@/lib/timeline-activity'
 import { normalizeSourceTags } from '@/lib/source-list'
 import { boundedJobHistory, createCoalescedTask, createPrimaryWorkspaceSnapshot } from '@/lib/workspace-persistence'
-import { cleanupClipboardAssets, clearDesktopClipboardItems, clearDesktopContentRecents, deleteDesktopClipboardItem, deleteDesktopRelation, deleteDesktopVaultDocument, deleteDesktopVocabulary, exportDesktopVaultDocuments, findDesktopWikiBacklinks, getDesktopClipboardItem, getDesktopSource, getDesktopSourceCrop, getDesktopVaultDocument, hydrateDesktopClipboard, hydrateDesktopContentFavorites, hydrateDesktopContentRecents, hydrateDesktopSources, hydrateDesktopVault, importDesktopSource as importNativeDesktopSource, isDesktop, listDesktopActivityEvents, localAssetUrl, reconcileDesktopVaultMarkdown, removeDesktopContentRecent, replaceDesktopActivityEvents, replaceDesktopContentFavorites, replaceDesktopContentRecents, replaceDesktopRelations, replaceDesktopVaultDocuments, replaceDesktopVocabulary, saveDesktopClipboardItem, saveDesktopEvent, saveDesktopQuestionBatch, saveDesktopRelation, saveDesktopSource, saveDesktopSourceCrops, saveDesktopSourceTags, saveDesktopVaultDocument, saveDesktopVocabulary, saveDesktopVocabularyBatch, searchDesktopVaultDocuments, setDesktopClipboardItemPinned, setDesktopContentFavorite, touchDesktopContentRecent, type DesktopVaultMarkdownReconcile, type DesktopVaultSearchResult } from '@/lib/native'
+import { cleanupClipboardAssets, clearDesktopClipboardItems, clearDesktopContentRecents, deleteDesktopClipboardItem, deleteDesktopProcessingJob, deleteDesktopProcessingJobs, deleteDesktopRelation, deleteDesktopVaultDocument, deleteDesktopVocabulary, exportDesktopVaultDocuments, exportDesktopVocabulary, findDesktopWikiBacklinks, getDesktopClipboardItem, getDesktopReviewQueueSummary, getDesktopSource, getDesktopSourceCrop, getDesktopVaultDocument, getDesktopVocabulary, gradeDesktopReviewCard, hydrateDesktopClipboard, hydrateDesktopContentFavorites, hydrateDesktopContentRecents, hydrateDesktopProcessingJobs, hydrateDesktopSources, hydrateDesktopVault, importDesktopSource as importNativeDesktopSource, isDesktop, listDesktopActivityEvents, listDesktopProcessingJobs, localAssetUrl, reconcileDesktopVaultMarkdown, removeDesktopContentRecent, replaceDesktopActivityEvents, replaceDesktopContentFavorites, replaceDesktopContentRecents, replaceDesktopRelations, replaceDesktopVaultDocuments, replaceDesktopVocabulary, saveDesktopClipboardItem, saveDesktopEvent, saveDesktopProcessingJob, saveDesktopQuestionBatch, saveDesktopRelation, saveDesktopSource, saveDesktopSourceCrops, saveDesktopSourceTags, saveDesktopVaultDocument, saveDesktopVocabulary, saveDesktopVocabularyBatch, searchDesktopVaultDocuments, searchDesktopVocabulary, setDesktopClipboardItemPinned, setDesktopContentFavorite, touchDesktopContentRecent, undoDesktopReviewGrade, type DesktopReviewCardSummary, type DesktopReviewGradeResult, type DesktopReviewQueueSummary, type DesktopVaultMarkdownReconcile, type DesktopVaultSearchResult, type DesktopVocabularySummary } from '@/lib/native'
 import { contentFavoriteKey, removeContentFavorite, upsertContentFavorite } from '@/lib/content-favorites'
 import { contentRecentKey, removeContentRecent, upsertContentRecent } from '@/lib/content-recents'
 import { removeEntityRelations } from '@/lib/relation-targets'
@@ -30,9 +30,26 @@ const DESKTOP_DOCUMENT_RECOVERY_KEY = 'toolknit:desktop-document-recovery:v1'
 const DESKTOP_VOCABULARY_RECOVERY_KEY = 'toolknit:desktop-vocabulary-recovery:v1'
 const DESKTOP_RELATION_RECOVERY_KEY = 'toolknit:desktop-relation-recovery:v1'
 type PersistedWorkspace = WorkspaceSnapshot
-export type VaultBootstrapStage = 'idle' | 'opening' | 'sources' | 'pointers' | 'activity' | 'clipboard' | 'ready' | 'fallback'
+export type VaultBootstrapStage = 'idle' | 'opening' | 'sources' | 'pointers' | 'activity' | 'processing' | 'clipboard' | 'ready' | 'fallback'
 
 function now() { return new Date().toISOString() }
+
+function vocabularySummaryEntry(summary: DesktopVocabularySummary): VocabularyEntry {
+  return {
+    id: summary.id,
+    lemma: summary.lemma,
+    language: summary.language,
+    ...(summary.pronunciation ? { pronunciation: summary.pronunciation } : {}),
+    forms: {},
+    senses: [],
+    createdAt: summary.createdAt,
+    updatedAt: summary.updatedAt,
+    summaryOnly: true,
+    senseCount: summary.senseCount,
+    partOfSpeechPreview: summary.partOfSpeechPreview,
+    definitionPreview: summary.definitionPreview,
+  }
+}
 
 function seedQuestion(): StudyDocument {
   const created = now()
@@ -88,6 +105,8 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   const vocabulary = ref<VocabularyEntry[]>((initial.vocabulary ?? []).map(cloneVocabularyEntry))
   const relations = ref<EntityRelation[]>((initial.relations ?? []).map((relation) => ({ ...relation })))
   const jobs = ref<Job[]>(boundedJobHistory(initial.jobs))
+  const jobsHasMore = ref(false)
+  const jobsLoadingMore = ref(false)
   const aiProfiles = ref<AiProfile[]>(initial.aiProfiles)
   const activeVaultName = ref(initial.activeVaultName)
   const codeDraft = ref(loadCodeDraft(initial.codeDraft))
@@ -99,6 +118,8 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   const contentRecentKeys = computed(() => new Set(contentRecents.value.map(contentRecentKey)))
   const toolUsages = ref<ToolUsage[]>(initial.toolUsages ?? [])
   const activities = ref<ActivityRecord[]>(initial.activities ?? [])
+  const activitiesHasMore = ref(false)
+  const activitiesLoadingMore = ref(false)
   const settings = ref<WorkbenchSettings>({ ...defaultWorkbenchSettings, ...initial.settings })
   const clipboardItems = ref<ClipboardItem[]>(loadClipboard())
   // Temporary hand-off between the universal intake and a destination tool.
@@ -112,15 +133,21 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   const vaultRoot = ref('')
   const vaultMarkdownIssues = ref<Record<string, 'missing'>>({})
   const desktopVaultActive = ref(false)
+  const desktopReviewSummary = ref<DesktopReviewQueueSummary>()
   // Clipboard history is a separate high-churn SQLite collection. Keep the
   // browser cache only until its one-time desktop migration succeeds.
   const desktopClipboardActive = ref(false)
+  // Processing history is a bounded SQLite ledger on desktop. Until its
+  // one-time migration succeeds, retain the renderer snapshot as recovery.
+  const desktopJobsActive = ref(false)
   let documentMutation = Promise.resolve()
   let clipboardMutation = Promise.resolve()
   let recentMutation = Promise.resolve()
   // Desktop hydration carries only metadata. This map prevents one active
   // Markdown file from being requested twice while the user changes routes.
   const loadedDesktopDocumentIds = new Set<string>()
+  const loadedDesktopVocabularyIds = new Set<string>()
+  const pendingDesktopVocabularyLoads = new Map<string, Promise<VocabularyEntry | undefined>>()
   const pendingDesktopDocumentLoads = new Map<string, Promise<StudyDocument | undefined>>()
   let documentRevision = 0
   let documentRecoveryChanges: DesktopDocumentRecoveryChange[] = []
@@ -129,6 +156,11 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   let relationRevision = 0
   let relationRecoveryChanges: DesktopRelationRecoveryChange[] = []
   let activityMutation = Promise.resolve()
+  let jobMutation = Promise.resolve()
+  let jobSaveTimer: ReturnType<typeof setTimeout> | undefined
+  const pendingJobSaves = new Map<string, Job>()
+  let jobHistoryCursor: Pick<Job, 'createdAt' | 'id'> | undefined
+  let activityHistoryCursor: Pick<import('@/types').TimelineEvent, 'startsAt' | 'updatedAt' | 'id'> | undefined
 
   function writePrimaryWorkspace() {
     localStorage.setItem(STORE_KEY, JSON.stringify(createPrimaryWorkspaceSnapshot({
@@ -143,13 +175,13 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       // Activities are an in-memory page cache on desktop. Their durable copy
       // belongs to the events table, alongside focus sessions and anniversaries.
       activities: activities.value, settings: settings.value
-    } satisfies PersistedWorkspace, desktopVaultActive.value)))
+    } satisfies PersistedWorkspace, desktopVaultActive.value, desktopJobsActive.value)))
     if (desktopClipboardActive.value) localStorage.removeItem(CLIPBOARD_KEY)
     else localStorage.setItem(CLIPBOARD_KEY, JSON.stringify(clipboardItems.value))
   }
 
   const primaryWorkspacePersistence = createCoalescedTask(writePrimaryWorkspace)
-  function persist() { primaryWorkspacePersistence.flush() }
+  function persist() { primaryWorkspacePersistence.flush(); flushPendingJobSaves() }
   function schedulePersist() { primaryWorkspacePersistence.schedule() }
 
   function persistCodeDraft() {
@@ -341,6 +373,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     return queueVaultMutation(async () => {
       await saveDesktopVocabulary(snapshot)
       clearVocabularyRecovery(revision)
+      await refreshDesktopReviewSummary()
     }).catch((error) => { vaultError.value = error instanceof Error ? error.message : '单词尚未写入本地资料库。' })
   }
 
@@ -349,6 +382,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     return queueVaultMutation(async () => {
       await deleteDesktopVocabulary(id)
       clearVocabularyRecovery(revision)
+      await refreshDesktopReviewSummary()
     }).catch((error) => { vaultError.value = error instanceof Error ? error.message : '删除单词尚未写入本地资料库。' })
   }
 
@@ -399,6 +433,55 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       .catch((error) => { vaultError.value = error instanceof Error ? error.message : '活动记录尚未写入本地资料库。' })
   }
 
+  function cloneJob(job: Job): Job {
+    return {
+      ...job,
+      inputNames: job.inputNames ? [...job.inputNames] : undefined,
+      outputNames: job.outputNames ? [...job.outputNames] : undefined,
+      inputs: job.inputs?.map((item) => ({ ...item })),
+      outputs: job.outputs?.map((item) => ({ ...item })),
+      parameters: job.parameters ? { ...job.parameters } : undefined,
+    }
+  }
+
+  function flushPendingJobSaves() {
+    if (jobSaveTimer !== undefined) { clearTimeout(jobSaveTimer); jobSaveTimer = undefined }
+    if (!desktopJobsActive.value || !pendingJobSaves.size) return
+    const snapshots = [...pendingJobSaves.values()].map(cloneJob)
+    pendingJobSaves.clear()
+    jobMutation = jobMutation
+      .catch(() => undefined)
+      .then(async () => { for (const job of snapshots) await saveDesktopProcessingJob(job) })
+      .catch((error) => {
+        desktopJobsActive.value = false
+        vaultError.value = error instanceof Error ? error.message : '处理任务尚未写入本地资料库。'
+        writePrimaryWorkspace()
+      })
+  }
+
+  function queueJobSave(job: Job, immediate = false) {
+    if (!desktopJobsActive.value) return
+    pendingJobSaves.set(job.id, cloneJob(job))
+    if (immediate) { flushPendingJobSaves(); return }
+    if (jobSaveTimer === undefined) jobSaveTimer = setTimeout(flushPendingJobSaves, 900)
+  }
+
+  function queueJobDelete(ids: string[]) {
+    if (!desktopJobsActive.value || !ids.length) return
+    ids.forEach((id) => pendingJobSaves.delete(id))
+    jobMutation = jobMutation
+      .catch(() => undefined)
+      .then(async () => {
+        if (ids.length === 1) await deleteDesktopProcessingJob(ids[0])
+        else await deleteDesktopProcessingJobs(ids)
+      })
+      .catch((error) => {
+        desktopJobsActive.value = false
+        vaultError.value = error instanceof Error ? error.message : '处理任务记录尚未从本地资料库删除。'
+        writePrimaryWorkspace()
+      })
+  }
+
   async function hydrateVault() {
     if (vaultHydrating.value) return
     if (!isDesktop()) { vaultReady.value = true; vaultBootstrapStage.value = 'ready'; return }
@@ -407,6 +490,11 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     vaultError.value = ''
     vaultBootstrapStage.value = 'opening'
     desktopClipboardActive.value = false
+    const previouslyNativeJobs = desktopJobsActive.value
+    const activeJobsBeforeHydration = previouslyNativeJobs
+      ? jobs.value.filter((job) => job.status === 'queued' || job.status === 'running').map(cloneJob)
+      : []
+    desktopJobsActive.value = false
     const recovery = loadDesktopDocumentRecovery()
     const vocabularyRecovery = loadDesktopVocabularyRecovery()
     const relationRecovery = loadDesktopRelationRecovery()
@@ -417,7 +505,10 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     // intact and remains a recovery path.
     const browserSources = sources.value.map((source) => ({ ...source, tags: [...source.tags], crops: source.crops ? { ...source.crops } : undefined }))
     try {
-      const browserVocabulary = vocabularyRecovery.snapshot ?? vocabulary.value.map(cloneVocabularyEntry)
+      // Compact native list rows are never valid migration input. Only the
+      // former browser workspace or an explicit recovery snapshot is sent.
+      const browserVocabulary = vocabularyRecovery.snapshot
+        ?? vocabulary.value.filter((entry) => !entry.summaryOnly).map(cloneVocabularyEntry)
       const browserRelations = relationRecovery.snapshot ?? relations.value.map((relation) => ({ ...relation }))
       // The original STORE_KEY remains untouched until native hydration and
       // persist() both succeed. Avoid duplicating the full legacy workspace in
@@ -447,11 +538,24 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       // Move the small legacy activity feed once, only when this Vault has no
       // activity records yet. This avoids a 300-call startup migration.
       vaultBootstrapStage.value = 'activity'
-      const nativeActivities = timelineActivities(await listDesktopActivityEvents(MAX_TIMELINE_ACTIVITIES))
-      if (!nativeActivities.length && browserActivities.length) {
+      let nativeActivityEvents = await listDesktopActivityEvents(81)
+      if (!nativeActivityEvents.length && browserActivities.length) {
         await replaceDesktopActivityEvents(browserActivities.map(activityToTimelineEvent))
-        activities.value = browserActivities
-      } else activities.value = nativeActivities
+        nativeActivityEvents = browserActivities.map(activityToTimelineEvent).slice(0, 81)
+      }
+      activitiesHasMore.value = nativeActivityEvents.length > 80
+      const initialActivityEvents = nativeActivityEvents.slice(0, 80)
+      activityHistoryCursor = initialActivityEvents.at(-1)
+      activities.value = timelineActivities(initialActivityEvents, 80)
+      vaultBootstrapStage.value = 'processing'
+      const processingHydration = await hydrateDesktopProcessingJobs(jobs.value.map(cloneJob))
+      if (!processingHydration) throw new Error('桌面资料库没有返回处理任务初始化结果。')
+      jobs.value = boundedJobHistory([...processingHydration.jobs, ...activeJobsBeforeHydration]
+        .filter((job, index, all) => all.findIndex((candidate) => candidate.id === job.id) === index)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)))
+      jobHistoryCursor = processingHydration.jobs.at(-1)
+      jobsHasMore.value = processingHydration.hasMore
+      desktopJobsActive.value = true
       // `persist()` deliberately clears documents from the primary browser
       // cache in desktop mode. If an app exit happened between changing the UI
       // state and a successful Vault write, recover the legacy full snapshot
@@ -465,13 +569,23 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       documents.value = recoveredDocuments
       loadedDesktopDocumentIds.clear()
       if (recovery.snapshot || recovery.changes.length) recoveredDocuments.forEach((document) => loadedDesktopDocumentIds.add(document.id))
+      const vocabularyCatalog = hydration.vocabulary.map(vocabularySummaryEntry)
+      // Recovery is rare but must replay against complete native records;
+      // otherwise a pending edit could erase senses omitted from the catalog.
+      const recoveryVocabularyBase = vocabularyRecovery.changes.length
+        ? await exportDesktopVocabulary()
+        : vocabularyCatalog
       const recoveredVocabulary = vocabularyRecovery.snapshot
         ? vocabularyRecovery.snapshot
         : vocabularyRecovery.changes.length
-          ? replayDesktopVocabularyRecovery(hydration.vocabulary, vocabularyRecovery.changes)
-          : hydration.vocabulary.map(cloneVocabularyEntry)
+          ? replayDesktopVocabularyRecovery(recoveryVocabularyBase, vocabularyRecovery.changes)
+          : vocabularyCatalog
       if (vocabularyRecovery.snapshot || vocabularyRecovery.changes.length) await replaceDesktopVocabulary(recoveredVocabulary)
       vocabulary.value = recoveredVocabulary
+      loadedDesktopVocabularyIds.clear()
+      if (vocabularyRecovery.snapshot || vocabularyRecovery.changes.length) {
+        recoveredVocabulary.forEach((entry) => loadedDesktopVocabularyIds.add(entry.id))
+      }
       const recoveredRelations = relationRecovery.snapshot
         ? relationRecovery.snapshot
         : relationRecovery.changes.length
@@ -482,6 +596,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       sources.value = hydratedSources
       vaultRoot.value = hydration.root
       desktopVaultActive.value = true
+      desktopReviewSummary.value = await getDesktopReviewQueueSummary().catch(() => undefined)
       vaultBootstrapStage.value = 'clipboard'
       try {
         clipboardItems.value = await hydrateDesktopClipboard(
@@ -513,6 +628,12 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       // The browser snapshot remains untouched and usable if the desktop
       // service cannot start (permissions, disk error, older binary, etc.).
       desktopVaultActive.value = false
+      desktopReviewSummary.value = undefined
+      desktopJobsActive.value = false
+      jobsHasMore.value = false
+      jobHistoryCursor = undefined
+      activitiesHasMore.value = false
+      activityHistoryCursor = undefined
       vaultError.value = error instanceof Error ? error.message : '本地资料库暂不可用，正在使用恢复副本。'
       vaultBootstrapStage.value = 'fallback'
       persist()
@@ -539,6 +660,50 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     return [...matchingDocuments, ...matchingWords].slice(0, 12)
   }
 
+  async function loadMoreJobs() {
+    if (!desktopJobsActive.value || jobsLoadingMore.value || !jobsHasMore.value) return 0
+    const cursor = jobHistoryCursor
+    if (!cursor) { jobsHasMore.value = false; return 0 }
+    jobsLoadingMore.value = true
+    try {
+      const page = await listDesktopProcessingJobs(121, cursor)
+      jobsHasMore.value = page.length > 120
+      const additions = page.slice(0, 120)
+      jobHistoryCursor = additions.at(-1)
+      const known = new Set(jobs.value.map((job) => job.id))
+      jobs.value = boundedJobHistory([...jobs.value, ...additions.filter((job) => !known.has(job.id))])
+      return additions.length
+    } catch (error) {
+      vaultError.value = error instanceof Error ? error.message : '较早的处理任务暂未载入。'
+      return 0
+    } finally {
+      jobsLoadingMore.value = false
+    }
+  }
+
+  async function loadMoreActivities() {
+    if (!desktopVaultActive.value || activitiesLoadingMore.value || !activitiesHasMore.value) return 0
+    const cursor = activityHistoryCursor
+    if (!cursor) { activitiesHasMore.value = false; return 0 }
+    activitiesLoadingMore.value = true
+    try {
+      const page = await listDesktopActivityEvents(81, cursor)
+      activitiesHasMore.value = page.length > 80
+      const events = page.slice(0, 80)
+      activityHistoryCursor = events.at(-1)
+      const additions = timelineActivities(events, 80)
+      const known = new Set(activities.value.map((activity) => activity.id))
+      activities.value = [...activities.value, ...additions.filter((activity) => !known.has(activity.id))]
+        .slice(0, MAX_TIMELINE_ACTIVITIES)
+      return additions.length
+    } catch (error) {
+      vaultError.value = error instanceof Error ? error.message : '较早的操作日志暂未载入。'
+      return 0
+    } finally {
+      activitiesLoadingMore.value = false
+    }
+  }
+
   async function findDocumentBacklinks(title: string, excludeId: string): Promise<DesktopVaultSearchResult[]> {
     const normalized = normalizeWikiTitle(title)
     if (!normalized) return []
@@ -559,12 +724,18 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     const backupActivities = desktopVaultActive.value
       ? timelineActivities(await listDesktopActivityEvents(MAX_TIMELINE_ACTIVITIES))
       : activities.value
-    return createWorkspaceBackup({ sources: sources.value, documents: backupDocuments, vocabulary: vocabulary.value, relations: relations.value, jobs: jobs.value, aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value, codeDraft: codeDraft.value, recipes: recipes.value, favorites: favorites.value, contentFavorites: contentFavorites.value, contentRecents: contentRecents.value, toolUsages: toolUsages.value, activities: backupActivities, settings: settings.value })
+    const backupJobs = desktopJobsActive.value ? await listDesktopProcessingJobs(500) : jobs.value
+    const backupVocabulary = desktopVaultActive.value ? await exportDesktopVocabulary() : vocabulary.value
+    return createWorkspaceBackup({ sources: sources.value, documents: backupDocuments, vocabulary: backupVocabulary, relations: relations.value, jobs: backupJobs, aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value, codeDraft: codeDraft.value, recipes: recipes.value, favorites: favorites.value, contentFavorites: contentFavorites.value, contentRecents: contentRecents.value, toolUsages: toolUsages.value, activities: backupActivities, settings: settings.value })
   }
 
   async function restoreBrowserBackup(serialized: string) {
     const backup = parseWorkspaceBackup(serialized)
-    sources.value = backup.sources; documents.value = backup.documents.map(cloneStudyDocument); loadedDesktopDocumentIds.clear(); documents.value.forEach((document) => loadedDesktopDocumentIds.add(document.id)); vocabulary.value = (backup.vocabulary ?? []).map(cloneVocabularyEntry); relations.value = (backup.relations ?? []).map((relation) => ({ ...relation })); jobs.value = boundedJobHistory(backup.jobs); aiProfiles.value = backup.aiProfiles; recipes.value = backup.recipes; favorites.value = backup.favorites ?? []; contentFavorites.value = backup.contentFavorites ?? []; contentRecents.value = backup.contentRecents ?? []; toolUsages.value = backup.toolUsages ?? []; activities.value = backup.activities ?? []; settings.value = { ...defaultWorkbenchSettings, ...backup.settings }; activeVaultName.value = backup.activeVaultName; codeDraft.value = backup.codeDraft; persistCodeDraft(); persist()
+    sources.value = backup.sources; documents.value = backup.documents.map(cloneStudyDocument); loadedDesktopDocumentIds.clear(); documents.value.forEach((document) => loadedDesktopDocumentIds.add(document.id)); vocabulary.value = (backup.vocabulary ?? []).map(cloneVocabularyEntry); loadedDesktopVocabularyIds.clear(); vocabulary.value.forEach((entry) => loadedDesktopVocabularyIds.add(entry.id)); relations.value = (backup.relations ?? []).map((relation) => ({ ...relation })); jobs.value = boundedJobHistory(backup.jobs); aiProfiles.value = backup.aiProfiles; recipes.value = backup.recipes; favorites.value = backup.favorites ?? []; contentFavorites.value = backup.contentFavorites ?? []; contentRecents.value = backup.contentRecents ?? []; toolUsages.value = backup.toolUsages ?? []; activities.value = backup.activities ?? []; settings.value = { ...defaultWorkbenchSettings, ...backup.settings }; activeVaultName.value = backup.activeVaultName; codeDraft.value = backup.codeDraft; persistCodeDraft(); persist()
+    jobsHasMore.value = false
+    jobHistoryCursor = jobs.value.at(-1)
+    activitiesHasMore.value = false
+    activityHistoryCursor = activities.value.at(-1) ? activityToTimelineEvent(activities.value.at(-1)!) : undefined
     if (desktopVaultActive.value) {
       for (const source of sources.value) await saveDesktopSource(source)
       sources.value = await hydrateDesktopSources([])
@@ -572,6 +743,11 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       contentFavorites.value = await replaceDesktopContentFavorites(contentFavorites.value)
       contentRecents.value = await replaceDesktopContentRecents(contentRecents.value)
       await replaceDesktopActivityEvents(activities.value.slice(0, MAX_TIMELINE_ACTIVITIES).map(activityToTimelineEvent))
+      if (desktopJobsActive.value) {
+        const existingIds = (await listDesktopProcessingJobs(500)).map((job) => job.id)
+        if (existingIds.length) await deleteDesktopProcessingJobs(existingIds)
+        for (const job of jobs.value) await saveDesktopProcessingJob(job)
+      }
     }
     return { sources: backup.sources.length, documents: backup.documents.length, vocabulary: vocabulary.value.length, recipes: backup.recipes.length }
   }
@@ -583,7 +759,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     .map(({ facet, review }) => ({ document, facet, review }))))
   /** Keep the historical document-level view for dashboards and counts. */
   const dueDocuments = computed(() => [...new Map(dueQuestionCards.value.map(({ document }) => [document.id, document])).values()])
-  /** A meaning, spelling and cloze card can share a word sense while keeping
+  /** Meaning, spelling, cloze and comparison cards can share a word sense while keeping
    * separate memory strength. The queue stays flat so review rendering never
    * has to scan the entire vocabulary again. */
   const dueVocabularyCards = computed(() => vocabulary.value.flatMap((entry) => entry.senses.flatMap((sense) => vocabularyReviewCards(sense)
@@ -683,6 +859,42 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     return request
   }
 
+  /** Reads one structured word for review/open operations. Desktop queues carry
+   * only a card pointer, so a large vocabulary never has to be rehydrated just
+   * to reveal one answer. */
+  async function loadVocabulary(id: string) {
+    const cached = vocabulary.value.find((entry) => entry.id === id)
+    if (!desktopVaultActive.value || loadedDesktopVocabularyIds.has(id) || (cached && !cached.summaryOnly)) return cached
+    const pending = pendingDesktopVocabularyLoads.get(id)
+    if (pending) return pending
+    const request = getDesktopVocabulary(id)
+      .then((entry) => {
+        if (!entry) return cached
+        const snapshot = cloneVocabularyEntry(entry)
+        const index = vocabulary.value.findIndex((item) => item.id === id)
+        if (index >= 0) vocabulary.value[index] = snapshot
+        else vocabulary.value.unshift(snapshot)
+        loadedDesktopVocabularyIds.add(id)
+        return snapshot
+      })
+      .finally(() => { pendingDesktopVocabularyLoads.delete(id) })
+    pendingDesktopVocabularyLoads.set(id, request)
+    return request
+  }
+
+  async function searchVocabularyEntries(query: string, limit = 120) {
+    const needle = query.trim()
+    if (!needle) return vocabulary.value
+    if (desktopVaultActive.value) return (await searchDesktopVocabulary(needle, limit)).map(vocabularySummaryEntry)
+    return vocabulary.value.filter((entry) => vocabularySearchText(entry).includes(needle.toLocaleLowerCase('zh-CN'))).slice(0, limit)
+  }
+
+  async function refreshDesktopReviewSummary() {
+    if (!desktopVaultActive.value) { desktopReviewSummary.value = undefined; return undefined }
+    desktopReviewSummary.value = await getDesktopReviewQueueSummary()
+    return desktopReviewSummary.value
+  }
+
   /** Applies a disk-originated managed Markdown update without sending it back
    * through the normal save queue. Unopened documents keep metadata only so a
    * background edit cannot defeat lazy body hydration. */
@@ -759,6 +971,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       senses: [{ id: newId(), partOfSpeech: 'noun', definition: '', examples: [], collocations: [], synonyms: [], reviewEnabled: false }]
     }
     vocabulary.value.unshift(entry)
+    loadedDesktopVocabularyIds.add(entry.id)
     persist()
     void queueVocabularySave(entry)
     return entry
@@ -768,6 +981,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     const index = vocabulary.value.findIndex((entry) => entry.id === next.id)
     if (index < 0) return
     vocabulary.value[index] = { ...cloneVocabularyEntry(next), updatedAt: now() }
+    loadedDesktopVocabularyIds.add(next.id)
     persist()
     void queueVocabularySave(vocabulary.value[index])
   }
@@ -779,11 +993,13 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     const snapshots = entries.map(cloneVocabularyEntry)
     if (!snapshots.length) return
     if (desktopVaultActive.value) await queueVaultMutation(() => saveDesktopVocabularyBatch(snapshots))
+    if (desktopVaultActive.value) await refreshDesktopReviewSummary()
     const incomingIds = new Set(snapshots.map((entry) => entry.id))
     vocabulary.value = [
       ...snapshots,
       ...vocabulary.value.filter((entry) => !incomingIds.has(entry.id)),
     ]
+    snapshots.forEach((entry) => loadedDesktopVocabularyIds.add(entry.id))
     persist()
     addActivity('system', '批量导入单词', `${snapshots.length} 个结构化词条已写入本地资料库`, '/words')
   }
@@ -806,6 +1022,8 @@ export const useWorkbenchStore = defineStore('workbench', () => {
 
   function deleteVocabularyEntry(id: string) {
     vocabulary.value = vocabulary.value.filter((entry) => entry.id !== id)
+    loadedDesktopVocabularyIds.delete(id)
+    pendingDesktopVocabularyLoads.delete(id)
     contentFavorites.value = removeContentFavorite(contentFavorites.value, 'word', id)
     contentRecents.value = removeContentRecent(contentRecents.value, 'word', id)
     relations.value = relations.value.filter((relation) => relation.fromId !== id && relation.toId !== id)
@@ -879,70 +1097,129 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     void queueVaultDelete(id)
   }
 
-  async function gradeDocument(id: string, rating: ReviewRating, facet: QuestionReviewFacet = 'answer') {
+  async function gradeDocument(
+    id: string,
+    rating: ReviewRating,
+    facet: QuestionReviewFacet = 'answer',
+    nativeCard?: Pick<DesktopReviewCardSummary, 'id' | 'updatedAt' | 'review'>,
+  ): Promise<DesktopReviewGradeResult | undefined> {
     const doc = await loadDocument(id)
-    const review = doc && questionReviewForFacet(doc, facet)
+    const review = doc && (nativeCard?.review ?? questionReviewForFacet(doc, facet))
     if (!doc || !review) return
-    Object.assign(doc, withQuestionReviewFacet(doc, facet, await gradeFsrsReview(review, doc.createdAt, rating)))
+    const gradedAt = new Date()
+    const nextReview = await gradeFsrsReview(review, doc.createdAt, rating, gradedAt)
+    if (desktopVaultActive.value && nativeCard) {
+      const result = await gradeDesktopReviewCard({
+        cardId: nativeCard.id,
+        rating,
+        nextReview,
+        reviewedAt: gradedAt.toISOString(),
+        expectedUpdatedAt: nativeCard.updatedAt,
+      })
+      Object.assign(doc, withQuestionReviewFacet(doc, facet, result.review))
+      persist()
+      return result
+    }
+    Object.assign(doc, withQuestionReviewFacet(doc, facet, nextReview))
     doc.updatedAt = now()
     persist()
     await queueVaultSave(doc)
   }
 
-  function restoreQuestionReview(id: string, facet: QuestionReviewFacet, review: ReviewState) {
+  async function restoreQuestionReview(
+    id: string,
+    facet: QuestionReviewFacet,
+    review: ReviewState,
+    nativeUndo?: { eventId: string; expectedCardUpdatedAt: string },
+  ): Promise<DesktopReviewGradeResult | undefined> {
     const doc = documents.value.find((item) => item.id === id)
     if (!doc) throw new Error('原题已不存在，无法撤销评分。')
-    Object.assign(doc, withQuestionReviewFacet(doc, facet, review))
+    const result = desktopVaultActive.value && nativeUndo
+      ? await undoDesktopReviewGrade(nativeUndo)
+      : undefined
+    Object.assign(doc, withQuestionReviewFacet(doc, facet, result?.review ?? review))
+    if (result) { persist(); return result }
     doc.updatedAt = now()
     loadedDesktopDocumentIds.add(id)
     persist()
-    void queueVaultSave(doc)
+    await queueVaultSave(doc)
   }
 
-  async function gradeVocabularySense(entryId: string, senseId: string, rating: ReviewRating, facet: VocabularyReviewFacet = 'meaning') {
-    const entry = vocabulary.value.find((item) => item.id === entryId)
+  async function gradeVocabularySense(
+    entryId: string,
+    senseId: string,
+    rating: ReviewRating,
+    facet: VocabularyReviewFacet = 'meaning',
+    nativeCard?: Pick<DesktopReviewCardSummary, 'id' | 'updatedAt' | 'review'>,
+  ): Promise<DesktopReviewGradeResult | undefined> {
+    const entry = await loadVocabulary(entryId)
     const sense = entry?.senses.find((item) => item.id === senseId)
-    const review = sense && vocabularyReviewForFacet(sense, facet)
+    const review = sense && (nativeCard?.review ?? vocabularyReviewForFacet(sense, facet))
     if (!entry || !sense || !review) return
-    const nextSense = withVocabularyReviewFacet(sense, facet, await gradeFsrsReview(review, entry.createdAt, rating))
+    const gradedAt = new Date()
+    const nextReview = await gradeFsrsReview(review, entry.createdAt, rating, gradedAt)
+    const result = desktopVaultActive.value && nativeCard
+      ? await gradeDesktopReviewCard({
+          cardId: nativeCard.id,
+          rating,
+          nextReview,
+          reviewedAt: gradedAt.toISOString(),
+          expectedUpdatedAt: nativeCard.updatedAt,
+        })
+      : undefined
+    const nextSense = withVocabularyReviewFacet(sense, facet, result?.review ?? nextReview)
     entry.senses = entry.senses.map((item) => item.id === senseId ? nextSense : item)
+    if (result) { persist(); return result }
     entry.updatedAt = now()
     persist()
     await queueVocabularySave(entry)
   }
 
-  function restoreVocabularySenseReview(entryId: string, senseId: string, facet: VocabularyReviewFacet, review: import('@/types').ReviewState) {
-    const entry = vocabulary.value.find((item) => item.id === entryId)
+  async function restoreVocabularySenseReview(
+    entryId: string,
+    senseId: string,
+    facet: VocabularyReviewFacet,
+    review: import('@/types').ReviewState,
+    nativeUndo?: { eventId: string; expectedCardUpdatedAt: string },
+  ): Promise<DesktopReviewGradeResult | undefined> {
+    const entry = await loadVocabulary(entryId)
     const sense = entry?.senses.find((item) => item.id === senseId)
     if (!entry || !sense) throw new Error('原单词词义已不存在，无法撤销评分。')
-    entry.senses = entry.senses.map((item) => item.id === senseId ? withVocabularyReviewFacet(item, facet, review) : item)
+    const result = desktopVaultActive.value && nativeUndo
+      ? await undoDesktopReviewGrade(nativeUndo)
+      : undefined
+    entry.senses = entry.senses.map((item) => item.id === senseId ? withVocabularyReviewFacet(item, facet, result?.review ?? review) : item)
+    if (result) { persist(); return result }
     entry.updatedAt = now()
     persist()
-    void queueVocabularySave(entry)
+    await queueVocabularySave(entry)
   }
 
   function addJob(kind: Job['kind'], label: string, inputNames: string[] = [], meta: Partial<Job> = {}) {
     const job: Job = { id: newId(), kind, label, inputNames, status: 'queued', progress: 0, createdAt: now(), retryable: false, ...meta }
-    jobs.value = boundedJobHistory([job, ...jobs.value]); addActivity('job', `创建任务：${label}`, inputNames.join('、'), meta.route, job.id); return job
+    jobs.value = boundedJobHistory([job, ...jobs.value]); queueJobSave(job, true); addActivity('job', `创建任务：${label}`, inputNames.join('、'), meta.route, job.id); return job
   }
 
   function updateJob(id: string, patch: Partial<Job>) {
     const job = jobs.value.find((item) => item.id === id)
-    if (job) Object.assign(job, patch)
-    if (job && patch.status === 'running' && !job.startedAt) job.startedAt = now()
-    if (job && (patch.status === 'succeeded' || patch.status === 'failed' || patch.status === 'cancelled')) {
+    if (!job) return
+    Object.assign(job, patch)
+    if (patch.status === 'running' && !job.startedAt) job.startedAt = now()
+    if (patch.status === 'succeeded' || patch.status === 'failed' || patch.status === 'cancelled') {
       job.completedAt = now()
       const label = patch.status === 'succeeded' ? '完成' : patch.status === 'cancelled' ? '已取消' : '失败'
       addActivity(patch.status === 'succeeded' ? 'output' : 'job', `${label}：${job.label}`, patch.detail, job.route, job.id)
-    } else schedulePersist()
+      queueJobSave(job, true)
+    } else { queueJobSave(job, patch.status === 'running'); schedulePersist() }
   }
 
-  function removeJob(id: string) { jobs.value = jobs.value.filter((item) => item.id !== id); persist() }
+  function removeJob(id: string) { jobs.value = jobs.value.filter((item) => item.id !== id); queueJobDelete([id]); persist() }
 
   function removeJobs(ids: Iterable<string>) {
     const targets = new Set(ids)
     if (!targets.size) return
     jobs.value = jobs.value.filter((item) => !targets.has(item.id))
+    queueJobDelete([...targets])
     persist()
   }
 
@@ -1183,7 +1460,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   }
 
   return {
-    sources, documents, vocabulary, relations, jobs, aiProfiles, activeVaultName, codeDraft, recipes, favorites, contentFavorites, contentRecents, toolUsages, activities, settings, clipboardItems, intakeFiles, intakeText, dueDocuments, dueQuestionCards, dueVocabularyCards, questionCount, weakTags, vaultReady, vaultHydrating, vaultError, vaultBootstrapStage, vaultRoot, vaultMarkdownIssues,
-    addSource, importDesktopSource, touchSource, updateSourceTags, loadSourceDetail, loadSourceCrop, loadDocument, reconcileVaultMarkdown, createQuestion, createNote, insertDocument, createVocabularyEntry, saveVocabularyEntry, importVocabularyEntries, importQuestionDocuments, deleteVocabularyEntry, createRelation, deleteRelation, saveDocument, writeManagedVaultMarkdown, deleteDocument, gradeDocument, restoreQuestionReview, gradeVocabularySense, restoreVocabularySenseReview, attachCrop, addJob, updateJob, removeJob, removeJobs, addActivity, recordToolUsage, toggleFavorite, reorderFavorites, isContentFavorite, toggleContentFavorite, isContentRecent, touchContentRecent, removeFromContentRecents, clearContentRecents, forgetContentPointers, updateSettings, addClipboardItem, resolveClipboardItem, removeClipboardItem, clearClipboard, toggleClipboardPin, pruneClipboard, saveRecipe, removeRecipe, touchRecipe, saveAiProfile, removeAiProfile, prepareCodeImage, prepareCodeDraft, stageIntake, consumeIntakeFiles, consumeIntakeText, persist, exportBrowserBackup, restoreBrowserBackup, hydrateVault, searchDocuments, findDocumentBacklinks
+    sources, documents, vocabulary, relations, jobs, jobsHasMore, jobsLoadingMore, aiProfiles, activeVaultName, codeDraft, recipes, favorites, contentFavorites, contentRecents, toolUsages, activities, activitiesHasMore, activitiesLoadingMore, settings, clipboardItems, intakeFiles, intakeText, dueDocuments, dueQuestionCards, dueVocabularyCards, questionCount, weakTags, vaultReady, vaultHydrating, vaultError, vaultBootstrapStage, vaultRoot, vaultMarkdownIssues, desktopVaultActive, desktopReviewSummary,
+    addSource, importDesktopSource, touchSource, updateSourceTags, loadSourceDetail, loadSourceCrop, loadDocument, loadVocabulary, searchVocabularyEntries, refreshDesktopReviewSummary, reconcileVaultMarkdown, createQuestion, createNote, insertDocument, createVocabularyEntry, saveVocabularyEntry, importVocabularyEntries, importQuestionDocuments, deleteVocabularyEntry, createRelation, deleteRelation, saveDocument, writeManagedVaultMarkdown, deleteDocument, gradeDocument, restoreQuestionReview, gradeVocabularySense, restoreVocabularySenseReview, attachCrop, addJob, updateJob, removeJob, removeJobs, loadMoreJobs, loadMoreActivities, addActivity, recordToolUsage, toggleFavorite, reorderFavorites, isContentFavorite, toggleContentFavorite, isContentRecent, touchContentRecent, removeFromContentRecents, clearContentRecents, forgetContentPointers, updateSettings, addClipboardItem, resolveClipboardItem, removeClipboardItem, clearClipboard, toggleClipboardPin, pruneClipboard, saveRecipe, removeRecipe, touchRecipe, saveAiProfile, removeAiProfile, prepareCodeImage, prepareCodeDraft, stageIntake, consumeIntakeFiles, consumeIntakeText, persist, exportBrowserBackup, restoreBrowserBackup, hydrateVault, searchDocuments, findDocumentBacklinks
   }
 })

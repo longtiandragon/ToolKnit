@@ -29,7 +29,13 @@ describe('workspace persistence boundaries', () => {
 
   it('keeps heavy Vault collections out of the desktop renderer snapshot', () => {
     const primary = createPrimaryWorkspaceSnapshot(snapshot, true)
-    expect(primary).toMatchObject({ sources: [], documents: [], vocabulary: [], relations: [], activities: [] })
+    expect(primary).toMatchObject({ sources: [], documents: [], vocabulary: [], relations: [], activities: [], jobs: [] })
+  })
+
+  it('retains task recovery when only the native job ledger is unavailable', () => {
+    const withJob = { ...snapshot, jobs: [{ id: 'job-1', kind: 'pdf' as const, label: '合并 PDF', status: 'queued' as const, progress: 0, createdAt: '2026-08-10' }] }
+    expect(createPrimaryWorkspaceSnapshot(withJob, true, false).jobs).toHaveLength(1)
+    expect(createPrimaryWorkspaceSnapshot(withJob, true, true).jobs).toEqual([])
   })
 
   it('bounds job history while retaining the newest entries', () => {

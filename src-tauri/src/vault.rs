@@ -3,8 +3,8 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::{NaiveDate, Utc};
 use image::ImageEncoder;
 use keyring::Entry;
-use rusqlite::{OptionalExtension, Transaction};
-use serde::{Deserialize, Serialize};
+use rusqlite::{types::Type, OptionalExtension, Transaction, TransactionBehavior};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
@@ -12,6 +12,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
+    sync::OnceLock,
     time::Duration,
 };
 use uuid::Uuid;
@@ -23,7 +24,7 @@ pub struct VaultService {
     root: PathBuf,
 }
 
-const SCHEMA_VERSION: i64 = 18;
+const SCHEMA_VERSION: i64 = 23;
 const DOCUMENT_VERSION_LIMIT: i64 = 40;
 const DOCUMENT_VERSION_COALESCE_SECONDS: i64 = 5 * 60;
 const EDITOR_CRASH_DRAFT_LIMIT: i64 = 8;
@@ -41,6 +42,12 @@ const QUESTION_ATTACHMENT_LIMIT: i64 = 64;
 const QUESTION_ATTACHMENT_MAX_BYTES: u64 = 250 * 1024 * 1024;
 const CONTENT_FAVORITE_LIMIT: i64 = 256;
 const CONTENT_RECENT_LIMIT: i64 = 128;
+const PROCESSING_JOB_HISTORY_LIMIT: i64 = 500;
+const PROCESSING_ACTIVE_JOB_LIMIT: i64 = 64;
+const PROCESSING_JOB_MIGRATION_LIMIT: usize = 500;
+const PROCESSING_JOB_DETAIL_MAX_BYTES: usize = 64 * 1024;
+const PROCESSING_JOB_PARAMETERS_MAX_BYTES: usize = 256 * 1024;
+const PROCESSING_JOB_INTERRUPTED_MESSAGE: &str = "应用上次退出时任务尚未完成，可从历史记录重试。";
 const VISUAL_PROJECT_IMAGE_LIMIT: usize = 4;
 const VISUAL_PROJECT_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 const VISUAL_PROJECT_TOTAL_MAX_BYTES: usize = 96 * 1024 * 1024;
@@ -48,6 +55,13 @@ const VISUAL_PROJECT_ANNOTATION_MAX_BYTES: usize = 256 * 1024;
 const VAULT_ARCHIVE_MAX_ENTRIES: usize = 250_000;
 const VAULT_ARCHIVE_MAX_UNCOMPRESSED_BYTES: u64 = 4 * 1024 * 1024 * 1024 * 1024;
 const VAULT_ARCHIVE_MAX_DATABASE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const AI_PROFILE_ID_MAX_BYTES: usize = 256;
+const AI_API_KEY_MAX_BYTES: usize = 64 * 1024;
+const AI_BASE_URL_MAX_BYTES: usize = 2 * 1024;
+const AI_MODEL_MAX_BYTES: usize = 256;
+const AI_MESSAGE_LIMIT: usize = 64;
+const AI_MESSAGES_MAX_BYTES: usize = 16 * 1024 * 1024;
+const AI_RESPONSE_MAX_BYTES: usize = 16 * 1024 * 1024;
 
 /// Dates embedded in automatic archive names are used for retention.  Keeping
 /// this separate from manually-created and pre-restore archives is important:
@@ -370,7 +384,7 @@ pub struct VocabularySense {
     pub review_enabled: bool,
     pub review: Option<serde_json::Value>,
     /// `review` remains the stable meaning card. Supplemental directions use
-    /// the existing review_cards table with facets such as spelling/example.
+    /// the existing review_cards table with facets such as spelling/example/comparison.
     #[serde(default)]
     pub review_facets: HashMap<String, serde_json::Value>,
 }
@@ -386,6 +400,170 @@ pub struct VocabularyEntry {
     pub senses: Vec<VocabularySense>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// Startup and list surfaces only need identity plus a first-sense preview.
+/// Full forms, examples, collocations, synonyms, and review state stay behind
+/// `get_vocabulary`, so Vue never makes the entire word library reactive.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VocabularySummary {
+    pub id: String,
+    pub lemma: String,
+    pub language: String,
+    pub pronunciation: Option<String>,
+    pub sense_count: i64,
+    pub part_of_speech_preview: String,
+    pub definition_preview: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Keyset cursor for a due-card queue. `due + id` is stable even when many
+/// imported cards share the same timestamp, unlike an OFFSET that becomes
+/// inconsistent while the user grades cards in the same session.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultReviewCursor {
+    pub due_epoch: i64,
+    pub id: String,
+}
+
+/// A review list must remain compact. It carries enough identity and context
+/// to draw the queue, while the selected question/word is loaded separately.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultReviewCardSummary {
+    pub id: String,
+    pub entity_id: String,
+    pub entity_kind: String,
+    pub title: String,
+    pub facet: String,
+    pub due: String,
+    pub due_epoch: i64,
+    pub review: serde_json::Value,
+    pub sense_id: Option<String>,
+    pub context: String,
+    pub detail: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultReviewQueuePage {
+    pub cards: Vec<VaultReviewCardSummary>,
+    pub has_more: bool,
+    pub next_cursor: Option<VaultReviewCursor>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultReviewQueueSummary {
+    pub scheduled_count: i64,
+    pub reviewed_count: i64,
+    pub due_count: i64,
+    pub due_question_count: i64,
+    pub due_error_count: i64,
+    pub due_word_count: i64,
+    pub question_material_count: i64,
+    pub vocabulary_material_count: i64,
+    pub earliest_due: Option<String>,
+    pub next_future_due: Option<String>,
+}
+
+/// A review grade updates one card only. The renderer must send the card
+/// version it actually displayed so a stale window cannot silently overwrite
+/// a newer rating from another window or a resumed session.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultReviewGradeInput {
+    pub card_id: String,
+    pub rating: String,
+    pub next_review: serde_json::Value,
+    pub reviewed_at: Option<String>,
+    pub expected_updated_at: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultReviewGradeResult {
+    pub event_id: String,
+    pub card_id: String,
+    pub review: serde_json::Value,
+    pub reviewed_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultReviewUndoInput {
+    pub event_id: String,
+    pub expected_card_updated_at: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultReviewHistoryEntry {
+    pub id: String,
+    pub card_id: String,
+    pub entity_id: String,
+    pub facet: String,
+    pub rating: String,
+    pub previous_review: serde_json::Value,
+    pub next_review: serde_json::Value,
+    pub reviewed_at: String,
+    pub undone_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultReviewDailyCount {
+    pub date: String,
+    pub count: i64,
+}
+
+/// Bounded learning telemetry derived from immutable review events. Counts are
+/// computed in the user's local-day offset, while timestamps stay UTC in the
+/// database. The 365-day streak window prevents an old, very large history
+/// from making the Review page progressively slower over the years.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultReviewAnalytics {
+    pub total_reviews: i64,
+    pub reviewed_today: i64,
+    pub reviewed_7_days: i64,
+    pub reviewed_30_days: i64,
+    pub study_days_30: i64,
+    pub current_streak_days: i64,
+    pub longest_streak_365_days: i64,
+    pub again_30_days: i64,
+    pub hard_30_days: i64,
+    pub good_30_days: i64,
+    pub easy_30_days: i64,
+    pub daily_14_days: Vec<VaultReviewDailyCount>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultFocusDailyCount {
+    pub date: String,
+    pub sessions: i64,
+    pub minutes: i64,
+}
+
+/// The Today page must not derive totals from its bounded history list. This
+/// compact projection is calculated from the indexed event ledger using the
+/// renderer's explicit UTC offset, so long histories and offset timestamps do
+/// not make the visible seven-day totals incomplete or incorrectly ordered.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultFocusAnalytics {
+    pub sessions_today: i64,
+    pub minutes_today: i64,
+    pub sessions_7_days: i64,
+    pub minutes_7_days: i64,
+    pub daily_7_days: Vec<VaultFocusDailyCount>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -457,12 +635,80 @@ fn clipboard_content_is_loaded() -> bool {
     true
 }
 
+fn empty_json_object() -> serde_json::Value {
+    json!({})
+}
+
+fn processing_session_id() -> &'static str {
+    static SESSION_ID: OnceLock<String> = OnceLock::new();
+    SESSION_ID
+        .get_or_init(|| Uuid::now_v7().to_string())
+        .as_str()
+}
+
+/// A small reference to an input or output file. Bytes never cross this
+/// boundary: the history stores only display metadata and an optional local
+/// path, so listing hundreds of tool runs remains cheap.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultFileReference {
+    pub name: String,
+    pub path: Option<String>,
+    pub size: Option<u64>,
+    pub mime: Option<String>,
+}
+
+/// Durable task history for PDF/image/media/AI and private tool operations.
+/// It deliberately lives outside `entities`: jobs are bounded operational
+/// records, not knowledge objects, and therefore have their own retention and
+/// interrupted-run recovery policy.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultProcessingJob {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub status: String,
+    pub progress: f64,
+    pub error_code: Option<String>,
+    #[serde(default)]
+    pub input_names: Vec<String>,
+    #[serde(default)]
+    pub output_names: Vec<String>,
+    pub tool_id: Option<String>,
+    pub route: Option<String>,
+    #[serde(default = "empty_json_object")]
+    pub parameters: serde_json::Value,
+    #[serde(default)]
+    pub inputs: Vec<VaultFileReference>,
+    #[serde(default)]
+    pub outputs: Vec<VaultFileReference>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub retryable: bool,
+    pub detail: Option<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultProcessingJobHydration {
+    pub jobs: Vec<VaultProcessingJob>,
+    pub migrated: bool,
+    pub imported_count: usize,
+    pub skipped_count: usize,
+    pub has_more: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultHydration {
     pub root: String,
     pub documents: Vec<VaultDocument>,
-    pub vocabulary: Vec<VocabularyEntry>,
+    pub vocabulary: Vec<VocabularySummary>,
     pub relations: Vec<VaultRelation>,
     pub migrated: bool,
 }
@@ -518,12 +764,79 @@ fn ai_chat_completion_payload(
     Ok(payload)
 }
 
+fn validate_ai_profile_id(profile_id: &str) -> Result<()> {
+    let profile_id = profile_id.trim();
+    if profile_id.is_empty() {
+        bail!("配置 ID 不能为空")
+    }
+    if profile_id.len() > AI_PROFILE_ID_MAX_BYTES || profile_id.chars().any(char::is_control) {
+        bail!("配置 ID 无效")
+    }
+    Ok(())
+}
+
+fn validate_ai_action_request(request: &AiActionRequest) -> Result<url::Url> {
+    validate_ai_profile_id(&request.profile_id)?;
+
+    let model = request.model.trim();
+    if model.is_empty() || model.len() > AI_MODEL_MAX_BYTES || model.chars().any(char::is_control) {
+        bail!("AI 模型名称无效")
+    }
+
+    let messages = request
+        .messages
+        .as_array()
+        .context("AI messages 必须是数组")?;
+    if messages.is_empty() || messages.len() > AI_MESSAGE_LIMIT {
+        bail!("AI messages 必须包含 1 到 {AI_MESSAGE_LIMIT} 条消息")
+    }
+    if messages.iter().any(|message| !message.is_object()) {
+        bail!("AI messages 中的每条消息都必须是对象")
+    }
+    if serde_json::to_vec(&request.messages)?.len() > AI_MESSAGES_MAX_BYTES {
+        bail!("AI 请求内容超过 16 MB 安全上限")
+    }
+
+    let mut base_url = request.base_url.trim().to_owned();
+    if base_url.is_empty() || base_url.len() > AI_BASE_URL_MAX_BYTES {
+        bail!("AI 服务地址无效")
+    }
+    if !base_url.ends_with('/') {
+        base_url.push('/');
+    }
+    let parsed_base = url::Url::parse(&base_url).context("AI 服务地址无效")?;
+    if !parsed_base.username().is_empty()
+        || parsed_base.password().is_some()
+        || parsed_base.query().is_some()
+        || parsed_base.fragment().is_some()
+    {
+        bail!("AI 服务地址不能包含账号、密码、查询参数或片段")
+    }
+    let endpoint = parsed_base.join("chat/completions")?;
+    let is_loopback = endpoint
+        .host_str()
+        .map(|host| host == "localhost" || host == "127.0.0.1" || host == "::1")
+        .unwrap_or(false);
+    if endpoint.scheme() != "https" && !(endpoint.scheme() == "http" && is_loopback) {
+        bail!("远程 AI 地址必须使用 HTTPS；仅 loopback 本地服务可使用 HTTP")
+    }
+    Ok(endpoint)
+}
+
 fn ai_chat_completion_text(body: &serde_json::Value) -> Result<String> {
     body.pointer("/choices/0/message/content")
         .and_then(|value| value.as_str())
         .filter(|value| !value.trim().is_empty())
         .map(str::to_owned)
         .context("AI 服务没有返回可显示的文本；请检查模型是否启用了不兼容的思考模式。")
+}
+
+fn extend_ai_response_bytes(buffer: &mut Vec<u8>, chunk: &[u8], max_bytes: usize) -> Result<()> {
+    if buffer.len().saturating_add(chunk.len()) > max_bytes {
+        bail!("AI 服务响应超过 16 MB 安全上限")
+    }
+    buffer.extend_from_slice(chunk);
+    Ok(())
 }
 
 impl VaultService {
@@ -1397,6 +1710,154 @@ impl VaultService {
             transaction.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
                 (18, Utc::now().to_rfc3339()),
+            )?;
+        }
+        if current_version < 19 {
+            // Tool execution history used to live in the renderer's
+            // localStorage snapshot. Keep it in a bounded operational table
+            // instead: no file bytes are stored here and active rows carry a
+            // process session so a crash can be distinguished from ordinary
+            // per-command VaultService::open calls.
+            transaction.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS processing_jobs (
+                  id TEXT PRIMARY KEY,
+                  kind TEXT NOT NULL CHECK(kind IN ('pdf', 'image', 'text', 'code', 'ocr', 'ai', 'archive', 'script', 'media')),
+                  label TEXT NOT NULL,
+                  status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
+                  progress REAL NOT NULL CHECK(progress >= 0 AND progress <= 100),
+                  error_code TEXT,
+                  input_names_json TEXT NOT NULL DEFAULT '[]',
+                  output_names_json TEXT NOT NULL DEFAULT '[]',
+                  tool_id TEXT,
+                  route TEXT,
+                  parameters_json TEXT NOT NULL DEFAULT '{}',
+                  inputs_json TEXT NOT NULL DEFAULT '[]',
+                  outputs_json TEXT NOT NULL DEFAULT '[]',
+                  started_at TEXT,
+                  completed_at TEXT,
+                  retryable INTEGER NOT NULL DEFAULT 0 CHECK(retryable IN (0, 1)),
+                  detail TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  owner_session TEXT
+                );
+                CREATE INDEX IF NOT EXISTS processing_jobs_created_idx
+                  ON processing_jobs(created_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS processing_jobs_status_created_idx
+                  ON processing_jobs(status, created_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS processing_jobs_active_session_idx
+                  ON processing_jobs(status, owner_session);
+                ",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                (19, Utc::now().to_rfc3339()),
+            )?;
+        }
+        if current_version < 20 {
+            // RFC 3339 text can contain `Z` or explicit offsets. Applying
+            // julianday() in every due-card query handles both but disables
+            // the ordinary due-text index. Backfill one integer timestamp so
+            // the queue remains indexed even with a very large card library.
+            let has_due_epoch = transaction
+                .prepare("PRAGMA table_info(review_cards)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .iter()
+                .any(|column| column == "due_epoch");
+            if !has_due_epoch {
+                transaction
+                    .execute_batch("ALTER TABLE review_cards ADD COLUMN due_epoch INTEGER;")?;
+            }
+            transaction.execute_batch(
+                "
+                UPDATE review_cards
+                SET due_epoch = CAST(strftime('%s', due) AS INTEGER)
+                WHERE due IS NOT NULL AND due_epoch IS NULL;
+                CREATE INDEX IF NOT EXISTS review_cards_due_epoch_idx
+                  ON review_cards(due_epoch, id)
+                  WHERE due_epoch IS NOT NULL;
+                ",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                (20, Utc::now().to_rfc3339()),
+            )?;
+        }
+        if current_version < 21 {
+            // A grade is a small transactional operation, not a reason to
+            // rewrite a multi-megabyte question or a whole vocabulary entry.
+            // Keep the before/after scheduler states so the most recent grade
+            // can be undone safely and learning history remains queryable.
+            transaction.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS review_events (
+                  id TEXT PRIMARY KEY,
+                  card_id TEXT NOT NULL,
+                  entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                  facet TEXT NOT NULL,
+                  rating TEXT NOT NULL CHECK(rating IN ('Again', 'Hard', 'Good', 'Easy')),
+                  previous_due TEXT,
+                  previous_due_epoch INTEGER,
+                  previous_state TEXT NOT NULL,
+                  next_due TEXT NOT NULL,
+                  next_due_epoch INTEGER NOT NULL,
+                  next_state TEXT NOT NULL,
+                  reviewed_at TEXT NOT NULL,
+                  reviewed_epoch INTEGER NOT NULL,
+                  applied_at TEXT NOT NULL,
+                  undone_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS review_events_card_reviewed_idx
+                  ON review_events(card_id, reviewed_epoch DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS review_events_entity_reviewed_idx
+                  ON review_events(entity_id, reviewed_epoch DESC, id DESC);
+                ",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                (21, Utc::now().to_rfc3339()),
+            )?;
+        }
+        if current_version < 22 {
+            // Per-card and per-entity indexes cannot serve a global recent
+            // activity window because their leading columns differ. Keep one
+            // compact chronological index for the Review page analytics.
+            transaction.execute_batch(
+                "CREATE INDEX IF NOT EXISTS review_events_reviewed_idx
+                   ON review_events(reviewed_epoch DESC, id DESC);",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                (22, Utc::now().to_rfc3339()),
+            )?;
+        }
+        if current_version < 23 {
+            // RFC 3339 strings with different explicit offsets do not sort in
+            // chronological order as plain text. Keep a canonical epoch for
+            // indexed personal-event history and Today-page aggregation.
+            let has_starts_epoch = transaction
+                .prepare("PRAGMA table_info(events)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .iter()
+                .any(|column| column == "starts_epoch");
+            if !has_starts_epoch {
+                transaction.execute_batch("ALTER TABLE events ADD COLUMN starts_epoch INTEGER;")?;
+            }
+            transaction.execute_batch(
+                "
+                UPDATE events
+                SET starts_epoch = CAST(strftime('%s', starts_at) AS INTEGER)
+                WHERE starts_epoch IS NULL;
+                CREATE INDEX IF NOT EXISTS events_type_epoch_idx
+                  ON events(type, starts_epoch DESC, updated_at DESC, id DESC);
+                ",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                (23, Utc::now().to_rfc3339()),
             )?;
         }
         transaction.commit()?;
@@ -2321,6 +2782,644 @@ impl VaultService {
             _ => {}
         }
         Ok(())
+    }
+
+    fn processing_job_kind_is_valid(kind: &str) -> bool {
+        matches!(
+            kind,
+            "pdf" | "image" | "text" | "code" | "ocr" | "ai" | "archive" | "script" | "media"
+        )
+    }
+
+    fn processing_job_status_is_valid(status: &str) -> bool {
+        matches!(
+            status,
+            "queued" | "running" | "succeeded" | "failed" | "cancelled"
+        )
+    }
+
+    fn processing_job_is_active(status: &str) -> bool {
+        matches!(status, "queued" | "running")
+    }
+
+    fn normalize_processing_timestamp(value: &mut String, field: &str) -> Result<()> {
+        if value.len() > 64 {
+            bail!("{field}过长")
+        }
+        let parsed = chrono::DateTime::parse_from_rfc3339(value.trim())
+            .with_context(|| format!("{field}不是有效的 RFC 3339 时间"))?;
+        *value = parsed.with_timezone(&Utc).to_rfc3339();
+        Ok(())
+    }
+
+    fn normalize_optional_processing_timestamp(
+        value: &mut Option<String>,
+        field: &str,
+    ) -> Result<()> {
+        if value
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            *value = None;
+        }
+        if let Some(value) = value {
+            Self::normalize_processing_timestamp(value, field)?;
+        }
+        Ok(())
+    }
+
+    fn normalize_optional_processing_text(
+        value: &mut Option<String>,
+        max_bytes: usize,
+        field: &str,
+    ) -> Result<()> {
+        let Some(current) = value.as_mut() else {
+            return Ok(());
+        };
+        if current.trim().is_empty() {
+            *value = None;
+            return Ok(());
+        }
+        if current.len() > max_bytes {
+            bail!("{field}过长")
+        }
+        Ok(())
+    }
+
+    fn normalize_processing_name_list(values: &mut [String], field: &str) -> Result<()> {
+        for value in values {
+            *value = value.trim().to_owned();
+            if value.is_empty() || value.len() > 1_024 {
+                bail!("{field}包含空名称或超长名称")
+            }
+        }
+        Ok(())
+    }
+
+    fn normalize_processing_file_reference(reference: &mut VaultFileReference) -> Result<()> {
+        reference.name = reference.name.trim().to_owned();
+        if reference.name.is_empty() || reference.name.len() > 1_024 {
+            bail!("任务文件名称为空或过长")
+        }
+        Self::normalize_optional_processing_text(&mut reference.path, 32 * 1_024, "任务文件路径")?;
+        Self::normalize_optional_processing_text(&mut reference.mime, 255, "任务文件 MIME")?;
+        Ok(())
+    }
+
+    fn processing_parameter_is_valid(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::String(value) => value.len() <= 16 * 1_024,
+            serde_json::Value::Bool(_) | serde_json::Value::Number(_) => true,
+            serde_json::Value::Array(values) => {
+                values.len() <= 256
+                    && values.iter().all(|value| {
+                        value
+                            .as_str()
+                            .is_some_and(|value| value.len() <= 16 * 1_024)
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    fn interrupted_processing_job_detail(detail: Option<String>) -> String {
+        let Some(detail) = detail.filter(|detail| !detail.trim().is_empty()) else {
+            return PROCESSING_JOB_INTERRUPTED_MESSAGE.into();
+        };
+        let max_prefix = PROCESSING_JOB_DETAIL_MAX_BYTES
+            .saturating_sub(PROCESSING_JOB_INTERRUPTED_MESSAGE.len() + 1);
+        let mut boundary = detail.len().min(max_prefix);
+        while boundary > 0 && !detail.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        format!(
+            "{}\n{PROCESSING_JOB_INTERRUPTED_MESSAGE}",
+            &detail[..boundary]
+        )
+    }
+
+    fn normalize_processing_job(job: &mut VaultProcessingJob) -> Result<()> {
+        if !Self::valid_document_id(&job.id) {
+            bail!("处理任务 ID 无效")
+        }
+        if !Self::processing_job_kind_is_valid(&job.kind) {
+            bail!("处理任务类型无效")
+        }
+        if !Self::processing_job_status_is_valid(&job.status) {
+            bail!("处理任务状态无效")
+        }
+        job.label = job.label.trim().to_owned();
+        if job.label.is_empty() || job.label.len() > 512 {
+            bail!("处理任务标题为空或过长")
+        }
+        if !job.progress.is_finite() || !(0.0..=100.0).contains(&job.progress) {
+            bail!("处理任务进度必须在 0 到 100 之间")
+        }
+        if job.input_names.len() > 256 || job.output_names.len() > 256 {
+            bail!("单个处理任务最多记录 256 个输入和输出名称")
+        }
+        Self::normalize_processing_name_list(&mut job.input_names, "输入文件")?;
+        Self::normalize_processing_name_list(&mut job.output_names, "输出文件")?;
+        if job.inputs.len() > 256 || job.outputs.len() > 256 {
+            bail!("单个处理任务最多记录 256 个输入和输出引用")
+        }
+        for reference in job.inputs.iter_mut().chain(job.outputs.iter_mut()) {
+            Self::normalize_processing_file_reference(reference)?;
+        }
+        Self::normalize_optional_processing_text(&mut job.error_code, 128, "处理任务错误码")?;
+        Self::normalize_optional_processing_text(&mut job.tool_id, 256, "处理任务工具 ID")?;
+        Self::normalize_optional_processing_text(&mut job.route, 2_048, "处理任务页面地址")?;
+        Self::normalize_optional_processing_text(
+            &mut job.detail,
+            PROCESSING_JOB_DETAIL_MAX_BYTES,
+            "处理任务详情",
+        )?;
+        let parameters = job
+            .parameters
+            .as_object()
+            .context("处理任务参数必须是对象")?;
+        if parameters.len() > 128
+            || parameters
+                .keys()
+                .any(|key| key.is_empty() || key.len() > 256)
+            || parameters
+                .values()
+                .any(|value| !Self::processing_parameter_is_valid(value))
+            || serde_json::to_vec(&job.parameters)?.len() > PROCESSING_JOB_PARAMETERS_MAX_BYTES
+        {
+            bail!("处理任务参数结构无效或超过 256 KB")
+        }
+
+        let now = Utc::now().to_rfc3339();
+        if job.created_at.trim().is_empty() {
+            job.created_at = now.clone();
+        } else {
+            Self::normalize_processing_timestamp(&mut job.created_at, "处理任务创建时间")?;
+        }
+        Self::normalize_optional_processing_timestamp(&mut job.started_at, "处理任务开始时间")?;
+        Self::normalize_optional_processing_timestamp(&mut job.completed_at, "处理任务完成时间")?;
+        match job.status.as_str() {
+            "queued" => {
+                job.started_at = None;
+                job.completed_at = None;
+            }
+            "running" => {
+                if job.started_at.is_none() {
+                    job.started_at = Some(now.clone());
+                }
+                job.completed_at = None;
+            }
+            _ => {
+                if job.completed_at.is_none() {
+                    job.completed_at = Some(now.clone());
+                }
+            }
+        }
+        job.updated_at = Some(now);
+        Ok(())
+    }
+
+    fn deserialize_processing_json<T: DeserializeOwned>(
+        row: &rusqlite::Row<'_>,
+        index: usize,
+    ) -> rusqlite::Result<T> {
+        let value = row.get::<_, String>(index)?;
+        serde_json::from_str(&value).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(index, Type::Text, Box::new(error))
+        })
+    }
+
+    fn map_processing_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VaultProcessingJob> {
+        Ok(VaultProcessingJob {
+            id: row.get(0)?,
+            kind: row.get(1)?,
+            label: row.get(2)?,
+            status: row.get(3)?,
+            progress: row.get(4)?,
+            error_code: row.get(5)?,
+            input_names: Self::deserialize_processing_json(row, 6)?,
+            output_names: Self::deserialize_processing_json(row, 7)?,
+            tool_id: row.get(8)?,
+            route: row.get(9)?,
+            parameters: Self::deserialize_processing_json(row, 10)?,
+            inputs: Self::deserialize_processing_json(row, 11)?,
+            outputs: Self::deserialize_processing_json(row, 12)?,
+            started_at: row.get(13)?,
+            completed_at: row.get(14)?,
+            retryable: row.get::<_, i64>(15)? != 0,
+            detail: row.get(16)?,
+            created_at: row.get(17)?,
+            updated_at: Some(row.get(18)?),
+        })
+    }
+
+    fn write_processing_job(
+        connection: &rusqlite::Connection,
+        job: &VaultProcessingJob,
+        owner_session: Option<&str>,
+        upsert: bool,
+    ) -> Result<usize> {
+        let sql = if upsert {
+            "
+            INSERT INTO processing_jobs(
+              id, kind, label, status, progress, error_code,
+              input_names_json, output_names_json, tool_id, route,
+              parameters_json, inputs_json, outputs_json, started_at,
+              completed_at, retryable, detail, created_at, updated_at,
+              owner_session
+            ) VALUES (
+              ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+              ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
+            )
+            ON CONFLICT(id) DO UPDATE SET
+              kind = excluded.kind,
+              label = excluded.label,
+              status = excluded.status,
+              progress = excluded.progress,
+              error_code = excluded.error_code,
+              input_names_json = excluded.input_names_json,
+              output_names_json = excluded.output_names_json,
+              tool_id = excluded.tool_id,
+              route = excluded.route,
+              parameters_json = excluded.parameters_json,
+              inputs_json = excluded.inputs_json,
+              outputs_json = excluded.outputs_json,
+              started_at = excluded.started_at,
+              completed_at = excluded.completed_at,
+              retryable = excluded.retryable,
+              detail = excluded.detail,
+              updated_at = excluded.updated_at,
+              owner_session = excluded.owner_session
+            "
+        } else {
+            "
+            INSERT OR IGNORE INTO processing_jobs(
+              id, kind, label, status, progress, error_code,
+              input_names_json, output_names_json, tool_id, route,
+              parameters_json, inputs_json, outputs_json, started_at,
+              completed_at, retryable, detail, created_at, updated_at,
+              owner_session
+            ) VALUES (
+              ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+              ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
+            )
+            "
+        };
+        Ok(connection.execute(
+            sql,
+            rusqlite::params![
+                &job.id,
+                &job.kind,
+                &job.label,
+                &job.status,
+                job.progress,
+                &job.error_code,
+                serde_json::to_string(&job.input_names)?,
+                serde_json::to_string(&job.output_names)?,
+                &job.tool_id,
+                &job.route,
+                serde_json::to_string(&job.parameters)?,
+                serde_json::to_string(&job.inputs)?,
+                serde_json::to_string(&job.outputs)?,
+                &job.started_at,
+                &job.completed_at,
+                i64::from(job.retryable),
+                &job.detail,
+                &job.created_at,
+                job.updated_at.as_deref().context("处理任务缺少更新时间")?,
+                owner_session,
+            ],
+        )?)
+    }
+
+    fn prune_processing_jobs(connection: &rusqlite::Connection, limit: i64) -> Result<usize> {
+        let active_count: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM processing_jobs WHERE status IN ('queued', 'running')",
+            [],
+            |row| row.get(0),
+        )?;
+        // The 500-row budget covers the whole history, not just completed
+        // entries. Active jobs are never evicted; they reduce the number of
+        // terminal rows retained so an ordinary bounded list still exposes
+        // every task that can currently change.
+        let terminal_limit = limit.max(0).saturating_sub(active_count);
+        Ok(connection.execute(
+            "
+            DELETE FROM processing_jobs
+            WHERE id IN (
+              SELECT id FROM processing_jobs
+              WHERE status IN ('succeeded', 'failed', 'cancelled')
+              ORDER BY COALESCE(completed_at, updated_at, created_at) DESC,
+                       created_at DESC, id DESC
+              LIMIT -1 OFFSET ?1
+            )
+            ",
+            [terminal_limit],
+        )?)
+    }
+
+    fn recover_interrupted_processing_jobs(
+        &self,
+        connection: &rusqlite::Connection,
+    ) -> Result<usize> {
+        let session = processing_session_id();
+        let interrupted: bool = connection.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM processing_jobs
+               WHERE status IN ('queued', 'running')
+                 AND COALESCE(owner_session, '') <> ?1
+             )",
+            [session],
+            |row| row.get(0),
+        )?;
+        if !interrupted {
+            return Ok(0);
+        }
+        let now = Utc::now().to_rfc3339();
+        Ok(connection.execute(
+            "
+            UPDATE processing_jobs
+            SET status = 'cancelled',
+                error_code = 'APP_RESTARTED',
+                detail = CASE
+                  WHEN detail IS NULL OR TRIM(detail) = ''
+                    THEN ?3
+                  ELSE substr(detail, 1, 16000) || char(10) || ?3
+                END,
+                completed_at = ?2,
+                updated_at = ?2,
+                retryable = 1,
+                owner_session = NULL
+            WHERE status IN ('queued', 'running')
+              AND COALESCE(owner_session, '') <> ?1
+            ",
+            (session, &now, PROCESSING_JOB_INTERRUPTED_MESSAGE),
+        )?)
+    }
+
+    pub fn get_processing_job(&self, id: String) -> Result<VaultProcessingJob> {
+        if !Self::valid_document_id(&id) {
+            bail!("处理任务 ID 无效")
+        }
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "
+                SELECT id, kind, label, status, progress, error_code,
+                       input_names_json, output_names_json, tool_id, route,
+                       parameters_json, inputs_json, outputs_json, started_at,
+                       completed_at, retryable, detail, created_at, updated_at
+                FROM processing_jobs WHERE id = ?1
+                ",
+                [&id],
+                Self::map_processing_job_row,
+            )
+            .context("处理任务不存在")
+    }
+
+    pub fn list_processing_jobs(
+        &self,
+        limit: usize,
+        mut before_created_at: Option<String>,
+        before_id: Option<String>,
+        status: Option<String>,
+        kind: Option<String>,
+    ) -> Result<Vec<VaultProcessingJob>> {
+        if status
+            .as_deref()
+            .is_some_and(|status| !Self::processing_job_status_is_valid(status))
+        {
+            bail!("处理任务状态筛选无效")
+        }
+        if kind
+            .as_deref()
+            .is_some_and(|kind| !Self::processing_job_kind_is_valid(kind))
+        {
+            bail!("处理任务类型筛选无效")
+        }
+        if let Some(before) = &mut before_created_at {
+            Self::normalize_processing_timestamp(before, "处理任务分页时间")?;
+        }
+        if before_created_at.is_some() != before_id.is_some() {
+            bail!("处理任务分页游标不完整")
+        }
+        if before_id
+            .as_deref()
+            .is_some_and(|id| !Self::valid_document_id(id))
+        {
+            bail!("处理任务分页 ID 无效")
+        }
+        let safe_limit = i64::try_from(limit.clamp(1, 500)).unwrap_or(100);
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "
+            SELECT id, kind, label, status, progress, error_code,
+                   input_names_json, output_names_json, tool_id, route,
+                   parameters_json, inputs_json, outputs_json, started_at,
+                   completed_at, retryable, detail, created_at, updated_at
+            FROM processing_jobs
+            WHERE (
+                    ?1 IS NULL
+                    OR created_at < ?1
+                    OR (created_at = ?1 AND id < ?2)
+                  )
+              AND (?3 IS NULL OR status = ?3)
+              AND (?4 IS NULL OR kind = ?4)
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?5
+            ",
+        )?;
+        let rows = statement.query_map(
+            rusqlite::params![
+                before_created_at.as_deref(),
+                before_id.as_deref(),
+                status.as_deref(),
+                kind.as_deref(),
+                safe_limit,
+            ],
+            Self::map_processing_job_row,
+        )?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    fn initial_processing_jobs(&self) -> Result<(Vec<VaultProcessingJob>, bool)> {
+        let mut jobs = self.list_processing_jobs(121, None, None, None, None)?;
+        let has_more = jobs.len() > 120;
+        jobs.truncate(120);
+        Ok((jobs, has_more))
+    }
+
+    pub fn save_processing_job(&self, mut job: VaultProcessingJob) -> Result<VaultProcessingJob> {
+        Self::normalize_processing_job(&mut job)?;
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let previous_status: Option<String> = transaction
+            .query_row(
+                "SELECT status FROM processing_jobs WHERE id = ?1",
+                [&job.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if Self::processing_job_is_active(&job.status)
+            && !previous_status
+                .as_deref()
+                .is_some_and(Self::processing_job_is_active)
+        {
+            let active_count: i64 = transaction.query_row(
+                "SELECT COUNT(*) FROM processing_jobs WHERE status IN ('queued', 'running')",
+                [],
+                |row| row.get(0),
+            )?;
+            if active_count >= PROCESSING_ACTIVE_JOB_LIMIT {
+                bail!("同时排队或运行的处理任务已达到 64 个上限")
+            }
+        }
+        let owner_session =
+            Self::processing_job_is_active(&job.status).then_some(processing_session_id());
+        Self::write_processing_job(&transaction, &job, owner_session, true)?;
+        Self::prune_processing_jobs(&transaction, PROCESSING_JOB_HISTORY_LIMIT)?;
+        transaction.commit()?;
+        self.get_processing_job(job.id)
+    }
+
+    pub fn hydrate_processing_jobs(
+        &self,
+        browser_jobs: Vec<VaultProcessingJob>,
+    ) -> Result<VaultProcessingJobHydration> {
+        if browser_jobs.len() > PROCESSING_JOB_MIGRATION_LIMIT {
+            bail!("浏览器处理任务历史超过 500 条迁移上限")
+        }
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        // Commands reopen the Vault service, so recovery belongs to this
+        // once-per-renderer hydration boundary rather than `open()`. Otherwise
+        // ordinary saves pay for a recovery scan and can misclassify work when
+        // the service lifecycle changes independently of the application.
+        self.recover_interrupted_processing_jobs(&connection)?;
+        let migrated: Option<String> = connection
+            .query_row(
+                "SELECT value FROM vault_meta WHERE key = 'browser-processing-jobs-migration-v1'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if migrated.is_some() {
+            drop(connection);
+            let (jobs, has_more) = self.initial_processing_jobs()?;
+            return Ok(VaultProcessingJobHydration {
+                jobs,
+                migrated: false,
+                imported_count: 0,
+                skipped_count: 0,
+                has_more,
+            });
+        }
+
+        if !browser_jobs.is_empty() {
+            let migration_directory = self.root.join(".toolknit/migrations");
+            fs::create_dir_all(&migration_directory)?;
+            let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+            fs::write(
+                migration_directory.join(format!(
+                    "browser-processing-jobs-before-vault-{timestamp}-{}.json",
+                    Uuid::now_v7()
+                )),
+                serde_json::to_vec_pretty(&browser_jobs)?,
+            )?;
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let mut normalized = Vec::with_capacity(browser_jobs.len());
+        let mut skipped_count = 0usize;
+        for mut job in browser_jobs {
+            // An active row loaded from localStorage belongs to an earlier
+            // renderer lifetime. It cannot still be executing after desktop
+            // hydration, so never claim it for the current process session.
+            if Self::processing_job_is_active(&job.status) {
+                job.status = "cancelled".into();
+                job.error_code = Some("APP_RESTARTED".into());
+                job.retryable = true;
+                job.completed_at = Some(now.clone());
+                job.detail = Some(Self::interrupted_processing_job_detail(job.detail.take()));
+            }
+            match Self::normalize_processing_job(&mut job) {
+                Ok(()) => normalized.push(job),
+                Err(_) => skipped_count += 1,
+            }
+        }
+
+        let transaction = connection.transaction()?;
+        let mut imported_count = 0usize;
+        for job in &normalized {
+            imported_count += Self::write_processing_job(&transaction, job, None, false)?;
+        }
+        Self::prune_processing_jobs(&transaction, PROCESSING_JOB_HISTORY_LIMIT)?;
+        transaction.execute(
+            "
+            INSERT INTO vault_meta(key, value, updated_at)
+            VALUES ('browser-processing-jobs-migration-v1', ?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET
+              value = excluded.value,
+              updated_at = excluded.updated_at
+            ",
+            (
+                format!(
+                    "imported={imported_count};skipped={skipped_count};received={}",
+                    normalized.len() + skipped_count
+                ),
+                &now,
+            ),
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        let (jobs, has_more) = self.initial_processing_jobs()?;
+        Ok(VaultProcessingJobHydration {
+            jobs,
+            migrated: true,
+            imported_count,
+            skipped_count,
+            has_more,
+        })
+    }
+
+    pub fn delete_processing_job(&self, id: String) -> Result<()> {
+        if !Self::valid_document_id(&id) {
+            bail!("处理任务 ID 无效")
+        }
+        let connection = self.connection()?;
+        connection.execute("DELETE FROM processing_jobs WHERE id = ?1", [&id])?;
+        Ok(())
+    }
+
+    pub fn delete_processing_jobs(&self, ids: Vec<String>) -> Result<usize> {
+        if ids.len() > 500 {
+            bail!("一次最多删除 500 条处理任务")
+        }
+        let unique = ids.iter().collect::<HashSet<_>>();
+        if unique.len() != ids.len() {
+            bail!("待删除的处理任务 ID 重复")
+        }
+        if ids.iter().any(|id| !Self::valid_document_id(id)) {
+            bail!("待删除的处理任务 ID 无效")
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let mut deleted = 0usize;
+        for id in ids {
+            deleted += transaction.execute("DELETE FROM processing_jobs WHERE id = ?1", [&id])?;
+        }
+        transaction.commit()?;
+        Ok(deleted)
+    }
+
+    pub fn clear_finished_processing_jobs(&self) -> Result<usize> {
+        let connection = self.connection()?;
+        Ok(connection.execute(
+            "DELETE FROM processing_jobs WHERE status IN ('succeeded', 'failed', 'cancelled')",
+            [],
+        )?)
     }
 
     fn clipboard_asset_directory(&self) -> PathBuf {
@@ -3543,6 +4642,30 @@ impl VaultService {
         Self::record_document_version(transaction, document, content_hash, true)
     }
 
+    fn review_due_values<'a>(
+        review: &'a serde_json::Value,
+        field: &str,
+    ) -> Result<(Option<&'a str>, Option<i64>)> {
+        if !review.is_object() {
+            bail!("{field}必须是对象")
+        }
+        if serde_json::to_vec(review)?.len() > 64 * 1024 {
+            bail!("{field}超过 64 KB")
+        }
+        let Some(due_value) = review.get("due") else {
+            return Ok((None, None));
+        };
+        if due_value.is_null() {
+            return Ok((None, None));
+        }
+        let due = due_value
+            .as_str()
+            .with_context(|| format!("{field}到期时间必须是字符串"))?;
+        let parsed = chrono::DateTime::parse_from_rfc3339(due.trim())
+            .with_context(|| format!("{field}到期时间不是有效的 RFC 3339 时间"))?;
+        Ok((Some(due), Some(parsed.timestamp())))
+    }
+
     fn normalize_document(mut document: VaultDocument) -> Result<VaultDocument> {
         if !Self::valid_document_id(&document.id) {
             bail!("文档 ID 无效")
@@ -3568,9 +4691,13 @@ impl VaultService {
         document.error_types.retain(|kind| !kind.trim().is_empty());
         document.difficulty = document.difficulty.clamp(0, 5);
         if document.kind == "question" {
-            document.review_facets.retain(|facet, review| {
-                facet == "error" && review.get("due").and_then(|value| value.as_str()).is_some()
-            });
+            document.review_facets.retain(|facet, _| facet == "error");
+            if let Some(review) = document.review.as_ref() {
+                Self::review_due_values(review, "题目答案复习状态")?;
+            }
+            for review in document.review_facets.values() {
+                Self::review_due_values(review, "题目错因复习状态")?;
+            }
             document.review_enabled =
                 document.review.is_some() || !document.review_facets.is_empty();
         } else {
@@ -3658,18 +4785,18 @@ impl VaultService {
         )?;
         if document.review_enabled {
             if let Some(review) = document.review.as_ref() {
-                let due = review.get("due").and_then(|value| value.as_str());
+                let (due, due_epoch) = Self::review_due_values(review, "题目答案复习状态")?;
                 transaction.execute("\
-                    INSERT INTO review_cards(id, entity_id, facet, due, fsrs_state, created_at, updated_at)
-                    VALUES (?1, ?2, 'default', ?3, ?4, ?5, ?6)
-                ", (format!("{}:default", document.id), &document.id, due, serde_json::to_string(review)?, &document.created_at, &document.updated_at))?;
+                    INSERT INTO review_cards(id, entity_id, facet, due, due_epoch, fsrs_state, created_at, updated_at)
+                    VALUES (?1, ?2, 'default', ?3, ?4, ?5, ?6, ?7)
+                ", (format!("{}:default", document.id), &document.id, due, due_epoch, serde_json::to_string(review)?, &document.created_at, &document.updated_at))?;
             }
             if let Some(review) = document.review_facets.get("error") {
-                let due = review.get("due").and_then(|value| value.as_str());
+                let (due, due_epoch) = Self::review_due_values(review, "题目错因复习状态")?;
                 transaction.execute("\
-                    INSERT INTO review_cards(id, entity_id, facet, due, fsrs_state, created_at, updated_at)
-                    VALUES (?1, ?2, 'error', ?3, ?4, ?5, ?6)
-                ", (format!("{}:error", document.id), &document.id, due, serde_json::to_string(review)?, &document.created_at, &document.updated_at))?;
+                    INSERT INTO review_cards(id, entity_id, facet, due, due_epoch, fsrs_state, created_at, updated_at)
+                    VALUES (?1, ?2, 'error', ?3, ?4, ?5, ?6, ?7)
+                ", (format!("{}:error", document.id), &document.id, due, due_epoch, serde_json::to_string(review)?, &document.created_at, &document.updated_at))?;
             }
         } else {
             transaction.execute(
@@ -4192,10 +5319,15 @@ impl VaultService {
             sense.examples.retain(|item| !item.trim().is_empty());
             sense.collocations.retain(|item| !item.trim().is_empty());
             sense.synonyms.retain(|item| !item.trim().is_empty());
-            sense.review_facets.retain(|facet, review| {
-                matches!(facet.as_str(), "spelling" | "example")
-                    && review.get("due").and_then(|value| value.as_str()).is_some()
-            });
+            sense
+                .review_facets
+                .retain(|facet, _| matches!(facet.as_str(), "spelling" | "example" | "comparison"));
+            if let Some(review) = sense.review.as_ref() {
+                Self::review_due_values(review, "单词词义复习状态")?;
+            }
+            for (facet, review) in &sense.review_facets {
+                Self::review_due_values(review, &format!("单词{facet}复习状态"))?;
+            }
             sense.review_enabled = sense.review.is_some() || !sense.review_facets.is_empty();
         }
         if entry
@@ -4252,19 +5384,20 @@ impl VaultService {
                 (&sense.id, &entry.id, &sense.part_of_speech, &sense.definition, serde_json::to_string(&sense.examples)?, serde_json::to_string(&sense.collocations)?, serde_json::to_string(&sense.synonyms)?))?;
             if sense.review_enabled {
                 if let Some(review) = sense.review.as_ref() {
-                    let due = review.get("due").and_then(|value| value.as_str());
+                    let (due, due_epoch) = Self::review_due_values(review, "单词词义复习状态")?;
                     transaction.execute("\
-                        INSERT INTO review_cards(id, entity_id, facet, due, fsrs_state, created_at, updated_at)
-                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                    ", (format!("{}:sense:{}", entry.id, sense.id), &entry.id, format!("sense:{}", sense.id), due, serde_json::to_string(review)?, &entry.created_at, &entry.updated_at))?;
+                        INSERT INTO review_cards(id, entity_id, facet, due, due_epoch, fsrs_state, created_at, updated_at)
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    ", (format!("{}:sense:{}", entry.id, sense.id), &entry.id, format!("sense:{}", sense.id), due, due_epoch, serde_json::to_string(review)?, &entry.created_at, &entry.updated_at))?;
                 }
-                for facet in ["spelling", "example"] {
+                for facet in ["spelling", "example", "comparison"] {
                     if let Some(review) = sense.review_facets.get(facet) {
-                        let due = review.get("due").and_then(|value| value.as_str());
+                        let (due, due_epoch) =
+                            Self::review_due_values(review, &format!("单词{facet}复习状态"))?;
                         transaction.execute("\
-                            INSERT INTO review_cards(id, entity_id, facet, due, fsrs_state, created_at, updated_at)
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                        ", (format!("{}:sense:{}:{facet}", entry.id, sense.id), &entry.id, format!("sense:{}:{facet}", sense.id), due, serde_json::to_string(review)?, &entry.created_at, &entry.updated_at))?;
+                            INSERT INTO review_cards(id, entity_id, facet, due, due_epoch, fsrs_state, created_at, updated_at)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                        ", (format!("{}:sense:{}:{facet}", entry.id, sense.id), &entry.id, format!("sense:{}:{facet}", sense.id), due, due_epoch, serde_json::to_string(review)?, &entry.created_at, &entry.updated_at))?;
                     }
                 }
             }
@@ -4297,7 +5430,8 @@ impl VaultService {
                    vocabulary_entries.forms_json, entities.created_at, entities.updated_at,
                    vocabulary_senses.id, vocabulary_senses.part_of_speech, vocabulary_senses.definition,
                    vocabulary_senses.examples_json, vocabulary_senses.collocations_json, vocabulary_senses.synonyms_json,
-                   meaning_review.fsrs_state, spelling_review.fsrs_state, example_review.fsrs_state
+                   meaning_review.fsrs_state, spelling_review.fsrs_state, example_review.fsrs_state,
+                   comparison_review.fsrs_state
             FROM vocabulary_entries INNER JOIN entities ON entities.id = vocabulary_entries.entity_id
             LEFT JOIN vocabulary_senses ON vocabulary_senses.word_id = vocabulary_entries.entity_id
             LEFT JOIN review_cards AS meaning_review
@@ -4306,6 +5440,8 @@ impl VaultService {
               ON spelling_review.entity_id = vocabulary_senses.word_id AND spelling_review.facet = ('sense:' || vocabulary_senses.id || ':spelling')
             LEFT JOIN review_cards AS example_review
               ON example_review.entity_id = vocabulary_senses.word_id AND example_review.facet = ('sense:' || vocabulary_senses.id || ':example')
+            LEFT JOIN review_cards AS comparison_review
+              ON comparison_review.entity_id = vocabulary_senses.word_id AND comparison_review.facet = ('sense:' || vocabulary_senses.id || ':comparison')
             ORDER BY entities.updated_at DESC, vocabulary_entries.entity_id, vocabulary_senses.rowid
         ")?;
         let rows = statement.query_map([], |row| {
@@ -4326,6 +5462,7 @@ impl VaultService {
                 row.get::<_, Option<String>>(13)?,
                 row.get::<_, Option<String>>(14)?,
                 row.get::<_, Option<String>>(15)?,
+                row.get::<_, Option<String>>(16)?,
             ))
         })?;
         let mut entries = Vec::new();
@@ -4347,6 +5484,7 @@ impl VaultService {
                 review_json,
                 spelling_review_json,
                 example_review_json,
+                comparison_review_json,
             ) = row?;
             if entries.last().map(|entry: &VocabularyEntry| &entry.id) != Some(&id) {
                 entries.push(VocabularyEntry {
@@ -4367,6 +5505,7 @@ impl VaultService {
             for (facet, state) in [
                 ("spelling", spelling_review_json),
                 ("example", example_review_json),
+                ("comparison", comparison_review_json),
             ] {
                 if let Some(value) = state.and_then(|value| serde_json::from_str(&value).ok()) {
                     review_facets.insert(facet.to_string(), value);
@@ -4399,6 +5538,1113 @@ impl VaultService {
                 });
         }
         Ok(entries)
+    }
+
+    pub fn list_vocabulary_summaries(&self) -> Result<Vec<VocabularySummary>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "
+            SELECT vocabulary_entries.entity_id, vocabulary_entries.lemma,
+                   vocabulary_entries.language, vocabulary_entries.pronunciation,
+                   COUNT(vocabulary_senses.id),
+                   COALESCE((
+                     SELECT first_sense.part_of_speech
+                     FROM vocabulary_senses AS first_sense
+                     WHERE first_sense.word_id = vocabulary_entries.entity_id
+                     ORDER BY first_sense.rowid LIMIT 1
+                   ), ''),
+                   COALESCE((
+                     SELECT first_sense.definition
+                     FROM vocabulary_senses AS first_sense
+                     WHERE first_sense.word_id = vocabulary_entries.entity_id
+                     ORDER BY first_sense.rowid LIMIT 1
+                   ), ''),
+                   entities.created_at, entities.updated_at
+            FROM vocabulary_entries
+            INNER JOIN entities ON entities.id = vocabulary_entries.entity_id
+            LEFT JOIN vocabulary_senses ON vocabulary_senses.word_id = vocabulary_entries.entity_id
+            WHERE entities.type = 'word'
+            GROUP BY vocabulary_entries.entity_id
+            ORDER BY entities.updated_at DESC, vocabulary_entries.entity_id DESC
+            ",
+        )?;
+        let summaries = statement
+            .query_map([], |row| {
+                Ok(VocabularySummary {
+                    id: row.get(0)?,
+                    lemma: row.get(1)?,
+                    language: row.get(2)?,
+                    pronunciation: row.get(3)?,
+                    sense_count: row.get(4)?,
+                    part_of_speech_preview: row.get(5)?,
+                    definition_preview: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(summaries)
+    }
+
+    /// FTS5 still searches examples, collocations, synonyms, and word forms,
+    /// but list results stay compact until the user opens one word.
+    pub fn search_vocabulary_summaries(
+        &self,
+        query: String,
+        limit: usize,
+    ) -> Result<Vec<VocabularySummary>> {
+        let fts_query = Self::fts_query(&query);
+        if fts_query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "
+            SELECT vocabulary_entries.entity_id, vocabulary_entries.lemma,
+                   vocabulary_entries.language, vocabulary_entries.pronunciation,
+                   (SELECT COUNT(*) FROM vocabulary_senses AS counted_sense
+                    WHERE counted_sense.word_id = vocabulary_entries.entity_id),
+                   COALESCE((SELECT first_sense.part_of_speech FROM vocabulary_senses AS first_sense
+                    WHERE first_sense.word_id = vocabulary_entries.entity_id ORDER BY first_sense.rowid LIMIT 1), ''),
+                   COALESCE((SELECT first_sense.definition FROM vocabulary_senses AS first_sense
+                    WHERE first_sense.word_id = vocabulary_entries.entity_id ORDER BY first_sense.rowid LIMIT 1), ''),
+                   entities.created_at, entities.updated_at
+            FROM documents_fts
+            INNER JOIN vocabulary_entries ON vocabulary_entries.entity_id = documents_fts.entity_id
+            INNER JOIN entities ON entities.id = vocabulary_entries.entity_id
+            WHERE documents_fts MATCH ?1 AND entities.type = 'word'
+            ORDER BY bm25(documents_fts), entities.updated_at DESC
+            LIMIT ?2
+            ",
+        )?;
+        let summaries = statement
+            .query_map((fts_query, limit.clamp(1, 200) as i64), |row| {
+                Ok(VocabularySummary {
+                    id: row.get(0)?,
+                    lemma: row.get(1)?,
+                    language: row.get(2)?,
+                    pronunciation: row.get(3)?,
+                    sense_count: row.get(4)?,
+                    part_of_speech_preview: row.get(5)?,
+                    definition_preview: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(summaries)
+    }
+
+    /// Loads exactly one structured word after it becomes the active review
+    /// card or editor entry. This avoids the old `list_vocabulary + find`
+    /// pattern, which scaled linearly with the entire word library.
+    pub fn get_vocabulary(&self, id: String) -> Result<VocabularyEntry> {
+        if !Self::valid_document_id(&id) {
+            bail!("单词 ID 无效")
+        }
+        let connection = self.connection()?;
+        let (id, lemma, language, pronunciation, forms_json, created_at, updated_at) = connection
+            .query_row(
+                "
+                SELECT vocabulary_entries.entity_id, vocabulary_entries.lemma,
+                       vocabulary_entries.language, vocabulary_entries.pronunciation,
+                       vocabulary_entries.forms_json, entities.created_at, entities.updated_at
+                FROM vocabulary_entries
+                INNER JOIN entities ON entities.id = vocabulary_entries.entity_id
+                WHERE vocabulary_entries.entity_id = ?1 AND entities.type = 'word'
+                ",
+                [&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                    ))
+                },
+            )
+            .optional()?
+            .context("单词不存在")?;
+        let forms: serde_json::Value =
+            serde_json::from_str(&forms_json).context("单词词形数据已损坏")?;
+        if !forms.is_object() {
+            bail!("单词词形数据必须是对象")
+        }
+
+        let mut statement = connection.prepare(
+            "
+            SELECT vocabulary_senses.id, vocabulary_senses.part_of_speech,
+                   vocabulary_senses.definition, vocabulary_senses.examples_json,
+                   vocabulary_senses.collocations_json, vocabulary_senses.synonyms_json,
+                   meaning_review.fsrs_state, spelling_review.fsrs_state,
+                   example_review.fsrs_state, comparison_review.fsrs_state
+            FROM vocabulary_senses
+            LEFT JOIN review_cards AS meaning_review
+              ON meaning_review.entity_id = vocabulary_senses.word_id
+             AND meaning_review.facet = ('sense:' || vocabulary_senses.id)
+            LEFT JOIN review_cards AS spelling_review
+              ON spelling_review.entity_id = vocabulary_senses.word_id
+             AND spelling_review.facet = ('sense:' || vocabulary_senses.id || ':spelling')
+            LEFT JOIN review_cards AS example_review
+              ON example_review.entity_id = vocabulary_senses.word_id
+             AND example_review.facet = ('sense:' || vocabulary_senses.id || ':example')
+            LEFT JOIN review_cards AS comparison_review
+              ON comparison_review.entity_id = vocabulary_senses.word_id
+             AND comparison_review.facet = ('sense:' || vocabulary_senses.id || ':comparison')
+            WHERE vocabulary_senses.word_id = ?1
+            ORDER BY vocabulary_senses.rowid
+            ",
+        )?;
+        let rows = statement
+            .query_map([&id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut senses = Vec::with_capacity(rows.len());
+        for (
+            sense_id,
+            part_of_speech,
+            definition,
+            examples_json,
+            collocations_json,
+            synonyms_json,
+            review_json,
+            spelling_review_json,
+            example_review_json,
+            comparison_review_json,
+        ) in rows
+        {
+            let examples = serde_json::from_str(&examples_json).context("单词例句数据已损坏")?;
+            let collocations =
+                serde_json::from_str(&collocations_json).context("单词搭配数据已损坏")?;
+            let synonyms = serde_json::from_str(&synonyms_json).context("单词近义词数据已损坏")?;
+            let review = review_json
+                .map(|value| serde_json::from_str(&value).context("单词词义复习状态已损坏"))
+                .transpose()?;
+            let mut review_facets = HashMap::new();
+            for (facet, value) in [
+                ("spelling", spelling_review_json),
+                ("example", example_review_json),
+                ("comparison", comparison_review_json),
+            ] {
+                if let Some(value) = value {
+                    review_facets.insert(
+                        facet.into(),
+                        serde_json::from_str(&value)
+                            .with_context(|| format!("单词{facet}复习状态已损坏"))?,
+                    );
+                }
+            }
+            senses.push(VocabularySense {
+                id: sense_id,
+                part_of_speech: part_of_speech.unwrap_or_default(),
+                definition,
+                examples,
+                collocations,
+                synonyms,
+                review_enabled: review.is_some() || !review_facets.is_empty(),
+                review,
+                review_facets,
+            });
+        }
+        Ok(VocabularyEntry {
+            id,
+            lemma,
+            language,
+            pronunciation,
+            forms,
+            senses,
+            created_at,
+            updated_at,
+        })
+    }
+
+    fn canonical_review_time(value: Option<String>, field: &str) -> Result<(String, i64)> {
+        let value = value.unwrap_or_else(|| Utc::now().to_rfc3339());
+        if value.len() > 64 {
+            bail!("{field}过长")
+        }
+        let parsed = chrono::DateTime::parse_from_rfc3339(value.trim())
+            .with_context(|| format!("{field}不是有效的 RFC 3339 时间"))?
+            .with_timezone(&Utc);
+        Ok((parsed.to_rfc3339(), parsed.timestamp()))
+    }
+
+    fn review_state_from_json(value: &str, due: &str) -> Result<serde_json::Value> {
+        let mut state: serde_json::Value =
+            serde_json::from_str(value).context("复习卡调度状态已损坏")?;
+        if !state.is_object() {
+            bail!("复习卡调度状态必须是对象")
+        }
+        state["due"] = json!(due);
+        Ok(state)
+    }
+
+    fn compact_review_detail(parts: &[&str]) -> String {
+        let joined = parts
+            .iter()
+            .flat_map(|part| part.split_whitespace())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut detail = joined.chars().take(180).collect::<String>();
+        if joined.chars().count() > 180 {
+            detail.push('…');
+        }
+        detail
+    }
+
+    fn due_question_cards(
+        connection: &rusqlite::Connection,
+        as_of_epoch: i64,
+        cursor_due_epoch: Option<i64>,
+        cursor_id: Option<&str>,
+        limit: i64,
+        error_only: bool,
+    ) -> Result<Vec<VaultReviewCardSummary>> {
+        let mut statement = connection.prepare(
+            "
+            SELECT review_cards.id, review_cards.entity_id, entities.title,
+                   review_cards.facet, review_cards.due, review_cards.due_epoch,
+                   review_cards.fsrs_state,
+                   review_cards.created_at, review_cards.updated_at, entities.metadata_json
+            FROM review_cards INDEXED BY review_cards_due_epoch_idx
+            INNER JOIN entities ON entities.id = review_cards.entity_id
+            WHERE entities.type = 'question'
+              AND review_cards.due IS NOT NULL
+              AND review_cards.due_epoch IS NOT NULL
+              AND review_cards.due_epoch <= ?1
+              AND (
+                ?2 IS NULL
+                OR review_cards.due_epoch > ?2
+                OR (review_cards.due_epoch = ?2 AND review_cards.id > ?3)
+              )
+              AND (?5 = 0 OR review_cards.facet = 'error')
+            ORDER BY review_cards.due_epoch, review_cards.id
+            LIMIT ?4
+            ",
+        )?;
+        let rows = statement
+            .query_map(
+                rusqlite::params![
+                    as_of_epoch,
+                    cursor_due_epoch,
+                    cursor_id,
+                    limit,
+                    i64::from(error_only),
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, String>(9)?,
+                    ))
+                },
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(
+                |(
+                    id,
+                    entity_id,
+                    title,
+                    raw_facet,
+                    due,
+                    due_epoch,
+                    review_json,
+                    created_at,
+                    updated_at,
+                    metadata_json,
+                )| {
+                    let facet = match raw_facet.as_str() {
+                        "default" => "answer",
+                        "error" => "error",
+                        _ => bail!("题目复习卡方向无效"),
+                    };
+                    let metadata: serde_json::Value =
+                        serde_json::from_str(&metadata_json).context("题目复习卡元数据已损坏")?;
+                    let context = metadata
+                        .get("subject")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("未分类")
+                        .to_owned();
+                    let question_type = metadata
+                        .get("questionType")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    let source = metadata
+                        .pointer("/questionDetails/source")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    Ok(VaultReviewCardSummary {
+                        id,
+                        entity_id,
+                        entity_kind: "question".into(),
+                        title,
+                        facet: facet.into(),
+                        due: due.clone(),
+                        due_epoch,
+                        review: Self::review_state_from_json(&review_json, &due)?,
+                        sense_id: None,
+                        context,
+                        detail: Self::compact_review_detail(&[question_type, source]),
+                        created_at,
+                        updated_at,
+                    })
+                },
+            )
+            .collect()
+    }
+
+    fn due_word_cards(
+        connection: &rusqlite::Connection,
+        as_of_epoch: i64,
+        cursor_due_epoch: Option<i64>,
+        cursor_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<VaultReviewCardSummary>> {
+        let mut statement = connection.prepare(
+            "
+            SELECT review_cards.id, review_cards.entity_id, entities.title,
+                   review_cards.facet, review_cards.due, review_cards.due_epoch,
+                   review_cards.fsrs_state,
+                   review_cards.created_at, review_cards.updated_at,
+                   vocabulary_entries.language, vocabulary_senses.id,
+                   COALESCE(vocabulary_senses.part_of_speech, ''),
+                   vocabulary_senses.definition
+            FROM review_cards INDEXED BY review_cards_due_epoch_idx
+            INNER JOIN entities ON entities.id = review_cards.entity_id
+            INNER JOIN vocabulary_entries
+              ON vocabulary_entries.entity_id = review_cards.entity_id
+            INNER JOIN vocabulary_senses
+              ON vocabulary_senses.word_id = review_cards.entity_id
+             AND review_cards.facet IN (
+               'sense:' || vocabulary_senses.id,
+               'sense:' || vocabulary_senses.id || ':spelling',
+               'sense:' || vocabulary_senses.id || ':example',
+               'sense:' || vocabulary_senses.id || ':comparison'
+             )
+            WHERE entities.type = 'word'
+              AND review_cards.due IS NOT NULL
+              AND review_cards.due_epoch IS NOT NULL
+              AND review_cards.due_epoch <= ?1
+              AND (
+                ?2 IS NULL
+                OR review_cards.due_epoch > ?2
+                OR (review_cards.due_epoch = ?2 AND review_cards.id > ?3)
+              )
+            ORDER BY review_cards.due_epoch, review_cards.id
+            LIMIT ?4
+            ",
+        )?;
+        let rows = statement
+            .query_map(
+                rusqlite::params![as_of_epoch, cursor_due_epoch, cursor_id, limit],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, String>(9)?,
+                        row.get::<_, String>(10)?,
+                        row.get::<_, String>(11)?,
+                        row.get::<_, String>(12)?,
+                    ))
+                },
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(
+                |(
+                    id,
+                    entity_id,
+                    title,
+                    raw_facet,
+                    due,
+                    due_epoch,
+                    review_json,
+                    created_at,
+                    updated_at,
+                    language,
+                    sense_id,
+                    part_of_speech,
+                    definition,
+                )| {
+                    let base = format!("sense:{sense_id}");
+                    let facet = if raw_facet == base {
+                        "meaning"
+                    } else if raw_facet == format!("{base}:spelling") {
+                        "spelling"
+                    } else if raw_facet == format!("{base}:example") {
+                        "example"
+                    } else if raw_facet == format!("{base}:comparison") {
+                        "comparison"
+                    } else {
+                        bail!("单词复习卡方向无效")
+                    };
+                    Ok(VaultReviewCardSummary {
+                        id,
+                        entity_id,
+                        entity_kind: "word".into(),
+                        title,
+                        facet: facet.into(),
+                        due: due.clone(),
+                        due_epoch,
+                        review: Self::review_state_from_json(&review_json, &due)?,
+                        sense_id: Some(sense_id),
+                        context: language,
+                        detail: Self::compact_review_detail(&[&part_of_speech, &definition]),
+                        created_at,
+                        updated_at,
+                    })
+                },
+            )
+            .collect()
+    }
+
+    pub fn list_due_review_cards(
+        &self,
+        as_of: Option<String>,
+        limit: usize,
+        cursor: Option<VaultReviewCursor>,
+        review_kind: Option<String>,
+    ) -> Result<VaultReviewQueuePage> {
+        let (_, as_of_epoch) = Self::canonical_review_time(as_of, "复习队列截止时间")?;
+        let review_kind = review_kind.unwrap_or_else(|| "all".into());
+        if !matches!(review_kind.as_str(), "all" | "question" | "error" | "word") {
+            bail!("复习队列类型无效")
+        }
+        let (cursor_due_epoch, cursor_id) = match cursor {
+            Some(cursor) => {
+                if cursor.id.trim().is_empty() || cursor.id.len() > 512 {
+                    bail!("复习队列游标 ID 无效")
+                }
+                (Some(cursor.due_epoch), Some(cursor.id))
+            }
+            None => (None, None),
+        };
+        let safe_limit = limit.clamp(1, 500);
+        let fetch_limit = i64::try_from(safe_limit + 1).unwrap_or(101);
+        let connection = self.connection()?;
+        let mut cards = Vec::with_capacity((safe_limit + 1).min(501));
+        if matches!(review_kind.as_str(), "all" | "question" | "error") {
+            cards.extend(Self::due_question_cards(
+                &connection,
+                as_of_epoch,
+                cursor_due_epoch,
+                cursor_id.as_deref(),
+                fetch_limit,
+                review_kind == "error",
+            )?);
+        }
+        if matches!(review_kind.as_str(), "all" | "word") {
+            cards.extend(Self::due_word_cards(
+                &connection,
+                as_of_epoch,
+                cursor_due_epoch,
+                cursor_id.as_deref(),
+                fetch_limit,
+            )?);
+        }
+        cards.sort_by(|left, right| {
+            left.due_epoch
+                .cmp(&right.due_epoch)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let has_more = cards.len() > safe_limit;
+        cards.truncate(safe_limit);
+        let next_cursor = has_more.then(|| {
+            let card = cards.last().expect("non-empty review page has a cursor");
+            VaultReviewCursor {
+                due_epoch: card.due_epoch,
+                id: card.id.clone(),
+            }
+        });
+        Ok(VaultReviewQueuePage {
+            cards,
+            has_more,
+            next_cursor,
+        })
+    }
+
+    pub fn review_queue_summary(&self, as_of: Option<String>) -> Result<VaultReviewQueueSummary> {
+        let (_, as_of_epoch) = Self::canonical_review_time(as_of, "复习统计截止时间")?;
+        let connection = self.connection()?;
+        let (
+            scheduled_count,
+            reviewed_count,
+            due_count,
+            due_question_count,
+            due_error_count,
+            due_word_count,
+        ): (i64, i64, i64, i64, i64, i64) = connection.query_row(
+            "
+            SELECT COUNT(*),
+                   COALESCE(SUM(CASE WHEN COALESCE(json_extract(review_cards.fsrs_state, '$.repetitions'), 0) > 0 THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN review_cards.due_epoch <= ?1 THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN entities.type = 'question' AND review_cards.due_epoch <= ?1 THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN entities.type = 'question' AND review_cards.facet = 'error' AND review_cards.due_epoch <= ?1 THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN entities.type = 'word' AND review_cards.due_epoch <= ?1 THEN 1 ELSE 0 END), 0)
+            FROM review_cards
+            INNER JOIN entities ON entities.id = review_cards.entity_id
+            WHERE entities.type IN ('question', 'word')
+              AND review_cards.due IS NOT NULL
+              AND review_cards.due_epoch IS NOT NULL
+            ",
+            [as_of_epoch],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )?;
+        let (question_material_count, vocabulary_material_count): (i64, i64) = connection
+            .query_row(
+                "
+                SELECT COALESCE(SUM(CASE WHEN type = 'question' THEN 1 ELSE 0 END), 0),
+                       COALESCE(SUM(CASE WHEN type = 'word' THEN 1 ELSE 0 END), 0)
+                FROM entities
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+        let earliest_due = connection
+            .query_row(
+                "
+                SELECT review_cards.due FROM review_cards
+                INNER JOIN entities ON entities.id = review_cards.entity_id
+                WHERE entities.type IN ('question', 'word')
+                  AND review_cards.due IS NOT NULL
+                  AND review_cards.due_epoch IS NOT NULL
+                ORDER BY review_cards.due_epoch, review_cards.id
+                LIMIT 1
+                ",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let next_future_due = connection
+            .query_row(
+                "
+                SELECT review_cards.due FROM review_cards
+                INNER JOIN entities ON entities.id = review_cards.entity_id
+                WHERE entities.type IN ('question', 'word')
+                  AND review_cards.due IS NOT NULL
+                  AND review_cards.due_epoch > ?1
+                ORDER BY review_cards.due_epoch, review_cards.id
+                LIMIT 1
+                ",
+                [as_of_epoch],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(VaultReviewQueueSummary {
+            scheduled_count,
+            reviewed_count,
+            due_count,
+            due_question_count,
+            due_error_count,
+            due_word_count,
+            question_material_count,
+            vocabulary_material_count,
+            earliest_due,
+            next_future_due,
+        })
+    }
+
+    fn validate_review_card_id(card_id: &str) -> Result<()> {
+        if card_id.trim().is_empty() || card_id.len() > 512 || card_id.chars().any(char::is_control)
+        {
+            bail!("复习卡 ID 无效")
+        }
+        Ok(())
+    }
+
+    fn canonical_scheduled_review(
+        mut review: serde_json::Value,
+    ) -> Result<(serde_json::Value, String, i64)> {
+        let (due, _) = Self::review_due_values(&review, "下一次复习状态")?;
+        let due = due.context("下一次复习状态缺少到期时间")?;
+        let parsed = chrono::DateTime::parse_from_rfc3339(due.trim())
+            .context("下一次复习状态到期时间无效")?
+            .with_timezone(&Utc);
+        let canonical_due = parsed.to_rfc3339();
+        review["due"] = json!(canonical_due);
+        Ok((review, canonical_due, parsed.timestamp()))
+    }
+
+    fn review_state_from_parts(value: &str, due: Option<&str>) -> Result<serde_json::Value> {
+        let mut state: serde_json::Value =
+            serde_json::from_str(value).context("复习历史中的调度状态已损坏")?;
+        if !state.is_object() {
+            bail!("复习历史中的调度状态必须是对象")
+        }
+        if let Some(due) = due {
+            state["due"] = json!(due);
+        }
+        Ok(state)
+    }
+
+    /// Atomically records one grade and changes only its review card. Large
+    /// Markdown bodies and unrelated word senses are never read or rewritten.
+    pub fn grade_review_card(
+        &self,
+        input: VaultReviewGradeInput,
+    ) -> Result<VaultReviewGradeResult> {
+        Self::validate_review_card_id(&input.card_id)?;
+        if !matches!(input.rating.as_str(), "Again" | "Hard" | "Good" | "Easy") {
+            bail!("复习评分无效")
+        }
+        if input.expected_updated_at.trim().is_empty() || input.expected_updated_at.len() > 64 {
+            bail!("复习卡版本无效")
+        }
+        let (reviewed_at, reviewed_epoch) =
+            Self::canonical_review_time(input.reviewed_at, "复习时间")?;
+        let (next_review, next_due, next_due_epoch) =
+            Self::canonical_scheduled_review(input.next_review)?;
+        if next_due_epoch <= reviewed_epoch {
+            bail!("下一次复习时间必须晚于本次复习时间")
+        }
+        let next_state = serde_json::to_string(&next_review)?;
+        let applied_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+        let event_id = Uuid::now_v7().to_string();
+
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let existing = transaction
+            .query_row(
+                "SELECT entity_id, facet, due, due_epoch, fsrs_state, updated_at
+                 FROM review_cards WHERE id = ?1",
+                [&input.card_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()?
+            .context("复习卡不存在或已被删除")?;
+        let (entity_id, facet, previous_due, previous_due_epoch, previous_state, updated_at) =
+            existing;
+        if updated_at != input.expected_updated_at {
+            bail!("复习卡已在其他窗口更新，请刷新后再评分")
+        }
+        Self::review_state_from_parts(&previous_state, previous_due.as_deref())?;
+
+        transaction.execute(
+            "INSERT INTO review_events(
+               id, card_id, entity_id, facet, rating,
+               previous_due, previous_due_epoch, previous_state,
+               next_due, next_due_epoch, next_state,
+               reviewed_at, reviewed_epoch, applied_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            rusqlite::params![
+                &event_id,
+                &input.card_id,
+                &entity_id,
+                &facet,
+                &input.rating,
+                previous_due,
+                previous_due_epoch,
+                previous_state,
+                &next_due,
+                next_due_epoch,
+                &next_state,
+                &reviewed_at,
+                reviewed_epoch,
+                &applied_at,
+            ],
+        )?;
+        let changed = transaction.execute(
+            "UPDATE review_cards
+             SET due = ?1, due_epoch = ?2, fsrs_state = ?3, updated_at = ?4
+             WHERE id = ?5 AND updated_at = ?6",
+            rusqlite::params![
+                &next_due,
+                next_due_epoch,
+                &next_state,
+                &applied_at,
+                &input.card_id,
+                &input.expected_updated_at,
+            ],
+        )?;
+        if changed != 1 {
+            bail!("复习卡已发生变化，请刷新后重试")
+        }
+        transaction.commit()?;
+        Ok(VaultReviewGradeResult {
+            event_id,
+            card_id: input.card_id,
+            review: next_review,
+            reviewed_at,
+            updated_at: applied_at,
+        })
+    }
+
+    /// Undo is intentionally optimistic as well: it only succeeds while this
+    /// event is the newest active grade and the card still contains its exact
+    /// result. It can never roll back a later rating from another window.
+    pub fn undo_review_grade(&self, input: VaultReviewUndoInput) -> Result<VaultReviewGradeResult> {
+        if !Self::valid_document_id(&input.event_id) {
+            bail!("复习事件 ID 无效")
+        }
+        if input.expected_card_updated_at.trim().is_empty()
+            || input.expected_card_updated_at.len() > 64
+        {
+            bail!("复习卡版本无效")
+        }
+        let undone_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let event = transaction
+            .query_row(
+                "SELECT review_events.card_id, review_events.previous_due,
+                        review_events.previous_due_epoch, review_events.previous_state,
+                        review_events.next_due, review_events.next_state,
+                        review_events.reviewed_at, review_events.undone_at,
+                        review_cards.due, review_cards.fsrs_state, review_cards.updated_at
+                 FROM review_events
+                 INNER JOIN review_cards ON review_cards.id = review_events.card_id
+                 WHERE review_events.id = ?1",
+                [&input.event_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                        row.get::<_, String>(9)?,
+                        row.get::<_, String>(10)?,
+                    ))
+                },
+            )
+            .optional()?
+            .context("复习事件不存在，或对应卡片已被删除")?;
+        let (
+            card_id,
+            previous_due,
+            previous_due_epoch,
+            previous_state,
+            next_due,
+            next_state,
+            reviewed_at,
+            already_undone,
+            current_due,
+            current_state,
+            current_updated_at,
+        ) = event;
+        if already_undone.is_some() {
+            bail!("这次复习评分已经撤销")
+        }
+        if current_updated_at != input.expected_card_updated_at
+            || current_due.as_deref() != Some(next_due.as_str())
+            || current_state != next_state
+        {
+            bail!("复习卡已在评分后发生变化，不能安全撤销")
+        }
+        let newest_active_event: String = transaction.query_row(
+            "SELECT id FROM review_events
+             WHERE card_id = ?1 AND undone_at IS NULL
+             ORDER BY reviewed_epoch DESC, id DESC LIMIT 1",
+            [&card_id],
+            |row| row.get(0),
+        )?;
+        if newest_active_event != input.event_id {
+            bail!("只能撤销这张卡最近一次尚未撤销的评分")
+        }
+        let changed = transaction.execute(
+            "UPDATE review_cards
+             SET due = ?1, due_epoch = ?2, fsrs_state = ?3, updated_at = ?4
+             WHERE id = ?5 AND updated_at = ?6",
+            rusqlite::params![
+                previous_due,
+                previous_due_epoch,
+                &previous_state,
+                &undone_at,
+                &card_id,
+                &input.expected_card_updated_at,
+            ],
+        )?;
+        if changed != 1 {
+            bail!("复习卡已发生变化，不能安全撤销")
+        }
+        transaction.execute(
+            "UPDATE review_events SET undone_at = ?1 WHERE id = ?2 AND undone_at IS NULL",
+            [&undone_at, &input.event_id],
+        )?;
+        let restored_review =
+            Self::review_state_from_parts(&previous_state, previous_due.as_deref())?;
+        transaction.commit()?;
+        Ok(VaultReviewGradeResult {
+            event_id: input.event_id,
+            card_id,
+            review: restored_review,
+            reviewed_at,
+            updated_at: undone_at,
+        })
+    }
+
+    pub fn list_review_history(
+        &self,
+        card_id: String,
+        limit: usize,
+    ) -> Result<Vec<VaultReviewHistoryEntry>> {
+        Self::validate_review_card_id(&card_id)?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT id, card_id, entity_id, facet, rating,
+                    previous_due, previous_state, next_due, next_state,
+                    reviewed_at, undone_at
+             FROM review_events
+             WHERE card_id = ?1
+             ORDER BY reviewed_epoch DESC, id DESC
+             LIMIT ?2",
+        )?;
+        let rows = statement
+            .query_map(rusqlite::params![card_id, limit.clamp(1, 200)], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, Option<String>>(10)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(
+                |(
+                    id,
+                    card_id,
+                    entity_id,
+                    facet,
+                    rating,
+                    previous_due,
+                    previous_state,
+                    next_due,
+                    next_state,
+                    reviewed_at,
+                    undone_at,
+                )| {
+                    Ok(VaultReviewHistoryEntry {
+                        id,
+                        card_id,
+                        entity_id,
+                        facet,
+                        rating,
+                        previous_review: Self::review_state_from_parts(
+                            &previous_state,
+                            previous_due.as_deref(),
+                        )?,
+                        next_review: Self::review_state_from_parts(&next_state, Some(&next_due))?,
+                        reviewed_at,
+                        undone_at,
+                    })
+                },
+            )
+            .collect()
+    }
+
+    pub fn review_analytics(
+        &self,
+        as_of: Option<String>,
+        utc_offset_minutes: i32,
+    ) -> Result<VaultReviewAnalytics> {
+        if !(-14 * 60..=14 * 60).contains(&utc_offset_minutes) {
+            bail!("复习统计时区偏移无效")
+        }
+        let (_, as_of_epoch) = Self::canonical_review_time(as_of, "复习统计截止时间")?;
+        let offset_seconds = i64::from(utc_offset_minutes) * 60;
+        let local_now = chrono::DateTime::<Utc>::from_timestamp(
+            as_of_epoch
+                .checked_add(offset_seconds)
+                .context("复习统计时间超出范围")?,
+            0,
+        )
+        .context("复习统计时间超出范围")?;
+        let local_today = local_now.date_naive();
+        let local_midnight = local_today
+            .and_hms_opt(0, 0, 0)
+            .context("复习统计日期无效")?
+            .and_utc()
+            .timestamp();
+        let today_start = local_midnight - offset_seconds;
+        let seven_day_start = today_start - chrono::Duration::days(6).num_seconds();
+        let thirty_day_start = today_start - chrono::Duration::days(29).num_seconds();
+        let streak_window_start = today_start - chrono::Duration::days(364).num_seconds();
+
+        let connection = self.connection()?;
+        let (
+            total_reviews,
+            reviewed_today,
+            reviewed_7_days,
+            reviewed_30_days,
+            study_days_30,
+            again_30_days,
+            hard_30_days,
+            good_30_days,
+            easy_30_days,
+        ): (i64, i64, i64, i64, i64, i64, i64, i64, i64) = connection.query_row(
+            "
+            SELECT COUNT(*),
+                   COALESCE(SUM(CASE WHEN reviewed_epoch >= ?2 THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN reviewed_epoch >= ?3 THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN reviewed_epoch >= ?4 THEN 1 ELSE 0 END), 0),
+                   COUNT(DISTINCT CASE WHEN reviewed_epoch >= ?4
+                     THEN date(reviewed_epoch + ?5, 'unixepoch') END),
+                   COALESCE(SUM(CASE WHEN reviewed_epoch >= ?4 AND rating = 'Again' THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN reviewed_epoch >= ?4 AND rating = 'Hard' THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN reviewed_epoch >= ?4 AND rating = 'Good' THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN reviewed_epoch >= ?4 AND rating = 'Easy' THEN 1 ELSE 0 END), 0)
+            FROM review_events INDEXED BY review_events_reviewed_idx
+            WHERE undone_at IS NULL AND reviewed_epoch <= ?1
+            ",
+            rusqlite::params![
+                as_of_epoch,
+                today_start,
+                seven_day_start,
+                thirty_day_start,
+                offset_seconds,
+            ],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
+        )?;
+
+        let daily_rows = {
+            let mut statement = connection.prepare(
+                "
+                SELECT date(reviewed_epoch + ?3, 'unixepoch') AS local_date, COUNT(*)
+                FROM review_events INDEXED BY review_events_reviewed_idx
+                WHERE undone_at IS NULL
+                  AND reviewed_epoch >= ?1 AND reviewed_epoch <= ?2
+                GROUP BY local_date
+                ORDER BY local_date
+                ",
+            )?;
+            let rows = statement
+                .query_map(
+                    rusqlite::params![streak_window_start, as_of_epoch, offset_seconds],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+        let counts_by_date = daily_rows.into_iter().collect::<HashMap<_, _>>();
+        let studied_dates = counts_by_date
+            .keys()
+            .filter_map(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
+            .collect::<HashSet<_>>();
+
+        let mut streak_cursor = local_today;
+        if !studied_dates.contains(&streak_cursor) {
+            streak_cursor -= chrono::Duration::days(1);
+        }
+        let mut current_streak_days = 0i64;
+        while studied_dates.contains(&streak_cursor) {
+            current_streak_days += 1;
+            streak_cursor -= chrono::Duration::days(1);
+        }
+
+        let mut ordered_dates = studied_dates.iter().copied().collect::<Vec<_>>();
+        ordered_dates.sort_unstable();
+        let mut longest_streak_365_days = 0i64;
+        let mut running_streak = 0i64;
+        let mut previous_date = None;
+        for date in ordered_dates {
+            running_streak = if previous_date
+                .is_some_and(|previous| date == previous + chrono::Duration::days(1))
+            {
+                running_streak + 1
+            } else {
+                1
+            };
+            longest_streak_365_days = longest_streak_365_days.max(running_streak);
+            previous_date = Some(date);
+        }
+
+        let daily_14_days = (0..14)
+            .rev()
+            .map(|days_ago| {
+                let date = local_today - chrono::Duration::days(days_ago);
+                let key = date.format("%Y-%m-%d").to_string();
+                VaultReviewDailyCount {
+                    count: counts_by_date.get(&key).copied().unwrap_or_default(),
+                    date: key,
+                }
+            })
+            .collect();
+        Ok(VaultReviewAnalytics {
+            total_reviews,
+            reviewed_today,
+            reviewed_7_days,
+            reviewed_30_days,
+            study_days_30,
+            current_streak_days,
+            longest_streak_365_days,
+            again_30_days,
+            hard_30_days,
+            good_30_days,
+            easy_30_days,
+            daily_14_days,
+        })
     }
 
     pub fn delete_vocabulary(&self, id: String) -> Result<()> {
@@ -4533,7 +6779,7 @@ impl VaultService {
         Ok(())
     }
 
-    fn normalize_event(event: &mut VaultEvent) -> Result<()> {
+    fn normalize_event(event: &mut VaultEvent) -> Result<i64> {
         if !Self::valid_document_id(&event.id) {
             bail!("事件 ID 无效")
         }
@@ -4543,9 +6789,10 @@ impl VaultService {
         ) {
             bail!("事件类型无效")
         }
-        if event.starts_at.trim().is_empty() {
-            bail!("事件开始时间不能为空")
-        }
+        let starts_at = chrono::DateTime::parse_from_rfc3339(event.starts_at.trim())
+            .context("事件开始时间不是有效的 RFC 3339 时间")?
+            .with_timezone(&Utc);
+        event.starts_at = starts_at.to_rfc3339();
         if !event.payload.is_object() {
             bail!("事件内容必须是对象")
         }
@@ -4559,20 +6806,21 @@ impl VaultService {
         if event.updated_at.trim().is_empty() {
             event.updated_at = now;
         }
-        Ok(())
+        Ok(starts_at.timestamp())
     }
 
     pub fn save_event(&self, mut event: VaultEvent) -> Result<()> {
-        Self::normalize_event(&mut event)?;
+        let starts_epoch = Self::normalize_event(&mut event)?;
         let mut connection = self.connection()?;
         self.migrate(&mut connection)?;
         connection.execute(
             "\
-            INSERT INTO events(id, type, starts_at, payload_json, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO events(id, type, starts_at, starts_epoch, payload_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(id) DO UPDATE SET
               type = excluded.type,
               starts_at = excluded.starts_at,
+              starts_epoch = excluded.starts_epoch,
               payload_json = excluded.payload_json,
               updated_at = excluded.updated_at
         ",
@@ -4580,6 +6828,7 @@ impl VaultService {
                 &event.id,
                 &event.event_type,
                 &event.starts_at,
+                starts_epoch,
                 serde_json::to_string(&event.payload)?,
                 &event.created_at,
                 &event.updated_at,
@@ -4587,10 +6836,46 @@ impl VaultService {
         )?;
         if event.event_type == "activity" {
             connection.execute(
-                "DELETE FROM events WHERE type = 'activity' AND id NOT IN (SELECT id FROM events WHERE type = 'activity' ORDER BY starts_at DESC, updated_at DESC LIMIT 300)",
+                "DELETE FROM events WHERE type = 'activity' AND id NOT IN (SELECT id FROM events INDEXED BY events_type_epoch_idx WHERE type = 'activity' ORDER BY starts_epoch DESC, updated_at DESC, id DESC LIMIT 300)",
                 [],
             )?;
         }
+        Ok(())
+    }
+
+    /// Imports the bounded browser-era personal timeline once. Native rows
+    /// win on ID conflicts because they may have been edited after the
+    /// renderer snapshot was created.
+    pub fn import_legacy_events(&self, mut events: Vec<VaultEvent>) -> Result<()> {
+        events.truncate(300);
+        let mut starts_epochs = Vec::with_capacity(events.len());
+        for event in &mut events {
+            if !matches!(
+                event.event_type.as_str(),
+                "pomodoro" | "anniversary" | "activity"
+            ) {
+                bail!("旧版时间线只能包含 pomodoro、anniversary 或 activity 事件")
+            }
+            starts_epochs.push(Self::normalize_event(event)?);
+        }
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        let transaction = connection.transaction()?;
+        for (event, starts_epoch) in events.into_iter().zip(starts_epochs) {
+            transaction.execute(
+                "INSERT OR IGNORE INTO events(id, type, starts_at, starts_epoch, payload_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                (
+                    &event.id,
+                    &event.event_type,
+                    &event.starts_at,
+                    starts_epoch,
+                    serde_json::to_string(&event.payload)?,
+                    &event.created_at,
+                    &event.updated_at,
+                ),
+            )?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -4598,23 +6883,25 @@ impl VaultService {
     /// must never clear independent focus or anniversary records.
     pub fn replace_activity_events(&self, mut events: Vec<VaultEvent>) -> Result<()> {
         events.truncate(300);
+        let mut starts_epochs = Vec::with_capacity(events.len());
         for event in &mut events {
             if event.event_type != "activity" {
                 bail!("活动日志只能包含 activity 事件")
             }
-            Self::normalize_event(event)?;
+            starts_epochs.push(Self::normalize_event(event)?);
         }
         let mut connection = self.connection()?;
         self.migrate(&mut connection)?;
         let transaction = connection.transaction()?;
         transaction.execute("DELETE FROM events WHERE type = 'activity'", [])?;
-        for event in events {
+        for (event, starts_epoch) in events.into_iter().zip(starts_epochs) {
             transaction.execute(
-                "INSERT INTO events(id, type, starts_at, payload_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO events(id, type, starts_at, starts_epoch, payload_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 (
                     &event.id,
                     &event.event_type,
                     &event.starts_at,
+                    starts_epoch,
                     serde_json::to_string(&event.payload)?,
                     &event.created_at,
                     &event.updated_at,
@@ -4650,7 +6937,7 @@ impl VaultService {
     pub fn list_events(&self, limit: usize) -> Result<Vec<VaultEvent>> {
         let safe_limit = i64::try_from(limit.clamp(1, 300)).unwrap_or(100);
         self.list_events_query(
-            "SELECT id, type, starts_at, payload_json, created_at, updated_at FROM events ORDER BY starts_at DESC, updated_at DESC LIMIT ?1",
+            "SELECT id, type, starts_at, payload_json, created_at, updated_at FROM events ORDER BY starts_epoch DESC, updated_at DESC, id DESC LIMIT ?1",
             [safe_limit],
         )
     }
@@ -4658,7 +6945,7 @@ impl VaultService {
     fn list_events_by_type(&self, event_type: &str, limit: usize) -> Result<Vec<VaultEvent>> {
         let safe_limit = i64::try_from(limit.clamp(1, 300)).unwrap_or(100);
         self.list_events_query(
-            "SELECT id, type, starts_at, payload_json, created_at, updated_at FROM events WHERE type = ?1 ORDER BY starts_at DESC, updated_at DESC LIMIT ?2",
+            "SELECT id, type, starts_at, payload_json, created_at, updated_at FROM events INDEXED BY events_type_epoch_idx WHERE type = ?1 ORDER BY starts_epoch DESC, updated_at DESC, id DESC LIMIT ?2",
             rusqlite::params![event_type, safe_limit],
         )
     }
@@ -4679,8 +6966,211 @@ impl VaultService {
         Ok(events)
     }
 
-    pub fn list_activity_events(&self, limit: usize) -> Result<Vec<VaultEvent>> {
-        self.list_events_by_type("activity", limit)
+    pub fn list_focus_events(
+        &self,
+        limit: usize,
+        before_starts_at: Option<String>,
+        before_updated_at: Option<String>,
+        before_id: Option<String>,
+    ) -> Result<Vec<VaultEvent>> {
+        let cursor_parts = usize::from(before_starts_at.is_some())
+            + usize::from(before_updated_at.is_some())
+            + usize::from(before_id.is_some());
+        if cursor_parts != 0 && cursor_parts != 3 {
+            bail!("专注记录分页游标不完整")
+        }
+        let before_epoch = before_starts_at
+            .as_deref()
+            .map(|value| {
+                chrono::DateTime::parse_from_rfc3339(value.trim())
+                    .context("专注记录分页时间无效")
+                    .map(|value| value.timestamp())
+            })
+            .transpose()?;
+        if before_updated_at
+            .as_deref()
+            .is_some_and(|value| value.is_empty() || value.len() > 64)
+        {
+            bail!("专注记录分页更新时间无效")
+        }
+        if before_id
+            .as_deref()
+            .is_some_and(|id| !Self::valid_document_id(id))
+        {
+            bail!("专注记录分页 ID 无效")
+        }
+        let safe_limit = i64::try_from(limit.clamp(1, 300)).unwrap_or(120);
+        self.list_events_query(
+            "SELECT id, type, starts_at, payload_json, created_at, updated_at
+             FROM events INDEXED BY events_type_epoch_idx
+             WHERE type = 'pomodoro'
+               AND (
+                 ?1 IS NULL
+                 OR starts_epoch < ?1
+                 OR (starts_epoch = ?1 AND updated_at < ?2)
+                 OR (starts_epoch = ?1 AND updated_at = ?2 AND id < ?3)
+               )
+             ORDER BY starts_epoch DESC, updated_at DESC, id DESC
+             LIMIT ?4",
+            rusqlite::params![
+                before_epoch,
+                before_updated_at.as_deref(),
+                before_id.as_deref(),
+                safe_limit,
+            ],
+        )
+    }
+
+    pub fn list_activity_events(
+        &self,
+        limit: usize,
+        before_starts_at: Option<String>,
+        before_updated_at: Option<String>,
+        before_id: Option<String>,
+    ) -> Result<Vec<VaultEvent>> {
+        let cursor_parts = usize::from(before_starts_at.is_some())
+            + usize::from(before_updated_at.is_some())
+            + usize::from(before_id.is_some());
+        if cursor_parts != 0 && cursor_parts != 3 {
+            bail!("活动日志分页游标不完整")
+        }
+        let before_epoch = before_starts_at
+            .as_deref()
+            .map(|value| {
+                chrono::DateTime::parse_from_rfc3339(value.trim())
+                    .context("活动日志分页时间无效")
+                    .map(|value| value.timestamp())
+            })
+            .transpose()?;
+        if before_updated_at
+            .as_deref()
+            .is_some_and(|value| value.is_empty() || value.len() > 64)
+        {
+            bail!("活动日志分页更新时间无效")
+        }
+        if before_id
+            .as_deref()
+            .is_some_and(|id| !Self::valid_document_id(id))
+        {
+            bail!("活动日志分页 ID 无效")
+        }
+        let safe_limit = i64::try_from(limit.clamp(1, 300)).unwrap_or(80);
+        self.list_events_query(
+            "SELECT id, type, starts_at, payload_json, created_at, updated_at
+             FROM events INDEXED BY events_type_epoch_idx
+             WHERE type = 'activity'
+               AND (
+                 ?1 IS NULL
+                 OR starts_epoch < ?1
+                 OR (starts_epoch = ?1 AND updated_at < ?2)
+                 OR (starts_epoch = ?1 AND updated_at = ?2 AND id < ?3)
+               )
+             ORDER BY starts_epoch DESC, updated_at DESC, id DESC
+             LIMIT ?4",
+            rusqlite::params![
+                before_epoch,
+                before_updated_at.as_deref(),
+                before_id.as_deref(),
+                safe_limit,
+            ],
+        )
+    }
+
+    pub fn focus_analytics(
+        &self,
+        as_of: Option<String>,
+        utc_offset_minutes: i32,
+    ) -> Result<VaultFocusAnalytics> {
+        if !(-14 * 60..=14 * 60).contains(&utc_offset_minutes) {
+            bail!("专注统计时区偏移无效")
+        }
+        let (_, as_of_epoch) = Self::canonical_review_time(as_of, "专注统计截止时间")?;
+        let offset_seconds = i64::from(utc_offset_minutes) * 60;
+        let local_now = chrono::DateTime::<Utc>::from_timestamp(
+            as_of_epoch
+                .checked_add(offset_seconds)
+                .context("专注统计时间超出范围")?,
+            0,
+        )
+        .context("专注统计时间超出范围")?;
+        let local_today = local_now.date_naive();
+        let local_midnight = local_today
+            .and_hms_opt(0, 0, 0)
+            .context("专注统计日期无效")?
+            .and_utc()
+            .timestamp();
+        let today_start = local_midnight - offset_seconds;
+        let seven_day_start = today_start - chrono::Duration::days(6).num_seconds();
+
+        let connection = self.connection()?;
+        let rows = {
+            let mut statement = connection.prepare(
+                "
+                SELECT starts_epoch, payload_json
+                FROM events INDEXED BY events_type_epoch_idx
+                WHERE type = 'pomodoro'
+                  AND starts_epoch >= ?1 AND starts_epoch <= ?2
+                ORDER BY starts_epoch DESC, updated_at DESC, id DESC
+                ",
+            )?;
+            let rows = statement
+                .query_map(rusqlite::params![seven_day_start, as_of_epoch], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+
+        let mut sessions_by_date = HashMap::<String, i64>::new();
+        let mut minutes_by_date = HashMap::<String, i64>::new();
+        for (starts_epoch, payload_json) in rows {
+            let payload: serde_json::Value =
+                serde_json::from_str(&payload_json).context("专注记录内容已损坏")?;
+            let Some(minutes) = payload
+                .get("actualMinutes")
+                .and_then(serde_json::Value::as_f64)
+                .filter(|minutes| minutes.is_finite())
+                .map(|minutes| (minutes.round() as i64).clamp(1, 1_440))
+            else {
+                continue;
+            };
+            let local_date = chrono::DateTime::<Utc>::from_timestamp(
+                starts_epoch
+                    .checked_add(offset_seconds)
+                    .context("专注记录时间超出范围")?,
+                0,
+            )
+            .context("专注记录时间超出范围")?
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
+            *sessions_by_date.entry(local_date.clone()).or_default() += 1;
+            *minutes_by_date.entry(local_date).or_default() += minutes;
+        }
+
+        let daily_7_days = (0..7)
+            .rev()
+            .map(|days_ago| {
+                let date = local_today - chrono::Duration::days(days_ago);
+                let key = date.format("%Y-%m-%d").to_string();
+                VaultFocusDailyCount {
+                    sessions: sessions_by_date.get(&key).copied().unwrap_or_default(),
+                    minutes: minutes_by_date.get(&key).copied().unwrap_or_default(),
+                    date: key,
+                }
+            })
+            .collect::<Vec<_>>();
+        let today_key = local_today.format("%Y-%m-%d").to_string();
+        Ok(VaultFocusAnalytics {
+            sessions_today: sessions_by_date
+                .get(&today_key)
+                .copied()
+                .unwrap_or_default(),
+            minutes_today: minutes_by_date.get(&today_key).copied().unwrap_or_default(),
+            sessions_7_days: daily_7_days.iter().map(|day| day.sessions).sum(),
+            minutes_7_days: daily_7_days.iter().map(|day| day.minutes).sum(),
+            daily_7_days,
+        })
     }
 
     pub fn delete_event(&self, id: String) -> Result<()> {
@@ -5929,7 +8419,7 @@ impl VaultService {
         Ok(VaultHydration {
             root: self.root.display().to_string(),
             documents: self.list_document_summaries()?,
-            vocabulary: self.list_vocabulary()?,
+            vocabulary: self.list_vocabulary_summaries()?,
             relations: self.list_relations()?,
             migrated: should_migrate_documents
                 || should_migrate_vocabulary
@@ -5938,8 +8428,12 @@ impl VaultService {
     }
 
     pub fn write_api_key(profile: AiProfileInput) -> Result<()> {
-        if profile.id.is_empty() || profile.api_key.is_empty() {
-            bail!("配置或 API Key 不能为空")
+        validate_ai_profile_id(&profile.id)?;
+        if profile.api_key.trim().is_empty() {
+            bail!("API Key 不能为空")
+        }
+        if profile.api_key.len() > AI_API_KEY_MAX_BYTES {
+            bail!("API Key 超过 64 KB 安全上限")
         }
         let entry = Entry::new("ToolKnit", &format!("ai-profile:{}", profile.id))?;
         entry.set_password(&profile.api_key)?;
@@ -5950,9 +8444,7 @@ impl VaultService {
     }
 
     pub fn has_api_key(profile_id: String) -> Result<bool> {
-        if profile_id.is_empty() {
-            bail!("配置 ID 不能为空")
-        }
+        validate_ai_profile_id(&profile_id)?;
         let entry = Entry::new("ToolKnit", &format!("ai-profile:{profile_id}"))?;
         match entry.get_password() {
             Ok(value) => Ok(!value.is_empty()),
@@ -5962,31 +8454,18 @@ impl VaultService {
     }
 
     pub fn delete_api_key(profile_id: String) -> Result<()> {
-        if profile_id.is_empty() {
-            bail!("配置 ID 不能为空")
-        }
+        validate_ai_profile_id(&profile_id)?;
         Entry::new("ToolKnit", &format!("ai-profile:{profile_id}"))?.delete_credential()?;
         Ok(())
     }
 
     pub async fn run_ai_action(request: AiActionRequest) -> Result<String> {
-        let mut base_url = request.base_url.trim().to_owned();
-        if !base_url.ends_with('/') {
-            base_url.push('/');
-        }
-        let endpoint = url::Url::parse(&base_url)?.join("chat/completions")?;
-        let is_loopback = endpoint
-            .host_str()
-            .map(|host| host == "localhost" || host == "127.0.0.1" || host == "::1")
-            .unwrap_or(false);
-        if endpoint.scheme() != "https" && !(endpoint.scheme() == "http" && is_loopback) {
-            bail!("远程 AI 地址必须使用 HTTPS；仅 loopback 本地服务可使用 HTTP")
-        }
+        let endpoint = validate_ai_action_request(&request)?;
         let api_key = Entry::new("ToolKnit", &format!("ai-profile:{}", request.profile_id))?
             .get_password()?;
         let payload =
             ai_chat_completion_payload(&request.model, request.temperature, request.messages)?;
-        let response = reqwest::Client::new()
+        let mut response = reqwest::Client::new()
             .post(endpoint)
             .timeout(Duration::from_secs(120))
             .bearer_auth(api_key)
@@ -5994,7 +8473,18 @@ impl VaultService {
             .send()
             .await?;
         let status = response.status();
-        let body: serde_json::Value = response.json().await.context("AI 服务返回了非 JSON 内容")?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > AI_RESPONSE_MAX_BYTES as u64)
+        {
+            bail!("AI 服务响应超过 16 MB 安全上限")
+        }
+        let mut response_bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            extend_ai_response_bytes(&mut response_bytes, &chunk, AI_RESPONSE_MAX_BYTES)?;
+        }
+        let body: serde_json::Value =
+            serde_json::from_slice(&response_bytes).context("AI 服务返回了非 JSON 内容")?;
         if !status.is_success() {
             bail!(
                 "AI 服务请求失败：{}",
@@ -6371,6 +8861,35 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "writes a synthetic credential to the current Windows Credential Manager and deletes it immediately"]
+    fn windows_credential_manager_round_trip() -> Result<()> {
+        let profile_id = format!(
+            "knitspace-qa-credential-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_millis()
+        );
+        VaultService::write_api_key(AiProfileInput {
+            id: profile_id.clone(),
+            api_key: "knitspace-qa-synthetic-key-not-a-real-secret".into(),
+        })?;
+
+        // Capture the read result before cleanup so even a failed assertion does
+        // not strand the synthetic QA entry in the user's credential store.
+        let observed = VaultService::has_api_key(profile_id.clone());
+        let cleanup = VaultService::delete_api_key(profile_id.clone());
+        let observed = observed?;
+        cleanup?;
+
+        if !observed {
+            bail!("系统凭据库写入后未能读回合成 QA 凭据")
+        }
+        if VaultService::has_api_key(profile_id)? {
+            bail!("系统凭据库删除后仍能发现合成 QA 凭据")
+        }
+        Ok(())
+    }
+
+    #[test]
     fn deepseek_v4_ai_payload_disables_default_thinking() -> Result<()> {
         let payload = ai_chat_completion_payload("deepseek-v4-flash", 0.45, json!([]))?;
         assert_eq!(payload.pointer("/thinking/type"), Some(&json!("disabled")));
@@ -6395,6 +8914,67 @@ mod tests {
         }))
         .expect_err("空结果必须明确报错");
         assert!(error.to_string().contains("没有返回可显示的文本"));
+        Ok(())
+    }
+
+    fn test_ai_action_request(base_url: &str) -> AiActionRequest {
+        AiActionRequest {
+            profile_id: "profile-1".into(),
+            base_url: base_url.into(),
+            model: "deepseek-chat".into(),
+            temperature: 0.2,
+            messages: json!([{ "role": "user", "content": "连接检查" }]),
+        }
+    }
+
+    #[test]
+    fn ai_request_validation_keeps_credentials_on_safe_endpoints() -> Result<()> {
+        let endpoint =
+            validate_ai_action_request(&test_ai_action_request("https://api.deepseek.com/v1"))?;
+        assert_eq!(
+            endpoint.as_str(),
+            "https://api.deepseek.com/v1/chat/completions"
+        );
+
+        assert!(
+            validate_ai_action_request(&test_ai_action_request("http://127.0.0.1:11434/v1"))
+                .is_ok()
+        );
+        assert!(
+            validate_ai_action_request(&test_ai_action_request("http://example.com/v1")).is_err()
+        );
+        assert!(validate_ai_action_request(&test_ai_action_request(
+            "https://user:secret@example.com/v1"
+        ))
+        .is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn ai_request_validation_rejects_unbounded_or_malformed_messages() {
+        let mut request = test_ai_action_request("https://api.example.com/v1");
+        request.messages = json!([]);
+        assert!(validate_ai_action_request(&request).is_err());
+
+        request.messages = serde_json::Value::Array(
+            (0..=AI_MESSAGE_LIMIT)
+                .map(|_| json!({ "role": "user", "content": "x" }))
+                .collect(),
+        );
+        assert!(validate_ai_action_request(&request).is_err());
+
+        request.messages = json!(["not-an-object"]);
+        assert!(validate_ai_action_request(&request).is_err());
+    }
+
+    #[test]
+    fn ai_response_accumulator_stops_before_crossing_the_limit() -> Result<()> {
+        let mut body = Vec::new();
+        extend_ai_response_bytes(&mut body, b"123", 5)?;
+        extend_ai_response_bytes(&mut body, b"45", 5)?;
+        assert_eq!(body, b"12345");
+        assert!(extend_ai_response_bytes(&mut body, b"6", 5).is_err());
+        assert_eq!(body, b"12345");
         Ok(())
     }
 
@@ -6446,7 +9026,11 @@ mod tests {
         let original = test_document(id.clone(), "负权最短路");
         service.save_document(original.clone())?;
         assert_eq!(
-            service.get_document(id.clone())?.question_details.unwrap().source,
+            service
+                .get_document(id.clone())?
+                .question_details
+                .unwrap()
+                .source,
             "算法课程 · 第 7 章"
         );
         assert!(service
@@ -6533,6 +9117,44 @@ mod tests {
             captured_at: "2026-08-09T00:00:00Z".into(),
             pinned: false,
             content_loaded: true,
+        }
+    }
+
+    fn test_processing_job(
+        id: String,
+        kind: &str,
+        status: &str,
+        created_at: &str,
+    ) -> VaultProcessingJob {
+        VaultProcessingJob {
+            id,
+            kind: kind.into(),
+            label: "本地文件处理".into(),
+            status: status.into(),
+            progress: if matches!(status, "succeeded" | "failed" | "cancelled") {
+                100.0
+            } else {
+                0.0
+            },
+            error_code: None,
+            input_names: vec!["input.md".into()],
+            output_names: Vec::new(),
+            tool_id: Some("markdown-export".into()),
+            route: Some("/documents".into()),
+            parameters: json!({ "quality": 90, "formats": ["pdf", "html"] }),
+            inputs: vec![VaultFileReference {
+                name: "input.md".into(),
+                path: Some("F:/Notes/input.md".into()),
+                size: Some(42),
+                mime: Some("text/markdown".into()),
+            }],
+            outputs: Vec::new(),
+            started_at: None,
+            completed_at: None,
+            retryable: false,
+            detail: Some("等待本机处理".into()),
+            created_at: created_at.into(),
+            updated_at: None,
         }
     }
 
@@ -6786,6 +9408,459 @@ mod tests {
         assert!(service.list_content_recents()?.is_empty());
         assert!(service.list_relations()?.is_empty());
         assert!(!root.join("assets/diagrams").join(id).exists());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn processing_jobs_persist_update_filter_and_clear_without_touching_active_rows() -> Result<()>
+    {
+        let root =
+            std::env::temp_dir().join(format!("knitspace-processing-jobs-test-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let first_id = Uuid::now_v7().to_string();
+        let queued = service.save_processing_job(test_processing_job(
+            first_id.clone(),
+            "pdf",
+            "queued",
+            "2026-08-09T07:00:00Z",
+        ))?;
+        assert_eq!(queued.status, "queued");
+        assert!(queued.started_at.is_none());
+
+        // Every Tauri command opens the Vault again. A current-session owner
+        // must therefore survive an ordinary reopen without false recovery.
+        let reopened = VaultService::open(root.to_string_lossy().into_owned())?;
+        assert_eq!(
+            reopened.get_processing_job(first_id.clone())?.status,
+            "queued"
+        );
+
+        let mut running = queued;
+        running.status = "running".into();
+        running.progress = 37.5;
+        running.detail = Some("正在后台排版".into());
+        let running = reopened.save_processing_job(running)?;
+        assert!(running.started_at.is_some());
+        assert!(running.completed_at.is_none());
+        assert_eq!(running.progress, 37.5);
+        assert_eq!(
+            VaultService::open(root.to_string_lossy().into_owned())?
+                .get_processing_job(first_id.clone())?
+                .status,
+            "running"
+        );
+
+        let mut succeeded = running;
+        succeeded.status = "succeeded".into();
+        succeeded.progress = 100.0;
+        succeeded.output_names = vec!["output.pdf".into()];
+        succeeded.outputs = vec![VaultFileReference {
+            name: "output.pdf".into(),
+            path: Some("F:/Exports/output.pdf".into()),
+            size: Some(4_096),
+            mime: Some("application/pdf".into()),
+        }];
+        let succeeded = service.save_processing_job(succeeded)?;
+        assert!(succeeded.completed_at.is_some());
+        assert_eq!(succeeded.created_at, "2026-08-09T07:00:00+00:00");
+
+        let second_id = Uuid::now_v7().to_string();
+        service.save_processing_job(test_processing_job(
+            second_id.clone(),
+            "image",
+            "failed",
+            "2026-08-09T08:00:00Z",
+        ))?;
+        let active_id = Uuid::now_v7().to_string();
+        service.save_processing_job(test_processing_job(
+            active_id.clone(),
+            "media",
+            "queued",
+            "2026-08-09T09:00:00Z",
+        ))?;
+
+        let all = service.list_processing_jobs(20, None, None, None, None)?;
+        assert_eq!(
+            all.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
+            vec![active_id.as_str(), second_id.as_str(), first_id.as_str(),]
+        );
+        assert_eq!(
+            service.list_processing_jobs(20, None, None, Some("succeeded".into()), None)?[0].id,
+            first_id
+        );
+        assert_eq!(
+            service.list_processing_jobs(20, None, None, None, Some("image".into()))?[0].id,
+            second_id
+        );
+        assert_eq!(
+            service.list_processing_jobs(
+                20,
+                Some("2026-08-09T08:00:00Z".into()),
+                Some(second_id.clone()),
+                None,
+                None,
+            )?[0]
+                .id,
+            first_id
+        );
+        assert!(service
+            .list_processing_jobs(20, None, None, Some("unknown".into()), None)
+            .is_err());
+
+        assert_eq!(service.clear_finished_processing_jobs()?, 2);
+        let remaining = service.list_processing_jobs(20, None, None, None, None)?;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, active_id);
+        assert_eq!(remaining[0].status, "queued");
+        assert!(service
+            .delete_processing_jobs(vec![active_id.clone(), active_id.clone()])
+            .is_err());
+        assert_eq!(service.delete_processing_jobs(vec![active_id])?, 1);
+        assert!(service
+            .list_processing_jobs(20, None, None, None, None)?
+            .is_empty());
+
+        let mut invalid = test_processing_job(
+            Uuid::now_v7().to_string(),
+            "pdf",
+            "queued",
+            "2026-08-09T10:00:00Z",
+        );
+        invalid.progress = 101.0;
+        assert!(service.save_processing_job(invalid).is_err());
+        let mut invalid_parameters = test_processing_job(
+            Uuid::now_v7().to_string(),
+            "pdf",
+            "queued",
+            "2026-08-09T10:00:00Z",
+        );
+        invalid_parameters.parameters = json!({ "nested": { "unsafe": true } });
+        assert!(service.save_processing_job(invalid_parameters).is_err());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn processing_job_cursor_keeps_rows_with_identical_timestamps() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-processing-job-cursor-{}",
+            Uuid::now_v7()
+        ));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let timestamp = "2026-08-09T08:00:00Z";
+        for _ in 0..3 {
+            service.save_processing_job(test_processing_job(
+                Uuid::now_v7().to_string(),
+                "pdf",
+                "succeeded",
+                timestamp,
+            ))?;
+        }
+
+        let first = service.list_processing_jobs(1, None, None, None, None)?[0].clone();
+        let second = service.list_processing_jobs(
+            1,
+            Some(first.created_at.clone()),
+            Some(first.id.clone()),
+            None,
+            None,
+        )?[0]
+            .clone();
+        let third = service.list_processing_jobs(
+            1,
+            Some(second.created_at.clone()),
+            Some(second.id.clone()),
+            None,
+            None,
+        )?[0]
+            .clone();
+        let ids = HashSet::from([first.id, second.id, third.id]);
+        assert_eq!(ids.len(), 3);
+        assert!(service
+            .list_processing_jobs(1, Some(timestamp.into()), None, None, None)
+            .is_err());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn processing_job_hydration_archives_once_preserves_native_and_reconciles_active_rows(
+    ) -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-processing-job-hydration-{}",
+            Uuid::now_v7()
+        ));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let native_id = Uuid::now_v7().to_string();
+        let mut native = test_processing_job(
+            native_id.clone(),
+            "pdf",
+            "succeeded",
+            "2026-08-09T07:00:00Z",
+        );
+        native.label = "原生记录优先".into();
+        service.save_processing_job(native)?;
+
+        let mut stale_duplicate =
+            test_processing_job(native_id.clone(), "pdf", "failed", "2026-08-09T07:00:00Z");
+        stale_duplicate.label = "浏览器旧副本".into();
+        let interrupted_id = Uuid::now_v7().to_string();
+        let mut interrupted = test_processing_job(
+            interrupted_id.clone(),
+            "media",
+            "running",
+            "2026-08-09T08:00:00Z",
+        );
+        interrupted.progress = 48.0;
+        let mut invalid = test_processing_job(
+            Uuid::now_v7().to_string(),
+            "image",
+            "failed",
+            "2026-08-09T09:00:00Z",
+        );
+        invalid.progress = 180.0;
+
+        let hydration =
+            service.hydrate_processing_jobs(vec![stale_duplicate, interrupted, invalid])?;
+        assert!(hydration.migrated);
+        assert_eq!(hydration.imported_count, 1);
+        assert_eq!(hydration.skipped_count, 1);
+        assert_eq!(
+            service.get_processing_job(native_id.clone())?.label,
+            "原生记录优先"
+        );
+        let recovered = service.get_processing_job(interrupted_id.clone())?;
+        assert_eq!(recovered.status, "cancelled");
+        assert_eq!(recovered.error_code.as_deref(), Some("APP_RESTARTED"));
+        assert!(recovered.retryable);
+        assert!(recovered
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("上次退出"));
+
+        let migrations = fs::read_dir(root.join(".toolknit/migrations"))?
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("browser-processing-jobs-before-vault-")
+            })
+            .count();
+        assert_eq!(migrations, 1);
+
+        let ignored_id = Uuid::now_v7().to_string();
+        let second = service.hydrate_processing_jobs(vec![test_processing_job(
+            ignored_id.clone(),
+            "text",
+            "succeeded",
+            "2026-08-09T10:00:00Z",
+        )])?;
+        assert!(!second.migrated);
+        assert!(service.get_processing_job(ignored_id).is_err());
+        assert_eq!(
+            fs::read_dir(root.join(".toolknit/migrations"))?
+                .filter_map(std::result::Result::ok)
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("browser-processing-jobs-before-vault-"))
+                .count(),
+            1
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn processing_jobs_recover_only_stale_process_sessions() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-processing-job-recovery-{}",
+            Uuid::now_v7()
+        ));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let id = Uuid::now_v7().to_string();
+        service.save_processing_job(test_processing_job(
+            id.clone(),
+            "media",
+            "running",
+            "2026-08-09T08:00:00Z",
+        ))?;
+        assert_eq!(
+            VaultService::open(root.to_string_lossy().into_owned())?
+                .get_processing_job(id.clone())?
+                .status,
+            "running"
+        );
+
+        {
+            let connection = service.connection()?;
+            connection.execute(
+                "UPDATE processing_jobs SET owner_session = 'previous-process' WHERE id = ?1",
+                [&id],
+            )?;
+        }
+        let recovered_service = VaultService::open(root.to_string_lossy().into_owned())?;
+        recovered_service.hydrate_processing_jobs(Vec::new())?;
+        let recovered = recovered_service.get_processing_job(id.clone())?;
+        assert_eq!(recovered.status, "cancelled");
+        assert_eq!(recovered.error_code.as_deref(), Some("APP_RESTARTED"));
+        assert!(recovered.retryable);
+        assert!(recovered.completed_at.is_some());
+
+        let reopened = VaultService::open(root.to_string_lossy().into_owned())?;
+        let detail = reopened.get_processing_job(id)?.detail.unwrap_or_default();
+        assert_eq!(detail.matches("上次退出").count(), 1);
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn processing_job_retention_prunes_only_old_terminal_rows() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-processing-job-retention-{}",
+            Uuid::now_v7()
+        ));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let oldest_id = Uuid::now_v7().to_string();
+        for (id, created_at) in [
+            (oldest_id.clone(), "2026-08-09T07:00:00Z"),
+            (Uuid::now_v7().to_string(), "2026-08-09T08:00:00Z"),
+            (Uuid::now_v7().to_string(), "2026-08-09T09:00:00Z"),
+        ] {
+            service.save_processing_job(test_processing_job(
+                id,
+                "image",
+                "succeeded",
+                created_at,
+            ))?;
+        }
+        let active_id = Uuid::now_v7().to_string();
+        service.save_processing_job(test_processing_job(
+            active_id.clone(),
+            "media",
+            "queued",
+            "2026-08-09T06:00:00Z",
+        ))?;
+        let connection = service.connection()?;
+        assert_eq!(VaultService::prune_processing_jobs(&connection, 2)?, 2);
+        drop(connection);
+        assert!(service.get_processing_job(oldest_id).is_err());
+        assert_eq!(service.get_processing_job(active_id)?.status, "queued");
+        assert_eq!(
+            service
+                .list_processing_jobs(20, None, None, None, None)?
+                .len(),
+            2
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn processing_job_schema_migrates_from_v18() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-processing-job-schema-{}",
+            Uuid::now_v7()
+        ));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        {
+            let connection = service.connection()?;
+            connection.execute_batch(
+                "DROP TABLE processing_jobs;
+                 DELETE FROM schema_migrations WHERE version >= 19;",
+            )?;
+        }
+        let migrated = VaultService::open(root.to_string_lossy().into_owned())?;
+        let connection = migrated.connection()?;
+        let version: i64 =
+            connection.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })?;
+        let table_exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'processing_jobs')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(version, SCHEMA_VERSION);
+        assert!(table_exists);
+        drop(connection);
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_due_epoch_migration_backfills_and_uses_the_queue_index() -> Result<()> {
+        let root =
+            std::env::temp_dir().join(format!("knitspace-review-due-index-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let document = test_document(Uuid::now_v7().to_string(), "索引迁移题目");
+        service.save_document(document.clone())?;
+        {
+            let connection = service.connection()?;
+            connection.execute_batch(
+                "DROP INDEX review_cards_due_epoch_idx;
+                 ALTER TABLE review_cards DROP COLUMN due_epoch;
+                 DELETE FROM schema_migrations WHERE version >= 20;",
+            )?;
+        }
+
+        let migrated = VaultService::open(root.to_string_lossy().into_owned())?;
+        let connection = migrated.connection()?;
+        let (due, due_epoch): (String, i64) = connection.query_row(
+            "SELECT due, due_epoch FROM review_cards WHERE entity_id = ?1",
+            [&document.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(due, "2026-08-10T00:00:00Z");
+        assert_eq!(
+            due_epoch,
+            chrono::DateTime::parse_from_rfc3339(&due)?.timestamp()
+        );
+        let query_plan = connection
+            .prepare(
+                "EXPLAIN QUERY PLAN
+                 SELECT review_cards.id FROM review_cards INDEXED BY review_cards_due_epoch_idx
+                 INNER JOIN entities ON entities.id = review_cards.entity_id
+                 WHERE entities.type = 'question'
+                   AND review_cards.due IS NOT NULL
+                   AND review_cards.due_epoch IS NOT NULL
+                   AND review_cards.due_epoch <= ?1
+                   AND (
+                     ?2 IS NULL
+                     OR review_cards.due_epoch > ?2
+                     OR (review_cards.due_epoch = ?2 AND review_cards.id > ?3)
+                   )
+                 ORDER BY review_cards.due_epoch, review_cards.id LIMIT ?4",
+            )?
+            .query_map(
+                rusqlite::params![due_epoch, Option::<i64>::None, Option::<String>::None, 20,],
+                |row| row.get::<_, String>(3),
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert!(
+            query_plan
+                .iter()
+                .any(|detail| detail.contains("review_cards_due_epoch_idx")),
+            "实际到期队列查询没有使用时间索引：{query_plan:?}"
+        );
+        drop(connection);
+        assert_eq!(
+            migrated
+                .list_due_review_cards(Some("2026-08-10T00:00:00Z".into()), 20, None, None,)?
+                .cards
+                .len(),
+            1
+        );
+
         fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -7609,6 +10684,523 @@ mod tests {
     }
 
     #[test]
+    fn review_queue_is_compact_sorted_filterable_and_keyset_paginated() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("knitspace-review-queue-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+
+        let mut question = test_document(Uuid::now_v7().to_string(), "Dijkstra 复习题");
+        question.review_facets.insert(
+            "error".into(),
+            json!({ "due": "2026-08-11T00:00:00Z", "intervalDays": 1, "repetitions": 0, "lapses": 1 }),
+        );
+        service.save_document(question.clone())?;
+
+        let mut word = test_vocabulary(Uuid::now_v7().to_string());
+        let sense_id = word.senses[0].id.clone();
+        word.senses[0].review_facets.insert(
+            "spelling".into(),
+            json!({ "due": "2026-08-11T00:00:00Z", "intervalDays": 1, "repetitions": 0, "lapses": 0 }),
+        );
+        word.senses[0].review_facets.insert(
+            "example".into(),
+            json!({ "due": "2026-08-13T00:00:00Z", "intervalDays": 2, "repetitions": 0, "lapses": 0 }),
+        );
+        word.senses[0].review_facets.insert(
+            "comparison".into(),
+            json!({ "due": "2026-08-14T00:00:00Z", "intervalDays": 3, "repetitions": 0, "lapses": 0 }),
+        );
+        service.save_vocabulary(word.clone())?;
+        let stored_word = service.get_vocabulary(word.id.clone())?;
+        assert!(stored_word.senses[0]
+            .review_facets
+            .contains_key("comparison"));
+        assert!(service.list_vocabulary()?[0].senses[0]
+            .review_facets
+            .contains_key("comparison"));
+
+        let as_of = Some("2026-08-12T00:00:00Z".into());
+        let summary = service.review_queue_summary(as_of.clone())?;
+        assert_eq!(summary.scheduled_count, 6);
+        assert_eq!(summary.due_count, 4);
+        assert_eq!(summary.due_question_count, 2);
+        assert_eq!(summary.due_error_count, 1);
+        assert_eq!(summary.due_word_count, 2);
+        assert_eq!(summary.question_material_count, 1);
+        assert_eq!(summary.vocabulary_material_count, 1);
+        assert_eq!(
+            summary.earliest_due.as_deref(),
+            Some("2026-08-10T00:00:00Z")
+        );
+        assert_eq!(
+            summary.next_future_due.as_deref(),
+            Some("2026-08-13T00:00:00Z")
+        );
+
+        let first = service.list_due_review_cards(as_of.clone(), 2, None, None)?;
+        assert_eq!(first.cards.len(), 2);
+        assert!(first.has_more);
+        assert!(first.cards.windows(2).all(|pair| {
+            pair[0].due_epoch < pair[1].due_epoch
+                || (pair[0].due_epoch == pair[1].due_epoch && pair[0].id < pair[1].id)
+        }));
+        assert!(first.cards.iter().all(|card| {
+            card.review.get("due").and_then(|value| value.as_str()) == Some(card.due.as_str())
+                && chrono::DateTime::parse_from_rfc3339(&card.due)
+                    .map(|value| value.timestamp())
+                    .ok()
+                    == Some(card.due_epoch)
+        }));
+        let cursor = first.next_cursor.clone().context("第一页应返回游标")?;
+        let second = service.list_due_review_cards(as_of.clone(), 2, Some(cursor), None)?;
+        assert_eq!(second.cards.len(), 2);
+        assert!(!second.has_more);
+        let ids = first
+            .cards
+            .iter()
+            .chain(&second.cards)
+            .map(|card| card.id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(ids.len(), 4);
+
+        let error_cards =
+            service.list_due_review_cards(as_of.clone(), 20, None, Some("error".into()))?;
+        assert_eq!(error_cards.cards.len(), 1);
+        assert_eq!(error_cards.cards[0].facet, "error");
+        assert_eq!(error_cards.cards[0].entity_id, question.id);
+
+        let word_cards =
+            service.list_due_review_cards(as_of.clone(), 20, None, Some("word".into()))?;
+        assert_eq!(word_cards.cards.len(), 2);
+        assert!(word_cards.cards.iter().all(|card| {
+            card.entity_kind == "word"
+                && card.sense_id.as_deref() == Some(sense_id.as_str())
+                && card.detail.len() <= 600
+        }));
+        assert_eq!(
+            word_cards
+                .cards
+                .iter()
+                .map(|card| card.facet.as_str())
+                .collect::<HashSet<_>>(),
+            HashSet::from(["meaning", "spelling"])
+        );
+        let all_word_facets = service.list_due_review_cards(
+            Some("2026-08-15T00:00:00Z".into()),
+            20,
+            None,
+            Some("word".into()),
+        )?;
+        assert_eq!(
+            all_word_facets
+                .cards
+                .iter()
+                .map(|card| card.facet.as_str())
+                .collect::<HashSet<_>>(),
+            HashSet::from(["meaning", "spelling", "example", "comparison"])
+        );
+        assert!(service
+            .list_due_review_cards(as_of.clone(), 20, None, Some("unknown".into()))
+            .is_err());
+        assert!(service
+            .list_due_review_cards(Some("not-a-time".into()), 20, None, None)
+            .is_err());
+        assert!(service
+            .list_due_review_cards(
+                as_of.clone(),
+                20,
+                Some(VaultReviewCursor {
+                    due_epoch: 0,
+                    id: String::new(),
+                }),
+                None,
+            )
+            .is_err());
+
+        let connection = service.connection()?;
+        connection.execute(
+            "UPDATE review_cards SET fsrs_state = '[]' WHERE entity_id = ?1 AND facet = 'error'",
+            [&question.id],
+        )?;
+        drop(connection);
+        assert!(service
+            .list_due_review_cards(as_of, 20, None, Some("error".into()))
+            .is_err());
+
+        let invalid_question_id = Uuid::now_v7().to_string();
+        let mut invalid_question =
+            test_document(invalid_question_id.clone(), "无效复习时间不应落盘");
+        invalid_question.review = Some(json!({
+            "due": "tomorrow",
+            "intervalDays": 0,
+            "repetitions": 0,
+            "lapses": 0
+        }));
+        assert!(service.save_document(invalid_question).is_err());
+        assert!(!root
+            .join("questions")
+            .join(format!("{invalid_question_id}.md"))
+            .exists());
+
+        let invalid_word_id = Uuid::now_v7().to_string();
+        let mut invalid_word = test_vocabulary(invalid_word_id.clone());
+        invalid_word.senses[0].review = Some(json!({ "due": 42 }));
+        assert!(service.save_vocabulary(invalid_word).is_err());
+        assert!(service.get_vocabulary(invalid_word_id).is_err());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_grade_is_atomic_conflict_safe_auditable_and_reversible() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("knitspace-review-grade-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let document = test_document(Uuid::now_v7().to_string(), "原生评分事务");
+        service.save_document(document.clone())?;
+
+        let page = service.list_due_review_cards(
+            Some("2026-08-10T00:00:00Z".into()),
+            20,
+            None,
+            Some("question".into()),
+        )?;
+        let card = page.cards.into_iter().next().context("应有一张到期卡")?;
+        assert_eq!(card.updated_at, document.updated_at);
+
+        assert!(service
+            .grade_review_card(VaultReviewGradeInput {
+                card_id: card.id.clone(),
+                rating: "Unknown".into(),
+                next_review: json!({ "due": "2026-08-11T00:00:00Z" }),
+                reviewed_at: Some("2026-08-10T00:00:00Z".into()),
+                expected_updated_at: card.updated_at.clone(),
+            })
+            .is_err());
+        assert!(service
+            .grade_review_card(VaultReviewGradeInput {
+                card_id: card.id.clone(),
+                rating: "Again".into(),
+                next_review: json!({ "due": "2026-08-10T00:00:00Z" }),
+                reviewed_at: Some("2026-08-10T00:00:00Z".into()),
+                expected_updated_at: card.updated_at.clone(),
+            })
+            .is_err());
+
+        let next_review = json!({
+            "due": "2026-08-13T00:00:00+00:00",
+            "intervalDays": 3,
+            "repetitions": 1,
+            "lapses": 0,
+            "lastReviewedAt": "2026-08-10T00:00:00Z",
+            "fsrs": {
+                "state": 2,
+                "stability": 3.4,
+                "difficulty": 5.8,
+                "elapsedDays": 0,
+                "scheduledDays": 3,
+                "learningSteps": 0
+            }
+        });
+        let graded = service.grade_review_card(VaultReviewGradeInput {
+            card_id: card.id.clone(),
+            rating: "Good".into(),
+            next_review: next_review.clone(),
+            reviewed_at: Some("2026-08-10T00:00:00Z".into()),
+            expected_updated_at: card.updated_at.clone(),
+        })?;
+        assert_eq!(graded.card_id, card.id);
+        assert_ne!(graded.updated_at, card.updated_at);
+        assert_eq!(
+            graded.review.get("due").and_then(serde_json::Value::as_str),
+            Some("2026-08-13T00:00:00+00:00")
+        );
+        assert!(service
+            .list_due_review_cards(
+                Some("2026-08-10T00:00:00Z".into()),
+                20,
+                None,
+                Some("question".into()),
+            )?
+            .cards
+            .is_empty());
+
+        let history = service.list_review_history(card.id.clone(), 20)?;
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].id, graded.event_id);
+        assert_eq!(history[0].rating, "Good");
+        assert_eq!(
+            history[0]
+                .previous_review
+                .get("due")
+                .and_then(serde_json::Value::as_str),
+            Some("2026-08-10T00:00:00Z")
+        );
+        assert!(history[0].undone_at.is_none());
+
+        let stale_error = service
+            .grade_review_card(VaultReviewGradeInput {
+                card_id: card.id.clone(),
+                rating: "Easy".into(),
+                next_review: json!({ "due": "2026-08-20T00:00:00Z" }),
+                reviewed_at: Some("2026-08-10T00:01:00Z".into()),
+                expected_updated_at: card.updated_at,
+            })
+            .expect_err("旧版本不能覆盖新评分");
+        assert!(stale_error.to_string().contains("其他窗口更新"));
+        assert!(service
+            .undo_review_grade(VaultReviewUndoInput {
+                event_id: graded.event_id.clone(),
+                expected_card_updated_at: "stale-version".into(),
+            })
+            .is_err());
+
+        let undone = service.undo_review_grade(VaultReviewUndoInput {
+            event_id: graded.event_id.clone(),
+            expected_card_updated_at: graded.updated_at,
+        })?;
+        assert_eq!(
+            undone.review.get("due").and_then(serde_json::Value::as_str),
+            Some("2026-08-10T00:00:00Z")
+        );
+        assert!(service
+            .list_review_history(card.id.clone(), 20)?
+            .first()
+            .and_then(|event| event.undone_at.as_ref())
+            .is_some());
+        assert_eq!(
+            service
+                .list_due_review_cards(
+                    Some("2026-08-10T00:00:00Z".into()),
+                    20,
+                    None,
+                    Some("question".into()),
+                )?
+                .cards
+                .len(),
+            1
+        );
+        assert!(service
+            .undo_review_grade(VaultReviewUndoInput {
+                event_id: graded.event_id,
+                expected_card_updated_at: undone.updated_at,
+            })
+            .is_err());
+
+        let connection = service.connection()?;
+        assert_eq!(
+            connection.query_row(
+                "SELECT COUNT(*) FROM review_events WHERE card_id = ?1",
+                [&card.id],
+                |row| row.get::<_, i64>(0),
+            )?,
+            1
+        );
+        drop(connection);
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_event_schema_migrates_from_v20() -> Result<()> {
+        let root =
+            std::env::temp_dir().join(format!("knitspace-review-event-schema-{}", Uuid::now_v7()));
+        {
+            let service = VaultService::open(root.to_string_lossy().into_owned())?;
+            let connection = service.connection()?;
+            connection.execute_batch(
+                "DROP TABLE review_events;
+                 DELETE FROM schema_migrations WHERE version >= 21;",
+            )?;
+        }
+
+        let reopened = VaultService::open(root.to_string_lossy().into_owned())?;
+        let connection = reopened.connection()?;
+        assert_eq!(
+            connection.query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'review_events'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?,
+            1
+        );
+        assert_eq!(
+            connection.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| row
+                .get::<_, i64>(
+                0
+            ),)?,
+            SCHEMA_VERSION
+        );
+        drop(connection);
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_analytics_respects_local_days_undo_and_bounded_streaks() -> Result<()> {
+        let root =
+            std::env::temp_dir().join(format!("knitspace-review-analytics-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let document = test_document(Uuid::now_v7().to_string(), "复习节奏统计");
+        service.save_document(document.clone())?;
+        let card_id = format!("{}:default", document.id);
+        let empty = service.review_analytics(Some("2026-08-16T01:00:00Z".into()), 8 * 60)?;
+        assert_eq!(empty.total_reviews, 0);
+        assert_eq!(empty.reviewed_today, 0);
+        assert_eq!(empty.current_streak_days, 0);
+        assert_eq!(empty.daily_14_days.len(), 14);
+        let events = [
+            ("2026-08-08T03:00:00Z", "Again", false),
+            ("2026-08-09T03:00:00Z", "Hard", false),
+            ("2026-08-10T03:00:00Z", "Good", false),
+            ("2026-08-11T03:00:00Z", "Easy", false),
+            ("2026-08-14T03:00:00Z", "Good", false),
+            ("2026-08-15T03:00:00Z", "Good", false),
+            // 16:30 UTC is already the next local day at UTC+8.
+            ("2026-08-15T16:30:00Z", "Easy", false),
+            ("2026-08-15T17:00:00Z", "Again", true),
+        ];
+        let connection = service.connection()?;
+        for (reviewed_at, rating, undone) in events {
+            let reviewed_epoch = chrono::DateTime::parse_from_rfc3339(reviewed_at)?.timestamp();
+            connection.execute(
+                "INSERT INTO review_events(
+                   id, card_id, entity_id, facet, rating,
+                   previous_due, previous_due_epoch, previous_state,
+                   next_due, next_due_epoch, next_state,
+                   reviewed_at, reviewed_epoch, applied_at, undone_at
+                 ) VALUES (?1, ?2, ?3, 'default', ?4,
+                   '2026-08-10T00:00:00Z', 1786320000, '{}',
+                   '2026-08-20T00:00:00Z', 1787184000, '{}',
+                   ?5, ?6, ?5, ?7)",
+                rusqlite::params![
+                    Uuid::now_v7().to_string(),
+                    &card_id,
+                    &document.id,
+                    rating,
+                    reviewed_at,
+                    reviewed_epoch,
+                    undone.then_some(reviewed_at),
+                ],
+            )?;
+        }
+        let plans = connection
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT COUNT(*)
+                 FROM review_events INDEXED BY review_events_reviewed_idx
+                 WHERE undone_at IS NULL AND reviewed_epoch <= ?1",
+            )?
+            .query_map([1_800_000_000_i64], |row| row.get::<_, String>(3))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert!(plans
+            .iter()
+            .any(|plan| plan.contains("review_events_reviewed_idx")));
+        drop(connection);
+
+        let analytics = service.review_analytics(Some("2026-08-16T01:00:00Z".into()), 8 * 60)?;
+        assert_eq!(analytics.total_reviews, 7);
+        assert_eq!(analytics.reviewed_today, 1);
+        assert_eq!(analytics.reviewed_7_days, 5);
+        assert_eq!(analytics.reviewed_30_days, 7);
+        assert_eq!(analytics.study_days_30, 7);
+        assert_eq!(analytics.current_streak_days, 3);
+        assert_eq!(analytics.longest_streak_365_days, 4);
+        assert_eq!(analytics.again_30_days, 1);
+        assert_eq!(analytics.hard_30_days, 1);
+        assert_eq!(analytics.good_30_days, 3);
+        assert_eq!(analytics.easy_30_days, 2);
+        assert_eq!(analytics.daily_14_days.len(), 14);
+        assert_eq!(analytics.daily_14_days.first().unwrap().date, "2026-08-03");
+        assert_eq!(analytics.daily_14_days.last().unwrap().date, "2026-08-16");
+        assert_eq!(analytics.daily_14_days.last().unwrap().count, 1);
+        assert!(service
+            .review_analytics(Some("not-a-time".into()), 8 * 60)
+            .is_err());
+        assert!(service.review_analytics(None, 15 * 60).is_err());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_analytics_index_migrates_from_v21() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-review-analytics-schema-{}",
+            Uuid::now_v7()
+        ));
+        {
+            let service = VaultService::open(root.to_string_lossy().into_owned())?;
+            let connection = service.connection()?;
+            connection.execute_batch(
+                "DROP INDEX review_events_reviewed_idx;
+                 DELETE FROM schema_migrations WHERE version >= 22;",
+            )?;
+        }
+        let reopened = VaultService::open(root.to_string_lossy().into_owned())?;
+        let connection = reopened.connection()?;
+        assert_eq!(
+            connection.query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'review_events_reviewed_idx'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?,
+            1
+        );
+        assert_eq!(
+            connection.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| row
+                .get::<_, i64>(
+                0
+            ),)?,
+            SCHEMA_VERSION
+        );
+        drop(connection);
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn get_vocabulary_loads_one_word_without_scanning_corrupt_neighbors() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-vocabulary-single-load-{}",
+            Uuid::now_v7()
+        ));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let first = test_vocabulary(Uuid::now_v7().to_string());
+        let mut second = test_vocabulary(Uuid::now_v7().to_string());
+        second.lemma = "neighbor".into();
+        service.save_vocabulary(first.clone())?;
+        service.save_vocabulary(second.clone())?;
+        {
+            let connection = service.connection()?;
+            connection.execute(
+                "UPDATE vocabulary_entries SET forms_json = 'broken-json' WHERE entity_id = ?1",
+                [&second.id],
+            )?;
+        }
+
+        let loaded = service.get_vocabulary(first.id.clone())?;
+        assert_eq!(loaded.id, first.id);
+        assert_eq!(loaded.lemma, first.lemma);
+        assert_eq!(loaded.senses.len(), 1);
+        assert_eq!(loaded.senses[0].definition, first.senses[0].definition);
+        assert_eq!(
+            loaded.senses[0]
+                .review
+                .as_ref()
+                .and_then(|review| review.get("due"))
+                .and_then(|due| due.as_str()),
+            Some("2026-08-10T00:00:00Z")
+        );
+        assert!(service.get_vocabulary(second.id).is_err());
+        assert!(service.get_vocabulary(Uuid::now_v7().to_string()).is_err());
+        assert!(service.get_vocabulary("invalid-word-id".into()).is_err());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
     fn hydrates_browser_vocabulary_once_without_overwriting_desktop_data() -> Result<()> {
         let root =
             std::env::temp_dir().join(format!("knitspace-vocabulary-hydration-{}", Uuid::now_v7()));
@@ -7619,6 +11211,9 @@ mod tests {
         assert!(hydration.migrated);
         assert_eq!(hydration.vocabulary.len(), 1);
         assert_eq!(hydration.vocabulary[0].id, first_id);
+        assert_eq!(hydration.vocabulary[0].sense_count, 1);
+        assert_eq!(hydration.vocabulary[0].part_of_speech_preview, "verb");
+        assert_eq!(hydration.vocabulary[0].definition_preview, "运行；经营");
         assert!(root
             .join(".toolknit/migrations")
             .read_dir()?
@@ -7708,6 +11303,11 @@ mod tests {
         assert_eq!(example_search[0].id, loaded[0].id);
         let collocation_search = service.search_documents("run a program".into(), 12)?;
         assert_eq!(collocation_search[0].id, loaded[0].id);
+        let compact_search = service.search_vocabulary_summaries("locally".into(), 20)?;
+        assert_eq!(compact_search.len(), 1);
+        assert_eq!(compact_search[0].id, loaded[0].id);
+        assert_eq!(compact_search[0].sense_count, 1);
+        assert_eq!(compact_search[0].definition_preview, "运行；经营");
         let connection = service.connection()?;
         let cards: i64 = connection.query_row(
             "SELECT COUNT(*) FROM review_cards WHERE entity_id = ?1 AND facet = ?2",
@@ -7925,6 +11525,90 @@ mod tests {
     }
 
     #[test]
+    fn imports_browser_timeline_transactionally_without_overwriting_native_rows() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-personal-event-import-{}",
+            Uuid::now_v7()
+        ));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let focus_id = Uuid::now_v7().to_string();
+        service.save_event(VaultEvent {
+            id: focus_id.clone(),
+            event_type: "pomodoro".into(),
+            starts_at: "2026-08-16T08:00:00Z".into(),
+            payload: json!({ "title": "桌面端新标题", "actualMinutes": 30 }),
+            created_at: "2026-08-16T08:00:00Z".into(),
+            updated_at: "2026-08-16T08:30:00Z".into(),
+        })?;
+        let anniversary_id = Uuid::now_v7().to_string();
+        let activity_id = Uuid::now_v7().to_string();
+        service.import_legacy_events(vec![
+            VaultEvent {
+                id: focus_id.clone(),
+                event_type: "pomodoro".into(),
+                starts_at: "2026-08-16T08:00:00Z".into(),
+                payload: json!({ "title": "旧浏览器标题", "actualMinutes": 25 }),
+                created_at: "2026-08-16T08:00:00Z".into(),
+                updated_at: "2026-08-16T08:25:00Z".into(),
+            },
+            VaultEvent {
+                id: anniversary_id.clone(),
+                event_type: "anniversary".into(),
+                starts_at: "2020-08-16T12:00:00Z".into(),
+                payload: json!({ "title": "开始学习", "recurring": true }),
+                created_at: "2020-08-16T12:00:00Z".into(),
+                updated_at: "2026-08-16T09:00:00Z".into(),
+            },
+            VaultEvent {
+                id: activity_id.clone(),
+                event_type: "activity".into(),
+                starts_at: "2026-08-16T09:30:00Z".into(),
+                payload: json!({ "title": "旧版工具活动", "kind": "output" }),
+                created_at: "2026-08-16T09:30:00Z".into(),
+                updated_at: "2026-08-16T09:30:00Z".into(),
+            },
+        ])?;
+        let imported = service.list_personal_events(20)?;
+        assert_eq!(imported.len(), 2);
+        assert_eq!(
+            imported
+                .iter()
+                .find(|event| event.id == focus_id)
+                .and_then(|event| event.payload.get("title"))
+                .and_then(|value| value.as_str()),
+            Some("桌面端新标题")
+        );
+        assert!(imported.iter().any(|event| event.id == anniversary_id));
+        assert!(service
+            .list_activity_events(20, None, None, None)?
+            .iter()
+            .any(|event| event.id == activity_id));
+
+        let invalid_result = service.import_legacy_events(vec![
+            VaultEvent {
+                id: Uuid::now_v7().to_string(),
+                event_type: "pomodoro".into(),
+                starts_at: "2026-08-17T08:00:00Z".into(),
+                payload: json!({ "title": "不应部分写入" }),
+                created_at: "2026-08-17T08:00:00Z".into(),
+                updated_at: "2026-08-17T08:00:00Z".into(),
+            },
+            VaultEvent {
+                id: Uuid::now_v7().to_string(),
+                event_type: "unknown".into(),
+                starts_at: "2026-08-17T09:00:00Z".into(),
+                payload: json!({ "title": "无效类型" }),
+                created_at: "2026-08-17T09:00:00Z".into(),
+                updated_at: "2026-08-17T09:00:00Z".into(),
+            },
+        ]);
+        assert!(invalid_result.is_err());
+        assert_eq!(service.list_personal_events(20)?.len(), 2);
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
     fn replacing_activity_events_preserves_focus_and_anniversary_records() -> Result<()> {
         let root =
             std::env::temp_dir().join(format!("knitspace-activity-events-{}", Uuid::now_v7()));
@@ -8006,7 +11690,205 @@ mod tests {
         assert_eq!(personal.len(), 2);
         assert!(personal.iter().any(|event| event.id == focus_id));
         assert!(personal.iter().any(|event| event.id == anniversary_id));
-        assert_eq!(service.list_activity_events(80)?.len(), 80);
+        assert_eq!(
+            service.list_activity_events(80, None, None, None)?.len(),
+            80
+        );
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn activity_cursor_keeps_rows_with_identical_timestamps() -> Result<()> {
+        let root =
+            std::env::temp_dir().join(format!("knitspace-activity-cursor-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let starts_at = "2026-08-10T10:00:00Z";
+        let updated_at = "2026-08-10T10:01:00Z";
+        for index in 0..3 {
+            service.save_event(VaultEvent {
+                id: Uuid::now_v7().to_string(),
+                event_type: "activity".into(),
+                starts_at: starts_at.into(),
+                payload: json!({ "kind": "system", "title": format!("操作 {index}") }),
+                created_at: starts_at.into(),
+                updated_at: updated_at.into(),
+            })?;
+        }
+
+        let first = service.list_activity_events(1, None, None, None)?[0].clone();
+        let second = service.list_activity_events(
+            1,
+            Some(first.starts_at.clone()),
+            Some(first.updated_at.clone()),
+            Some(first.id.clone()),
+        )?[0]
+            .clone();
+        let third = service.list_activity_events(
+            1,
+            Some(second.starts_at.clone()),
+            Some(second.updated_at.clone()),
+            Some(second.id.clone()),
+        )?[0]
+            .clone();
+        assert_eq!(HashSet::from([first.id, second.id, third.id]).len(), 3);
+        assert!(service
+            .list_activity_events(1, Some(starts_at.into()), None, None)
+            .is_err());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn focus_cursor_keeps_rows_with_identical_timestamps() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("knitspace-focus-cursor-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let starts_at = "2026-08-10T10:00:00Z";
+        let updated_at = "2026-08-10T10:01:00Z";
+        for index in 0..3 {
+            service.save_event(VaultEvent {
+                id: Uuid::now_v7().to_string(),
+                event_type: "pomodoro".into(),
+                starts_at: starts_at.into(),
+                payload: json!({ "title": format!("专注 {index}"), "actualMinutes": 25 }),
+                created_at: starts_at.into(),
+                updated_at: updated_at.into(),
+            })?;
+        }
+
+        let first = service.list_focus_events(1, None, None, None)?[0].clone();
+        let second = service.list_focus_events(
+            1,
+            Some(first.starts_at.clone()),
+            Some(first.updated_at.clone()),
+            Some(first.id.clone()),
+        )?[0]
+            .clone();
+        let third = service.list_focus_events(
+            1,
+            Some(second.starts_at.clone()),
+            Some(second.updated_at.clone()),
+            Some(second.id.clone()),
+        )?[0]
+            .clone();
+        assert_eq!(HashSet::from([first.id, second.id, third.id]).len(), 3);
+        assert!(service
+            .list_focus_events(1, Some(starts_at.into()), None, None)
+            .is_err());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn focus_analytics_uses_all_indexed_sessions_and_local_day_boundaries() -> Result<()> {
+        let root =
+            std::env::temp_dir().join(format!("knitspace-focus-analytics-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let empty = service.focus_analytics(Some("2026-08-16T01:00:00Z".into()), 8 * 60)?;
+        assert_eq!(empty.sessions_7_days, 0);
+        assert_eq!(empty.daily_7_days.len(), 7);
+
+        let mut connection = service.connection()?;
+        let transaction = connection.transaction()?;
+        for index in 0..125 {
+            transaction.execute(
+                "INSERT INTO events(id, type, starts_at, starts_epoch, payload_json, created_at, updated_at)
+                 VALUES (?1, 'pomodoro', ?2, ?3, ?4, ?2, ?2)",
+                rusqlite::params![
+                    Uuid::now_v7().to_string(),
+                    "2026-08-15T16:30:00Z",
+                    chrono::DateTime::parse_from_rfc3339("2026-08-15T16:30:00Z")?.timestamp(),
+                    json!({ "actualMinutes": 5, "index": index }).to_string(),
+                ],
+            )?;
+        }
+        transaction.execute(
+            "INSERT INTO events(id, type, starts_at, starts_epoch, payload_json, created_at, updated_at)
+             VALUES (?1, 'pomodoro', ?2, ?3, ?4, ?2, ?2)",
+            rusqlite::params![
+                Uuid::now_v7().to_string(),
+                "2026-08-15T15:30:00Z",
+                chrono::DateTime::parse_from_rfc3339("2026-08-15T15:30:00Z")?.timestamp(),
+                json!({ "actualMinutes": 30 }).to_string(),
+            ],
+        )?;
+        transaction.commit()?;
+
+        let plans = connection
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT starts_epoch, payload_json
+                 FROM events INDEXED BY events_type_epoch_idx
+                 WHERE type = 'pomodoro' AND starts_epoch >= ?1 AND starts_epoch <= ?2
+                 ORDER BY starts_epoch DESC, updated_at DESC, id DESC",
+            )?
+            .query_map(rusqlite::params![0_i64, 2_000_000_000_i64], |row| {
+                row.get::<_, String>(3)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert!(plans
+            .iter()
+            .any(|plan| plan.contains("events_type_epoch_idx")));
+        drop(connection);
+
+        assert_eq!(service.list_personal_events(120)?.len(), 120);
+        let analytics = service.focus_analytics(Some("2026-08-16T01:00:00Z".into()), 8 * 60)?;
+        assert_eq!(analytics.sessions_today, 125);
+        assert_eq!(analytics.minutes_today, 625);
+        assert_eq!(analytics.sessions_7_days, 126);
+        assert_eq!(analytics.minutes_7_days, 655);
+        assert_eq!(analytics.daily_7_days.last().unwrap().date, "2026-08-16");
+        assert_eq!(analytics.daily_7_days.last().unwrap().sessions, 125);
+        assert!(service.focus_analytics(None, 15 * 60).is_err());
+
+        let invalid = service.save_event(VaultEvent {
+            id: Uuid::now_v7().to_string(),
+            event_type: "pomodoro".into(),
+            starts_at: "not-a-time".into(),
+            payload: json!({ "actualMinutes": 25 }),
+            created_at: String::new(),
+            updated_at: String::new(),
+        });
+        assert!(invalid.is_err());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn focus_event_index_migrates_and_backfills_from_v22() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("knitspace-focus-schema-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let id = Uuid::now_v7().to_string();
+        let connection = service.connection()?;
+        connection.execute_batch(
+            "DROP INDEX events_type_epoch_idx;
+             DELETE FROM schema_migrations WHERE version = 23;",
+        )?;
+        connection.execute(
+            "INSERT INTO events(id, type, starts_at, starts_epoch, payload_json, created_at, updated_at)
+             VALUES (?1, 'pomodoro', '2026-08-16T00:30:00+08:00', NULL, '{\"actualMinutes\":25}', '2026-08-16T00:30:00+08:00', '2026-08-16T00:30:00+08:00')",
+            [&id],
+        )?;
+        drop(connection);
+
+        let reopened = VaultService::open(root.to_string_lossy().into_owned())?;
+        let connection = reopened.connection()?;
+        let (version, starts_epoch, index_exists): (i64, i64, bool) = connection.query_row(
+            "SELECT
+               (SELECT MAX(version) FROM schema_migrations),
+               (SELECT starts_epoch FROM events WHERE id = ?1),
+               EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'events_type_epoch_idx')",
+            [&id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(version, SCHEMA_VERSION);
+        assert_eq!(
+            starts_epoch,
+            chrono::DateTime::parse_from_rfc3339("2026-08-16T00:30:00+08:00")?.timestamp()
+        );
+        assert!(index_exists);
+        drop(connection);
         fs::remove_dir_all(root)?;
         Ok(())
     }

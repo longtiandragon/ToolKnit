@@ -42,9 +42,11 @@ use vault::{
     AiActionRequest, AiProfileInput, ContentFavorite, ContentRecent, ImportedSource,
     ImportedVaultSource, VaultBackupInspection, VaultClipboardItem, VaultDocument, VaultEvent,
     VaultHealth, VaultHydration, VaultMarkdownAttachment, VaultMarkdownReconcile,
-    VaultQuestionAttachment, VaultRelation, VaultSearchResult, VaultService, VaultSource,
-    VaultVisualProject, VisualProjectImageInput, VisualProjectInput, VisualProjectSummary,
-    VocabularyEntry,
+    VaultProcessingJob, VaultProcessingJobHydration, VaultQuestionAttachment, VaultRelation,
+    VaultReviewAnalytics, VaultReviewCursor, VaultReviewGradeInput, VaultReviewGradeResult,
+    VaultReviewHistoryEntry, VaultReviewQueuePage, VaultReviewQueueSummary, VaultReviewUndoInput,
+    VaultSearchResult, VaultService, VaultSource, VaultVisualProject, VisualProjectImageInput,
+    VisualProjectInput, VisualProjectSummary, VocabularyEntry, VocabularySummary,
 };
 
 fn default_vault_path(app: &tauri::AppHandle) -> Result<String, String> {
@@ -863,6 +865,17 @@ fn export_default_vault_documents(app: tauri::AppHandle) -> Result<Vec<VaultDocu
         .map_err(|error| error.to_string())
 }
 
+/// Manual backup is an explicit heavy operation. Unlike startup hydration it
+/// includes every word form, sense, example, collocation and review state.
+#[tauri::command]
+fn export_default_vocabulary(app: tauri::AppHandle) -> Result<Vec<VocabularyEntry>, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .list_vocabulary()
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn delete_default_vault_document(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let path = default_vault_path(&app)?;
@@ -1023,6 +1036,19 @@ fn search_default_vault_documents(
 }
 
 #[tauri::command]
+fn search_default_vocabulary(
+    app: tauri::AppHandle,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<VocabularySummary>, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .search_vocabulary_summaries(query, limit.unwrap_or(120))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn find_default_wiki_backlinks(
     app: tauri::AppHandle,
     target_title: String,
@@ -1065,6 +1091,95 @@ fn save_default_vocabulary_batch(
     VaultService::open(path)
         .map_err(|error| error.to_string())?
         .save_vocabulary_batch(entries)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_default_vocabulary(app: tauri::AppHandle, id: String) -> Result<VocabularyEntry, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .get_vocabulary(id)
+        .map_err(|error| error.to_string())
+}
+
+/// Returns only compact card pointers. The selected question or word is read
+/// through its single-entity command, keeping a large review library out of
+/// renderer startup and Pinia scans.
+#[tauri::command]
+fn list_default_due_review_cards(
+    app: tauri::AppHandle,
+    as_of: Option<String>,
+    limit: Option<usize>,
+    cursor: Option<VaultReviewCursor>,
+    review_kind: Option<String>,
+) -> Result<VaultReviewQueuePage, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .list_due_review_cards(as_of, limit.unwrap_or(100), cursor, review_kind)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_default_review_queue_summary(
+    app: tauri::AppHandle,
+    as_of: Option<String>,
+) -> Result<VaultReviewQueueSummary, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .review_queue_summary(as_of)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn grade_default_review_card(
+    app: tauri::AppHandle,
+    input: VaultReviewGradeInput,
+) -> Result<VaultReviewGradeResult, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .grade_review_card(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn undo_default_review_grade(
+    app: tauri::AppHandle,
+    input: VaultReviewUndoInput,
+) -> Result<VaultReviewGradeResult, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .undo_review_grade(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_default_review_history(
+    app: tauri::AppHandle,
+    card_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<VaultReviewHistoryEntry>, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .list_review_history(card_id, limit.unwrap_or(50))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_default_review_analytics(
+    app: tauri::AppHandle,
+    as_of: Option<String>,
+    utc_offset_minutes: i32,
+) -> Result<VaultReviewAnalytics, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .review_analytics(as_of, utc_offset_minutes)
         .map_err(|error| error.to_string())
 }
 
@@ -1144,14 +1259,55 @@ fn list_default_personal_events(
 }
 
 #[tauri::command]
-fn list_default_activity_events(
+fn list_default_focus_events(
     app: tauri::AppHandle,
     limit: Option<usize>,
+    before_starts_at: Option<String>,
+    before_updated_at: Option<String>,
+    before_id: Option<String>,
 ) -> Result<Vec<VaultEvent>, String> {
     let path = default_vault_path(&app)?;
     VaultService::open(path)
         .map_err(|error| error.to_string())?
-        .list_activity_events(limit.unwrap_or(300))
+        .list_focus_events(
+            limit.unwrap_or(120),
+            before_starts_at,
+            before_updated_at,
+            before_id,
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_default_focus_analytics(
+    app: tauri::AppHandle,
+    as_of: Option<String>,
+    utc_offset_minutes: i32,
+) -> Result<vault::VaultFocusAnalytics, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .focus_analytics(as_of, utc_offset_minutes)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_default_activity_events(
+    app: tauri::AppHandle,
+    limit: Option<usize>,
+    before_starts_at: Option<String>,
+    before_updated_at: Option<String>,
+    before_id: Option<String>,
+) -> Result<Vec<VaultEvent>, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .list_activity_events(
+            limit.unwrap_or(80),
+            before_starts_at,
+            before_updated_at,
+            before_id,
+        )
         .map_err(|error| error.to_string())
 }
 
@@ -1161,6 +1317,18 @@ fn save_default_event(app: tauri::AppHandle, event: VaultEvent) -> Result<(), St
     VaultService::open(path)
         .map_err(|error| error.to_string())?
         .save_event(event)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn import_default_legacy_events(
+    app: tauri::AppHandle,
+    events: Vec<VaultEvent>,
+) -> Result<(), String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .import_legacy_events(events)
         .map_err(|error| error.to_string())
 }
 
@@ -1182,6 +1350,97 @@ fn delete_default_event(app: tauri::AppHandle, id: String) -> Result<(), String>
     VaultService::open(path)
         .map_err(|error| error.to_string())?
         .delete_event(id)
+        .map_err(|error| error.to_string())
+}
+
+/// Imports the renderer prototype's bounded task snapshot once. Existing
+/// native rows win on ID conflicts and the Rust side archives the original
+/// payload before writing the migration marker.
+#[tauri::command]
+fn hydrate_default_processing_jobs(
+    app: tauri::AppHandle,
+    browser_jobs: Vec<VaultProcessingJob>,
+) -> Result<VaultProcessingJobHydration, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .hydrate_processing_jobs(browser_jobs)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_default_processing_jobs(
+    app: tauri::AppHandle,
+    limit: Option<usize>,
+    before_created_at: Option<String>,
+    before_id: Option<String>,
+    status: Option<String>,
+    kind: Option<String>,
+) -> Result<Vec<VaultProcessingJob>, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .list_processing_jobs(
+            limit.unwrap_or(100),
+            before_created_at,
+            before_id,
+            status,
+            kind,
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_default_processing_job(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<VaultProcessingJob, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .get_processing_job(id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_default_processing_job(
+    app: tauri::AppHandle,
+    job: VaultProcessingJob,
+) -> Result<VaultProcessingJob, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .save_processing_job(job)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn delete_default_processing_job(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .delete_processing_job(id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn delete_default_processing_jobs(
+    app: tauri::AppHandle,
+    ids: Vec<String>,
+) -> Result<usize, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .delete_processing_jobs(ids)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn clear_default_finished_processing_jobs(app: tauri::AppHandle) -> Result<usize, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .clear_finished_processing_jobs()
         .map_err(|error| error.to_string())
 }
 
@@ -5361,6 +5620,7 @@ pub fn run() {
             get_default_editor_crash_draft,
             delete_default_editor_crash_draft,
             export_default_vault_documents,
+            export_default_vocabulary,
             delete_default_vault_document,
             list_default_question_attachments,
             import_default_question_attachment,
@@ -5373,10 +5633,18 @@ pub fn run() {
             delete_default_visual_project,
             replace_default_vault_documents,
             search_default_vault_documents,
+            search_default_vocabulary,
             find_default_wiki_backlinks,
             list_default_wiki_links,
             save_default_vocabulary,
             save_default_vocabulary_batch,
+            get_default_vocabulary,
+            list_default_due_review_cards,
+            get_default_review_queue_summary,
+            grade_default_review_card,
+            undo_default_review_grade,
+            list_default_review_history,
+            get_default_review_analytics,
             delete_default_vocabulary,
             replace_default_vocabulary,
             save_default_relation,
@@ -5384,10 +5652,20 @@ pub fn run() {
             replace_default_relations,
             list_default_events,
             list_default_personal_events,
+            list_default_focus_events,
+            get_default_focus_analytics,
             list_default_activity_events,
             save_default_event,
+            import_default_legacy_events,
             replace_default_activity_events,
             delete_default_event,
+            hydrate_default_processing_jobs,
+            list_default_processing_jobs,
+            get_default_processing_job,
+            save_default_processing_job,
+            delete_default_processing_job,
+            delete_default_processing_jobs,
+            clear_default_finished_processing_jobs,
             hydrate_default_clipboard,
             get_default_clipboard_item,
             save_default_clipboard_item,
