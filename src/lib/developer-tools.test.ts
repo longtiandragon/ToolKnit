@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
+import { calculateCidr, calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -181,6 +181,29 @@ describe('SQL formatter', () => {
   it('keeps strings, quoted identifiers, functions and comments intact', () => {
     expect(formatSql('select u."display.name",count(*) from users u -- keep this\nwhere u.id in (1,2)')).toBe('SELECT u."display.name",\nCOUNT(*)\nFROM users u\n-- keep this\nWHERE u.id IN (1, 2)')
     expect(() => formatSql("select 'unfinished")).toThrow('缺少结束引号')
+  })
+})
+
+describe('IPv4 CIDR calculator', () => {
+  it('calculates network, host range and masks', () => {
+    expect(calculateCidr('192.168.1.25/24')).toEqual({
+      address: '192.168.1.25',
+      prefix: 24,
+      network: '192.168.1.0',
+      broadcast: '192.168.1.255',
+      netmask: '255.255.255.0',
+      wildcard: '0.0.0.255',
+      firstHost: '192.168.1.1',
+      lastHost: '192.168.1.254',
+      totalAddresses: '256',
+      usableHosts: '254',
+    })
+    expect(calculateCidr('10.0.0.1/31').usableHosts).toBe('2')
+  })
+
+  it('rejects malformed addresses and prefixes', () => {
+    expect(() => calculateCidr('300.1.1.1/24')).toThrow('无效')
+    expect(() => calculateCidr('10.0.0.1/33')).toThrow('0 到 32')
   })
 })
 

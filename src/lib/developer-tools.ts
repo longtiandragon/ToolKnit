@@ -38,6 +38,19 @@ export interface DateOffsetResult {
   weekday: string
 }
 
+export interface CidrResult {
+  address: string
+  prefix: number
+  network: string
+  broadcast: string
+  netmask: string
+  wildcard: string
+  firstHost: string
+  lastHost: string
+  totalAddresses: string
+  usableHosts: string
+}
+
 export interface JwtResult {
   header: Record<string, unknown>
   payload: Record<string, unknown>
@@ -114,6 +127,42 @@ export function decodeHex(value: string) {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
   } catch {
     throw new Error('Hex 已成功还原为字节，但内容不是有效的 UTF-8 文本。')
+  }
+}
+
+function parseIpv4(value: string) {
+  const parts = value.trim().split('.')
+  if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/.test(part) || Number(part) > 255)) throw new Error(`IPv4 地址“${value}”无效。`)
+  return parts.reduce((result, part) => (result << 8n) | BigInt(Number(part)), 0n)
+}
+
+function formatIpv4(value: bigint) {
+  return [24n, 16n, 8n, 0n].map((shift) => Number((value >> shift) & 255n)).join('.')
+}
+
+export function calculateCidr(value: string): CidrResult {
+  const [addressValue, prefixValue, ...extra] = value.trim().split('/')
+  if (!addressValue || prefixValue === undefined || extra.length) throw new Error('请输入 IPv4 CIDR，例如 192.168.1.25/24。')
+  const prefix = Number(prefixValue)
+  if (!/^\d+$/.test(prefixValue) || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) throw new Error('CIDR 前缀长度需要在 0 到 32 之间。')
+  const address = parseIpv4(addressValue)
+  const mask = prefix === 0 ? 0n : (0xffffffffn << BigInt(32 - prefix)) & 0xffffffffn
+  const network = address & mask
+  const broadcast = network | (0xffffffffn ^ mask)
+  const total = broadcast - network + 1n
+  const firstHost = prefix >= 31 ? network : network + 1n
+  const lastHost = prefix >= 31 ? broadcast : broadcast - 1n
+  return {
+    address: formatIpv4(address),
+    prefix,
+    network: formatIpv4(network),
+    broadcast: formatIpv4(broadcast),
+    netmask: formatIpv4(mask),
+    wildcard: formatIpv4(0xffffffffn ^ mask),
+    firstHost: formatIpv4(firstHost),
+    lastHost: formatIpv4(lastHost),
+    totalAddresses: total.toString(),
+    usableHosts: (prefix >= 31 ? total : total - 2n).toString(),
   }
 }
 
