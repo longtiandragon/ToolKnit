@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateCidr, calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
+import { calculateCidr, calculateDateDifference, calculateDateOffset, convertColor, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -204,6 +204,19 @@ describe('IPv4 CIDR calculator', () => {
   it('rejects malformed addresses and prefixes', () => {
     expect(() => calculateCidr('300.1.1.1/24')).toThrow('无效')
     expect(() => calculateCidr('10.0.0.1/33')).toThrow('0 到 32')
+  })
+})
+
+describe('color converter', () => {
+  it('converts Hex, RGB and HSL while preserving alpha', () => {
+    expect(convertColor('#3B82F6')).toMatchObject({ hex: '#3B82F6', rgb: { r: 59, g: 130, b: 246, alpha: 1 }, cssRgb: 'rgb(59, 130, 246)' })
+    expect(convertColor('rgba(59 130 246 / 50%)')).toMatchObject({ hex: '#3B82F680', rgb: { alpha: 0.5 }, cssHsl: 'hsla(217.22, 91.22%, 59.8%, 0.5)' })
+    expect(convertColor('hsl(0, 100%, 50%)').rgb).toMatchObject({ r: 255, g: 0, b: 0, alpha: 1 })
+  })
+
+  it('rejects unsupported color syntax', () => {
+    expect(() => convertColor('red')).toThrow('仅支持')
+    expect(() => convertColor('rgb(1, 2)')).toThrow('三个通道')
   })
 })
 

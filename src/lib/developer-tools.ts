@@ -51,6 +51,14 @@ export interface CidrResult {
   usableHosts: string
 }
 
+export interface ColorResult {
+  hex: string
+  rgb: { r: number; g: number; b: number; alpha: number }
+  hsl: { h: number; s: number; l: number; alpha: number }
+  cssRgb: string
+  cssHsl: string
+}
+
 export interface JwtResult {
   header: Record<string, unknown>
   payload: Record<string, unknown>
@@ -163,6 +171,128 @@ export function calculateCidr(value: string): CidrResult {
     lastHost: formatIpv4(lastHost),
     totalAddresses: total.toString(),
     usableHosts: (prefix >= 31 ? total : total - 2n).toString(),
+  }
+}
+
+function clampColor(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value))
+}
+
+function parseColorChannel(value: string) {
+  if (value.endsWith('%')) {
+    const percentage = Number(value.slice(0, -1))
+    if (!Number.isFinite(percentage) || percentage < 0 || percentage > 100) throw new Error(`颜色通道“${value}”需要在 0% 到 100% 之间。`)
+    return Math.round(percentage * 2.55)
+  }
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric < 0 || numeric > 255) throw new Error(`颜色通道“${value}”需要在 0 到 255 之间。`)
+  return Math.round(numeric)
+}
+
+function parseColorAlpha(value: string | undefined) {
+  if (value === undefined) return 1
+  const alpha = value.endsWith('%') ? Number(value.slice(0, -1)) / 100 : Number(value)
+  if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) throw new Error(`透明度“${value}”需要在 0 到 1 或 0% 到 100% 之间。`)
+  return Math.round(alpha * 1000) / 1000
+}
+
+function parseHue(value: string) {
+  const match = /^(-?(?:\d+(?:\.\d*)?|\.\d+))(deg|grad|rad|turn)?$/i.exec(value)
+  if (!match) throw new Error(`色相“${value}”不是有效角度。`)
+  const number = Number(match[1])
+  const unit = match[2]?.toLowerCase()
+  const degrees = unit === 'grad' ? number * 0.9 : unit === 'rad' ? number * 180 / Math.PI : unit === 'turn' ? number * 360 : number
+  return ((degrees % 360) + 360) % 360
+}
+
+function rgbToHsl(red: number, green: number, blue: number) {
+  const r = red / 255
+  const g = green / 255
+  const b = blue / 255
+  const maximum = Math.max(r, g, b)
+  const minimum = Math.min(r, g, b)
+  const lightness = (maximum + minimum) / 2
+  if (maximum === minimum) return { h: 0, s: 0, l: Math.round(lightness * 10000) / 100 }
+  const delta = maximum - minimum
+  const saturation = lightness > 0.5 ? delta / (2 - maximum - minimum) : delta / (maximum + minimum)
+  let hue = maximum === r ? (g - b) / delta + (g < b ? 6 : 0) : maximum === g ? (b - r) / delta + 2 : (r - g) / delta + 4
+  hue /= 6
+  return { h: Math.round(hue * 36000) / 100, s: Math.round(saturation * 10000) / 100, l: Math.round(lightness * 10000) / 100 }
+}
+
+function hslToRgb(hue: number, saturation: number, lightness: number) {
+  const h = hue / 360
+  const s = saturation / 100
+  const l = lightness / 100
+  if (s === 0) {
+    const value = Math.round(l * 255)
+    return { r: value, g: value, b: value }
+  }
+  const hueToRgb = (p: number, q: number, t: number) => {
+    let normalized = t
+    if (normalized < 0) normalized += 1
+    if (normalized > 1) normalized -= 1
+    if (normalized < 1 / 6) return p + (q - p) * 6 * normalized
+    if (normalized < 1 / 2) return q
+    if (normalized < 2 / 3) return p + (q - p) * (2 / 3 - normalized) * 6
+    return p
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+  const p = 2 * l - q
+  return { r: Math.round(hueToRgb(p, q, h + 1 / 3) * 255), g: Math.round(hueToRgb(p, q, h) * 255), b: Math.round(hueToRgb(p, q, h - 1 / 3) * 255) }
+}
+
+export function convertColor(value: string): ColorResult {
+  if (!value.trim()) throw new Error('请输入颜色，例如 #3B82F6、rgb(59 130 246) 或 hsl(217 91% 60%)。')
+  assertStructuredTextSize(value)
+  const input = value.trim()
+  let red: number
+  let green: number
+  let blue: number
+  let alpha = 1
+  const hex = /^#([\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i.exec(input)
+  if (hex) {
+    const digits = hex[1]
+    const expanded = digits.length <= 4 ? digits.split('').map((digit) => digit + digit).join('') : digits
+    red = Number.parseInt(expanded.slice(0, 2), 16)
+    green = Number.parseInt(expanded.slice(2, 4), 16)
+    blue = Number.parseInt(expanded.slice(4, 6), 16)
+    if (expanded.length === 8) alpha = Math.round((Number.parseInt(expanded.slice(6, 8), 16) / 255) * 1000) / 1000
+  } else {
+    const rgb = /^rgba?\((.*)\)$/i.exec(input)
+    const hsl = /^hsla?\((.*)\)$/i.exec(input)
+    if (rgb) {
+      const parts = rgb[1].trim().split(/[\s,\/]+/).filter(Boolean)
+      if (parts.length < 3 || parts.length > 4) throw new Error('RGB 需要三个通道，可选第四项透明度。')
+      red = parseColorChannel(parts[0])
+      green = parseColorChannel(parts[1])
+      blue = parseColorChannel(parts[2])
+      alpha = parseColorAlpha(parts[3])
+    } else if (hsl) {
+      const parts = hsl[1].trim().split(/[\s,\/]+/).filter(Boolean)
+      if (parts.length < 3 || parts.length > 4 || !parts[1].endsWith('%') || !parts[2].endsWith('%')) throw new Error('HSL 需要色相、饱和度百分比和明度百分比。')
+      const hue = parseHue(parts[0])
+      const saturation = clampColor(Number(parts[1].slice(0, -1)), 0, 100)
+      const lightness = clampColor(Number(parts[2].slice(0, -1)), 0, 100)
+      if (![saturation, lightness].every(Number.isFinite)) throw new Error('HSL 的饱和度和明度必须是数字。')
+      const rgbValue = hslToRgb(hue, saturation, lightness)
+      red = rgbValue.r
+      green = rgbValue.g
+      blue = rgbValue.b
+      alpha = parseColorAlpha(parts[3])
+    } else throw new Error('仅支持 #Hex、rgb()/rgba() 和 hsl()/hsla() 颜色。')
+  }
+  const hslValue = rgbToHsl(red, green, blue)
+  const alphaHex = Math.round(alpha * 255).toString(16).padStart(2, '0').toUpperCase()
+  const hexValue = `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, '0')).join('').toUpperCase()}${alpha < 1 ? alphaHex : ''}`
+  const rgbValue = { r: red, g: green, b: blue, alpha }
+  const hslOutput = { ...hslValue, alpha }
+  return {
+    hex: hexValue,
+    rgb: rgbValue,
+    hsl: hslOutput,
+    cssRgb: alpha < 1 ? `rgba(${red}, ${green}, ${blue}, ${alpha})` : `rgb(${red}, ${green}, ${blue})`,
+    cssHsl: alpha < 1 ? `hsla(${hslValue.h}, ${hslValue.s}%, ${hslValue.l}%, ${alpha})` : `hsl(${hslValue.h}, ${hslValue.s}%, ${hslValue.l}%)`,
   }
 }
 
