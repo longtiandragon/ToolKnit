@@ -6,7 +6,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import SectionCard from '@/components/SectionCard.vue'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { buildLabCapabilityCards, type LabCapabilityCard } from '@/lib/lab-capabilities'
-import { getDesktopVaultHealth, getDesktopVaultStorageSpace, getMediaEngineStatus, isDesktop, probeDesktopOcr, type DesktopOcrCapability, type DesktopStorageSpace, type DesktopVaultHealth, type MediaEngineStatus } from '@/lib/native'
+import { getDesktopEngineRegistry, getDesktopVaultHealth, getDesktopVaultStorageSpace, getMediaEngineStatus, isDesktop, probeDesktopOcr, type DesktopEngineStatus, type DesktopOcrCapability, type DesktopStorageSpace, type DesktopVaultHealth, type MediaEngineStatus } from '@/lib/native'
 import { useUiStore } from '@/stores/ui'
 import { useWorkbenchStore } from '@/stores/workbench'
 
@@ -29,10 +29,12 @@ const vaultHealth = shallowRef<DesktopVaultHealth>()
 const storageSpace = shallowRef<DesktopStorageSpace>()
 const mediaStatus = shallowRef<MediaEngineStatus>()
 const ocrStatus = shallowRef<DesktopOcrCapability>()
+const engineStatuses = shallowRef<DesktopEngineStatus[]>([])
 const vaultError = ref('')
 const storageError = ref('')
 const mediaError = ref('')
 const ocrError = ref('')
+const engineError = ref('')
 const checking = ref(false)
 const checkedAt = ref<Date>()
 const menu = ref<{ target: MenuTarget; x: number; y: number } | null>(null)
@@ -59,6 +61,7 @@ const readyCount = computed(() => cards.value.filter((card) => card.status === '
 const attentionCount = computed(() => cards.value.filter((card) => card.status === 'attention').length)
 const statusSummary = computed(() => checking.value ? '正在检查本机能力' : attentionCount.value ? `${attentionCount.value} 项需要处理` : '本机能力状态正常')
 const checkedAtLabel = computed(() => checkedAt.value ? `最近检查 ${checkedAt.value.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : '打开页面后只检查一次')
+const availableEngineCount = computed(() => engineStatuses.value.filter((engine) => engine.available).length)
 
 const researchItems: ResearchItem[] = []
 
@@ -69,6 +72,7 @@ async function refreshChecks() {
     storageError.value = '磁盘空间探针仅在 Knitspace 桌面版运行。'
     mediaError.value = '本机媒体探针仅在桌面版运行。'
     ocrError.value = 'Windows OCR 探针仅在桌面版运行。'
+    engineError.value = '可选引擎探针仅在桌面版运行。'
     checkedAt.value = new Date()
     return
   }
@@ -77,7 +81,8 @@ async function refreshChecks() {
   storageError.value = ''
   mediaError.value = ''
   ocrError.value = ''
-  const [vault, storage, media, ocr] = await Promise.allSettled([getDesktopVaultHealth(), getDesktopVaultStorageSpace(), getMediaEngineStatus(), probeDesktopOcr()])
+  engineError.value = ''
+  const [vault, storage, media, ocr, engines] = await Promise.allSettled([getDesktopVaultHealth(), getDesktopVaultStorageSpace(), getMediaEngineStatus(), probeDesktopOcr(), getDesktopEngineRegistry()])
   if (vault.status === 'fulfilled' && vault.value) vaultHealth.value = vault.value
   else {
     vaultHealth.value = undefined
@@ -97,6 +102,11 @@ async function refreshChecks() {
   else {
     ocrStatus.value = undefined
     ocrError.value = ocr.reason instanceof Error ? ocr.reason.message : '无法检查 Windows OCR。'
+  }
+  if (engines.status === 'fulfilled') engineStatuses.value = engines.value
+  else {
+    engineStatuses.value = []
+    engineError.value = engines.reason instanceof Error ? engines.reason.message : '无法检查可选本机引擎。'
   }
   checkedAt.value = new Date()
   checking.value = false
@@ -145,7 +155,12 @@ async function copyTarget(target: MenuTarget) {
 }
 async function copyAllDiagnostics() {
   try {
-    const text = [`Knitspace 本机能力 · ${new Date().toLocaleString('zh-CN')}`, ...cards.value.map((card) => `${card.title}：${card.statusLabel}｜${card.detail}`)].join('\n')
+    const text = [
+      `Knitspace 本机能力 · ${new Date().toLocaleString('zh-CN')}`,
+      ...cards.value.map((card) => `${card.title}：${card.statusLabel}｜${card.detail}`),
+      '可选工具引擎：',
+      ...engineStatuses.value.map((engine) => `${engine.title}：${engine.available ? '已检测到' : '未检测到'}｜${engine.detail}`),
+    ].join('\n')
     await navigator.clipboard.writeText(text)
     ui.toast('本机能力摘要已复制', '只包含当前页面显示的诊断，不包含笔记正文或密钥。', 'success')
   } catch (error) {
@@ -164,6 +179,7 @@ onMounted(() => { void refreshChecks() })
       :stats="[
         { label: '已就绪', value: `${readyCount} / ${cards.length}` },
         { label: '需要处理', value: attentionCount, tone: attentionCount ? 'warn' : undefined },
+        { label: '可选引擎', value: engineStatuses.length ? `${availableEngineCount} / ${engineStatuses.length}` : '检查中' },
         { label: '上次检查', value: checkedAtLabel },
       ]"
     >
@@ -212,6 +228,42 @@ onMounted(() => { void refreshChecks() })
             {{ card.actionLabel }}<AppIcon name="arrow-right" :size="14" />
           </footer>
         </RouterLink>
+      </div>
+    </SectionCard>
+
+    <SectionCard class="mt-4" title="可选工具引擎" hint="只运行固定版本探针；不会自动下载、执行用户输入或上传文件">
+      <div v-if="engineError" class="p-3 rounded-sm bg-danger-soft text-[12px] text-danger" role="alert">
+        {{ engineError }}
+      </div>
+      <div v-else class="grid gap-2.5 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3" aria-label="可选工具引擎状态" :aria-busy="checking">
+        <article
+          v-for="engine in engineStatuses"
+          :key="engine.id"
+          class="stack gap-2 p-3.5 rounded-md border bg-surface-2"
+          :class="engine.available ? 'border-line' : 'border-dashed border-line-strong'"
+        >
+          <header class="row-between gap-2">
+            <span class="row gap-2 min-w-0">
+              <span class="center w-8 h-8 rounded-sm bg-surface text-fg-2 shrink-0"><AppIcon name="terminal" :size="16" /></span>
+              <span class="stack gap-0.5 min-w-0">
+                <b class="text-[13px] font-semibold truncate">{{ engine.title }}</b>
+                <small class="text-[11px] text-fg-3">{{ engine.category }}</small>
+              </span>
+            </span>
+            <i
+              class="row gap-1 h-6 px-2 rounded-full text-[11px] not-italic shrink-0"
+              :class="engine.available ? 'bg-success-soft text-success' : 'bg-warn-soft text-warn'"
+            >
+              <AppIcon :name="engine.available ? 'shield' : 'pause'" :size="11" />
+              {{ engine.available ? '已检测到' : '未检测到' }}
+            </i>
+          </header>
+          <p class="text-[11px] leading-relaxed text-fg-2 line-clamp-2" :title="engine.detail">{{ engine.detail }}</p>
+          <small v-if="engine.executable || engine.version" class="text-[11px] text-fg-3 truncate" :title="engine.version || engine.executable">
+            {{ engine.version || engine.executable }}
+          </small>
+        </article>
+        <p v-if="!engineStatuses.length && checking" class="text-[12px] text-fg-3">正在读取固定版本探针…</p>
       </div>
     </SectionCard>
 

@@ -1,6 +1,7 @@
 #[cfg(not(feature = "public-core"))]
 mod private_tools;
 mod archive_tools;
+mod engine_registry;
 mod file_health;
 mod transcription;
 mod vault;
@@ -731,6 +732,13 @@ async fn seven_zip_engine_status() -> archive_tools::SevenZipEngineStatus {
             executable: None,
             version: None,
         })
+}
+
+#[tauri::command]
+async fn engine_registry_status() -> Vec<engine_registry::EngineStatus> {
+    tauri::async_runtime::spawn_blocking(engine_registry::list_engine_statuses)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -5793,6 +5801,7 @@ pub fn run() {
             list_tar_archive,
             extract_tar_archive,
             seven_zip_engine_status,
+            engine_registry_status,
             create_seven_zip_archive,
             list_seven_zip_archive,
             extract_seven_zip_archive,

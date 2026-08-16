@@ -1083,6 +1083,23 @@ export async function getMediaEngineStatus() {
   if (!isDesktop()) return { available: false } satisfies MediaEngineStatus
   return invoke<MediaEngineStatus>('media_engine_status')
 }
+export type DesktopEngineId = 'ffmpeg' | 'ffprobe' | 'seven-zip' | 'qpdf' | 'libreoffice' | 'tesseract' | 'imagemagick' | 'exiftool' | 'czkawka' | 'yt-dlp'
+export interface DesktopEngineStatus {
+  id: DesktopEngineId
+  title: string
+  category: string
+  available: boolean
+  executable?: string
+  version?: string
+  detail: string
+}
+/** Returns fixed, read-only version probes for optional local engines. The
+ * native side owns the allowlist and never accepts an executable or argument
+ * from the renderer. */
+export async function getDesktopEngineRegistry() {
+  if (!isDesktop()) return [] as DesktopEngineStatus[]
+  return invoke<DesktopEngineStatus[]>('engine_registry_status')
+}
 export async function inspectDesktopMedia(path: string) {
   if (!isDesktop()) throw new Error('媒体探测仅支持桌面模式。')
   return invoke<MediaFileInfo>('inspect_media_file', { path })
