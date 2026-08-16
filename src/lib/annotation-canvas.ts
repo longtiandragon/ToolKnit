@@ -1,4 +1,4 @@
-export type AnnotationKind = 'box' | 'arrow' | 'text'
+export type AnnotationKind = 'box' | 'arrow' | 'text' | 'mosaic' | 'pen'
 export type CanvasTool = 'select' | AnnotationKind
 
 /**
@@ -17,6 +17,11 @@ export interface CanvasAnnotation {
   color: string
   /** Clockwise degrees. Arrows encode their direction in their endpoints. */
   rotation?: number
+  /** Freehand strokes (pen) store their path as proportional points. */
+  points?: { x: number; y: number }[]
+  /** Logical pen width at a 1000px-wide canvas; both preview and export
+   *  scale it proportionally. */
+  strokeWidth?: number
 }
 
 export type AnnotationLayerMove = 'forward' | 'backward' | 'front' | 'back'
@@ -36,6 +41,10 @@ export function normalizeAnnotation(annotation: CanvasAnnotation): CanvasAnnotat
   const { rotation: rawRotation, ...rest } = annotation
   const x = clamp(annotation.x, 0, 1)
   const y = clamp(annotation.y, 0, 1)
+  if (annotation.kind === 'pen') {
+    const points = (annotation.points ?? []).map((point) => ({ x: clamp(point.x, 0, 1), y: clamp(point.y, 0, 1) }))
+    return { ...rest, x, y, points, width: undefined, height: undefined }
+  }
   const width = annotation.width ?? (annotation.kind === 'text' ? 0.19 : annotation.kind === 'arrow' ? 0.2 : 0.18)
   const height = annotation.height ?? (annotation.kind === 'text' ? 0.06 : annotation.kind === 'arrow' ? -0.15 : 0.15)
 

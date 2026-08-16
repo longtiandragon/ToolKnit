@@ -61,3 +61,22 @@ describe('annotation canvas geometry', () => {
     expect(rotateAnnotation(arrow, 90)).toMatchObject({ x: .2, y: .2, width: 0, height: .2 })
   })
 })
+
+describe('mosaic and pen annotations', () => {
+  it('keeps mosaic rectangles in normalized proportions like boxes', () => {
+    const mosaic = createAnnotation({ id: 1, kind: 'mosaic', x: .3, y: .3, width: .4, height: .3, text: '', color: '#ffffff' })
+    expect(mosaic).toMatchObject({ kind: 'mosaic', x: .3, y: .3, width: .4, height: .3 })
+  })
+
+  it('clamps freehand pen points into the composition and ignores rect geometry', () => {
+    const pen = createAnnotation({ id: 2, kind: 'pen', x: .2, y: .2, text: '', color: '#ffbf69', points: [{ x: .2, y: .2 }, { x: 1.4, y: -.2 }, { x: .6, y: .6 }] })
+    expect(pen.points).toEqual([{ x: .2, y: .2 }, { x: 1, y: 0 }, { x: .6, y: .6 }])
+    expect(pen.width).toBeUndefined()
+    expect(pen.height).toBeUndefined()
+  })
+
+  it('keeps pen points untouched by text updates', () => {
+    const pen = createAnnotation({ id: 3, kind: 'pen', x: 0, y: 0, text: '', color: '#ffffff', points: [{ x: .1, y: .1 }, { x: .2, y: .2 }] })
+    expect(updateAnnotationText([pen], pen.id, '不会写入画笔')).toEqual([pen])
+  })
+})

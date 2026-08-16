@@ -72,6 +72,8 @@ workerScope.onmessage = async ({ data }) => {
     if (!context) throw new Error('当前环境无法建立滚动长图画布。')
     context.fillStyle = '#ffffff'
     context.fillRect(0, 0, canvas.width, canvas.height)
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
     frames.forEach((frame, index) => {
       const overlap = index ? overlaps[index - 1] : 0
       const sourceOverlap = Math.round(overlap * frame.width / targetWidth)

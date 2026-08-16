@@ -1,4 +1,4 @@
-export type PdfTaskOperation = 'merge' | 'split' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'text'
+export type PdfTaskOperation = 'merge' | 'split' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'text' | 'pdf-to-image'
 
 export interface PdfTaskInput { name: string; data: ArrayBuffer }
 
@@ -11,9 +11,15 @@ export interface PdfTaskRequest {
   pageNumberStart: number
   pageNumberPosition: 'bottom-center' | 'bottom-right'
   watermark?: { data: ArrayBuffer; opacity: number }
+  /** 仅 pdf-to-image：输出图片格式，默认 png。 */
+  imageFormat?: 'png' | 'jpeg' | 'webp'
+  /** 仅 pdf-to-image：渲染分辨率，72–300 DPI，默认 150。 */
+  imageDpi?: number
+  /** 仅 pdf-to-image：JPG/WebP 压缩质量 1–100，默认 90；PNG 忽略。 */
+  imageQuality?: number
 }
 
-export interface PdfTaskOutput { name: string; data: ArrayBuffer; mime: 'application/pdf' | 'text/plain;charset=utf-8' }
+export interface PdfTaskOutput { name: string; data: ArrayBuffer; mime: 'application/pdf' | 'text/plain;charset=utf-8' | 'image/png' | 'image/jpeg' | 'image/webp' }
 
 interface PendingTask {
   resolve: () => void

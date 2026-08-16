@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildRenamePreview, cleanOutputName, parsePageIndexes, transformText } from './file-tools'
+import { assertPdfImageFits, buildRenamePreview, cleanOutputName, parsePageIndexes, pdfImageOutputName, pdfImageScaleForDpi, transformText, PDF_IMAGE_MAX_DIMENSION, PDF_IMAGE_MAX_PIXELS } from './file-tools'
 
 describe('parsePageIndexes', () => {
   it('parses pages and ranges in the requested order', () => {
@@ -43,6 +43,32 @@ describe('text transforms', () => {
     expect(result).toContain('中文字符：5')
     expect(result).toContain('英文/数字词：1')
     expect(result).toContain('段落：2')
+  })
+})
+
+describe('pdf image export helpers', () => {
+  it('converts DPI to a viewport scale and clamps it', () => {
+    expect(pdfImageScaleForDpi(72)).toBe(1)
+    expect(pdfImageScaleForDpi(150)).toBeCloseTo(150 / 72)
+    expect(pdfImageScaleForDpi(300)).toBeCloseTo(300 / 72)
+    expect(pdfImageScaleForDpi(1200)).toBeCloseTo(300 / 72)
+    expect(pdfImageScaleForDpi(0)).toBe(1)
+  })
+
+  it('names page outputs with zero-padded page numbers', () => {
+    expect(pdfImageOutputName('课程 资料.pdf', 0, 12, 'png')).toBe('课程-资料-p01.png')
+    expect(pdfImageOutputName('论文.pdf', 11, 12, 'webp')).toBe('论文-p12.webp')
+    expect(pdfImageOutputName('报告.pdf', 0, 3, 'jpeg')).toBe('报告-p1.jpg')
+  })
+
+  it('accepts an A4 page at 300 DPI', () => {
+    const size = assertPdfImageFits(595.28 * (300 / 72), 841.89 * (300 / 72), 3, 20)
+    expect(size.width * size.height).toBeLessThan(PDF_IMAGE_MAX_PIXELS)
+  })
+
+  it('rejects pages over the single-page pixel budget with a hint to lower DPI', () => {
+    expect(() => assertPdfImageFits(7000, 7000, 1, 2)).toThrow(/超过单页上限.*降低分辨率/)
+    expect(() => assertPdfImageFits(PDF_IMAGE_MAX_DIMENSION + 1, 100, 1, 2)).toThrow(/降低分辨率/)
   })
 })
 

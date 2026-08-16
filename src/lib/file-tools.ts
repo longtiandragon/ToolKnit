@@ -1,5 +1,34 @@
 export type TextTransformMode = 'json' | 'trim' | 'markdown' | 'dedupe-lines' | 'sort-lines' | 'extract-contacts' | 'statistics'
 
+export type PdfImageFormat = 'png' | 'jpeg' | 'webp'
+
+/** 单页导出图片的像素上限：边长与总面积同时受限，防止超大页面在
+ * 离屏画布里一次性吃掉几百 MB。A4 300 DPI 约 2480×3508，远低于上限。 */
+export const PDF_IMAGE_MAX_DIMENSION = 10_000
+export const PDF_IMAGE_MAX_PIXELS = 40_000_000
+
+export function pdfImageScaleForDpi(dpi: number) {
+  return Math.max(72, Math.min(300, Math.round(dpi))) / 72
+}
+
+export function pdfImageOutputName(sourceName: string, pageIndex: number, pageCount: number, format: PdfImageFormat) {
+  const digits = Math.max(1, String(pageCount).length)
+  const page = String(pageIndex + 1).padStart(digits, '0')
+  // The rest of the image tools write `.jpg`, not `.jpeg`; keep one habit.
+  const extension = format === 'jpeg' ? 'jpg' : format
+  return `${cleanOutputName(sourceName)}-p${page}.${extension}`
+}
+
+export function assertPdfImageFits(width: number, height: number, pageNumber: number, pageCount: number) {
+  const safeWidth = Math.ceil(width)
+  const safeHeight = Math.ceil(height)
+  if (safeWidth < 1 || safeHeight < 1) throw new Error(`第 ${pageNumber}/${pageCount} 页的尺寸无效，无法渲染。`)
+  if (safeWidth > PDF_IMAGE_MAX_DIMENSION || safeHeight > PDF_IMAGE_MAX_DIMENSION || safeWidth * safeHeight > PDF_IMAGE_MAX_PIXELS) {
+    throw new Error(`第 ${pageNumber}/${pageCount} 页按当前分辨率约为 ${safeWidth}×${safeHeight} 像素，超过单页上限。请降低分辨率后重试。`)
+  }
+  return { width: safeWidth, height: safeHeight }
+}
+
 export interface RenameOptions {
   prefix: string
   suffix?: string

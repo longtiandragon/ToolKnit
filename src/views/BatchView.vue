@@ -42,6 +42,7 @@ const watermarkColor = ref('#8a8f98')
 const pageNumberStart = ref(1)
 const pageNumberPosition = ref<'bottom-center' | 'bottom-right'>('bottom-center')
 const imageFormat = ref<'image/png' | 'image/jpeg' | 'image/webp'>('image/png')
+const pdfImageDpi = ref(150)
 const cropLeft = ref(0)
 const cropTop = ref(0)
 const cropWidth = ref(100)
@@ -76,7 +77,7 @@ const groups: [ToolGroup, string, string, string][] = [
 ]
 
 const operationMap: Record<ToolGroup, ToolOption[]> = {
-  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['images-to-pdf', '图片转 PDF'], ['text', '提取文本']],
+  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本']],
   image: [['convert', '转换图片'], ['resize', '缩放并压缩'], ['crop', '裁剪图片'], ['rotate', '旋转图片']],
   text: [['transform', '文本转换']],
   organize: [['rename-report', '命名预览'], ['dedupe-report', '哈希去重报告']]
@@ -97,6 +98,7 @@ const operationNotes: Record<string, string> = {
   watermark: '在每页叠加文字水印,可调透明度与角度',
   'page-number': '按起始数字和位置批量添加页码',
   'images-to-pdf': '把多张图片按顺序合成一份 PDF',
+  'pdf-to-image': '把每一页渲染成图片,可选格式、分辨率与页码范围',
   'extract-text': '导出 PDF 里已有的文字层,不做 OCR',
   convert: '在 PNG、JPG 与 WebP 之间转换',
   resize: '限制最大宽度并调整压缩质量',
@@ -117,7 +119,7 @@ const accept = computed(() => group.value === 'pdf' && operation.value !== 'imag
       : group.value === 'text'
         ? '.txt,.md,.json,.js,.ts,.py,.java,.csv,text/*,application/json'
         : '*/*')
-const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'watermark', 'page-number', 'rotate', 'split', 'text'].includes(operation.value))
+const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'watermark', 'page-number', 'rotate', 'split', 'text', 'pdf-to-image'].includes(operation.value))
 const usesOutputName = computed(() => group.value === 'text' || group.value === 'organize' || (group.value === 'pdf' && ['merge', 'images-to-pdf'].includes(operation.value)))
 const canRun = computed(() => !running.value && (files.value.length > 0 || (group.value === 'text' && textInput.value.trim().length > 0)))
 const outputHint = computed(() => {
@@ -200,6 +202,9 @@ function setOperation(next: string) {
   operation.value = next
   rotation.value = defaultRotationFor(next)
   outputName.value = defaultOutputNameFor(next)
+  // Extract/reorder start with "1" because they describe one selection; a
+  // page-to-image export means the whole document unless a range is given.
+  if (next === 'pdf-to-image') pageRange.value = ''
   clearFiles()
   message.value = `已切换到「${operations.value.find((item) => item[0] === next)?.[1] ?? '新操作'}」，请重新选择输入。`
 }
@@ -219,7 +224,7 @@ function dropFiles(event: DragEvent) {
 function recipeParameters() {
   return {
     outputName: outputName.value, pageRange: pageRange.value, rotation: rotation.value,
-    imageFormat: imageFormat.value, cropLeft: cropLeft.value, cropTop: cropTop.value,
+    imageFormat: imageFormat.value, pdfImageDpi: pdfImageDpi.value, cropLeft: cropLeft.value, cropTop: cropTop.value,
     cropWidth: cropWidth.value, cropHeight: cropHeight.value, maxWidth: maxWidth.value,
     quality: quality.value, watermarkText: watermarkText.value, watermarkOpacity: watermarkOpacity.value,
     watermarkColor: watermarkColor.value, pageNumberStart: pageNumberStart.value,
@@ -237,6 +242,7 @@ function applyRecipe(recipe: ToolRecipe) {
   pageRange.value = String(params.pageRange ?? pageRange.value)
   rotation.value = Number(params.rotation ?? rotation.value)
   imageFormat.value = params.imageFormat === 'image/jpeg' || params.imageFormat === 'image/webp' || params.imageFormat === 'image/png' ? params.imageFormat : imageFormat.value
+  pdfImageDpi.value = Math.max(72, Math.min(300, Number(params.pdfImageDpi ?? pdfImageDpi.value)))
   cropLeft.value = Number(params.cropLeft ?? cropLeft.value)
   cropTop.value = Number(params.cropTop ?? cropTop.value)
   cropWidth.value = Number(params.cropWidth ?? cropWidth.value)
@@ -272,6 +278,16 @@ function saveCurrentRecipe() {
   message.value = `已保存配方“${recipe.title}”。配方不会保存文件路径或内容。`
 }
 
+/** The first run asks where outputs go; after that the directory lived only
+ *  in Settings. Keep the answer in sight beside the run button, because
+ *  “where did that go” should never require leaving the tool. */
+async function pickOutputDirectory() {
+  const directory = await chooseOutputDirectory()
+  if (!directory) return
+  store.updateSettings({ outputDirectory: directory })
+  ui.toast('默认输出目录已更新', directory, 'success')
+}
+
 watch(() => route.query, (query) => {
   if (query.group === 'image') {
     router.replace({ path: '/visual', query: { tool: typeof query.operation === 'string' ? query.operation : 'convert' } })
@@ -305,6 +321,7 @@ watch(() => route.query, (query) => {
   operation.value = requestedOperation
   rotation.value = defaultRotationFor(requestedOperation)
   outputName.value = defaultOutputNameFor(requestedOperation)
+  if (requestedOperation === 'pdf-to-image') pageRange.value = ''
   const supportedTextModes: TextTransformMode[] = ['json', 'trim', 'markdown', 'dedupe-lines', 'sort-lines', 'extract-contacts', 'statistics']
   if (typeof query.mode === 'string' && supportedTextModes.includes(query.mode as TextTransformMode)) textMode.value = query.mode as TextTransformMode
   activeRecipeId.value = undefined
@@ -448,7 +465,10 @@ async function runPdf(onProgress?: (progress: number, detail: string) => void, o
     rotation: rotation.value,
     pageNumberStart: pageNumberStart.value,
     pageNumberPosition: pageNumberPosition.value,
-    watermark
+    watermark,
+    ...(operation.value === 'pdf-to-image'
+      ? { imageFormat: imageFormat.value.split('/')[1] as 'png' | 'jpeg' | 'webp', imageDpi: pdfImageDpi.value, imageQuality: quality.value }
+      : {})
   }, {
     onProgress,
     onOutput: async (output) => {
@@ -819,6 +839,32 @@ onBeforeUnmount(() => {
               </FieldRow>
             </template>
 
+            <template v-if="operation === 'pdf-to-image'">
+              <FieldRow label="输出格式">
+                <select v-model="imageFormat" class="field w-full">
+                  <option value="image/png">PNG · 无损，文字与线条最清晰</option>
+                  <option value="image/jpeg">JPG · 扫描件与照片，体积小</option>
+                  <option value="image/webp">WebP · 体积最小</option>
+                </select>
+              </FieldRow>
+              <FieldRow label="分辨率" hint="按 PDF 原始尺寸换算，越高越清晰、文件越大">
+                <select v-model.number="pdfImageDpi" class="field w-full">
+                  <option :value="72">72 DPI · 屏幕</option>
+                  <option :value="96">96 DPI · 网页</option>
+                  <option :value="150">150 DPI · 日常够用</option>
+                  <option :value="200">200 DPI · 较高清晰度</option>
+                  <option :value="300">300 DPI · 打印级别</option>
+                </select>
+              </FieldRow>
+              <FieldRow v-if="imageFormat !== 'image/png'" label="质量">
+                <template #value>{{ quality }}%</template>
+                <input v-model.number="quality" type="range" min="20" max="100" class="w-full accent-accent" />
+              </FieldRow>
+              <FieldRow label="页码范围" hint="留空导出全部页">
+                <input v-model="pageRange" name="pdf-image-page-range" class="field w-full" placeholder="全部页，或 1,3-5" />
+              </FieldRow>
+            </template>
+
             <p v-if="operation === 'split'" class="text-[12px] text-fg-3 leading-snug">
               每一页会生成一份独立 PDF，文件名带上原来的页码。这个操作没有需要设置的参数。
             </p>
@@ -907,6 +953,26 @@ onBeforeUnmount(() => {
           <p class="text-[12px] text-fg-3 text-center leading-snug" aria-live="polite">
             {{ running ? message : outputHint }}
           </p>
+
+          <!-- Desktop only: outputs land in this folder, and it is one click
+               away instead of living only in the Settings page. -->
+          <button
+            v-if="isDesktop()"
+            type="button"
+            class="row-between gap-2 w-full border-t border-line pt-3 text-left"
+            :disabled="running"
+            @click="pickOutputDirectory"
+          >
+            <span class="stack gap-0.5 min-w-0">
+              <span class="text-[12px] font-medium text-fg">输出目录</span>
+              <span class="text-[11px] text-fg-3 truncate" :title="store.settings.outputDirectory">
+                {{ store.settings.outputDirectory || '尚未设置，点击选择' }}
+              </span>
+            </span>
+            <span class="row gap-1 shrink-0 text-[11px] text-fg-3">
+              <AppIcon name="folder" :size="14" />更改
+            </span>
+          </button>
         </section>
 
         <section class="panel px-4 py-3 stack gap-3">

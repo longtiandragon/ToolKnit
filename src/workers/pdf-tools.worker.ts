@@ -1,8 +1,9 @@
 /// <reference lib="webworker" />
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib'
 import * as pdfjs from 'pdfjs-dist'
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
-import { cleanOutputName, parsePageIndexes } from '@/lib/file-tools'
+import { assertPdfImageFits, cleanOutputName, parsePageIndexes, pdfImageOutputName, pdfImageScaleForDpi, type PdfImageFormat } from '@/lib/file-tools'
 import type { PdfTaskOutput, PdfTaskRequest } from '@/lib/pdf-worker'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
@@ -25,6 +26,32 @@ async function publish(taskId: string, sequence: number, output: PdfTaskOutput) 
   const outputId = `${taskId}-output-${sequence}`
   postMessage({ type: 'output', taskId, outputId, output }, [output.data])
   await new Promise<void>((resolve) => acknowledgements.set(outputId, resolve))
+}
+
+/** pdf.js needs temporary canvases while painting mesh shadings, isolated
+ *  tiling patterns, soft masks, transparency groups and annotation
+ *  appearances. Its default factory is DOMCanvasFactory, which calls
+ *  `document.createElement` — and a worker has no `document`, so rendering any
+ *  such page failed with "Cannot read properties of undefined (reading
+ *  'createElement')". pdf.js instantiates the factory itself, so this is a
+ *  class implementing the same interface over OffscreenCanvas. */
+class OffscreenCanvasFactory {
+  create(width: number, height: number) {
+    const canvas = new OffscreenCanvas(width, height)
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('无法建立 PDF 渲染画布。')
+    return { canvas, context }
+  }
+
+  reset(canvasAndContext: { canvas: OffscreenCanvas }, width: number, height: number) {
+    canvasAndContext.canvas.width = width
+    canvasAndContext.canvas.height = height
+  }
+
+  destroy(canvasAndContext: { canvas: OffscreenCanvas }) {
+    canvasAndContext.canvas.width = 0
+    canvasAndContext.canvas.height = 0
+  }
 }
 
 async function extractText(taskId: string, source: ArrayBuffer, name: string, progressStart: number, progressEnd: number) {
@@ -93,6 +120,71 @@ async function runTask(taskId: string, request: PdfTaskRequest) {
       const text = await extractText(taskId, files[index].data, files[index].name, start, end)
       const data = toBuffer(new TextEncoder().encode(text))
       await publish(taskId, ++outputSequence, { name: `${cleanOutputName(files[index].name)}-text.txt`, data, mime: 'text/plain;charset=utf-8' })
+    }
+    return
+  }
+
+  if (request.operation === 'pdf-to-image') {
+    // Rendering runs inside this worker on an OffscreenCanvas. pdf.js usually
+    // paints text through the browser's FontFace API, which only exists where
+    // `document` does — so we ask it to rasterize fonts itself, the same path
+    // it uses in Node. The canvas never leaves this worker: each page is
+    // encoded to a blob and handed out through the same save acknowledgement
+    // flow as split PDFs, so memory stays bounded to one page at a time.
+    if (typeof OffscreenCanvas === 'undefined' || typeof OffscreenCanvas.prototype.convertToBlob !== 'function') {
+      throw new Error('当前环境不支持离屏画布，无法把 PDF 渲染成图片。请使用 Knitspace 桌面版或新版 Chrome/Edge。')
+    }
+    const format: PdfImageFormat = request.imageFormat === 'jpeg' || request.imageFormat === 'webp' ? request.imageFormat : 'png'
+    const mime = format === 'png' ? 'image/png' : format === 'jpeg' ? 'image/jpeg' : 'image/webp'
+    const scale = pdfImageScaleForDpi(request.imageDpi ?? 150)
+    const quality = Math.max(0, Math.min(1, Math.round(request.imageQuality ?? 90) / 100))
+    const documents: { file: (typeof files)[number]; document: PDFDocumentProxy; loading: PDFDocumentLoadingTask }[] = []
+    try {
+      for (const file of files) {
+        try {
+          const loading = pdfjs.getDocument({ data: file.data, disableFontFace: true, CanvasFactory: OffscreenCanvasFactory })
+          documents.push({ file, document: await loading.promise, loading })
+        } catch (error) {
+          if ((error as { name?: string })?.name === 'PasswordException') throw new Error(`“${file.name}”受密码保护，请先移除密码再转换。`)
+          throw new Error(`“${file.name}”无法读取：${error instanceof Error && error.message ? error.message : '文件可能已损坏。'}`)
+        }
+      }
+      const pageIndexes = documents.map(({ document }) => request.pageRange.trim()
+        ? parsePageIndexes(request.pageRange, document.numPages)
+        : Array.from({ length: document.numPages }, (_, index) => index))
+      const totalPages = pageIndexes.reduce((sum, indexes) => sum + indexes.length, 0)
+      if (!totalPages) throw new Error('PDF 没有可以导出的页面。')
+      let completed = 0
+      for (let fileIndex = 0; fileIndex < documents.length; fileIndex += 1) {
+        const { file, document } = documents[fileIndex]
+        for (const index of pageIndexes[fileIndex]) {
+          const page = await document.getPage(index + 1)
+          const viewport = page.getViewport({ scale })
+          const { width, height } = assertPdfImageFits(viewport.width, viewport.height, index + 1, document.numPages)
+          const canvas = new OffscreenCanvas(width, height)
+          const context = canvas.getContext('2d')
+          if (!context) throw new Error('无法建立 PDF 渲染画布。')
+          // pdf.js's types still ask for the DOM canvas context, but the
+          // renderer only uses the shared 2D drawing API; the offscreen
+          // context from this worker implements all of it. `canvas` must be
+          // null for the context parameter to be honored.
+          await page.render({ canvas: null, canvasContext: context as unknown as CanvasRenderingContext2D, viewport, background: '#ffffff' }).promise
+          const blob = await canvas.convertToBlob(format === 'png' ? { type: mime } : { type: mime, quality })
+          await publish(taskId, ++outputSequence, {
+            name: pdfImageOutputName(file.name, index, document.numPages, format),
+            data: await blob.arrayBuffer(),
+            mime
+          })
+          page.cleanup()
+          completed += 1
+          postProgress(taskId, 10 + 84 * completed / totalPages, `正在渲染“${file.name}”第 ${index + 1}/${document.numPages} 页…`)
+        }
+      }
+    } finally {
+      for (const { document, loading } of documents) {
+        document.cleanup()
+        try { await loading.destroy() } catch { /* 文档已经销毁时无需处理。 */ }
+      }
     }
     return
   }

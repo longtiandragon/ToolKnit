@@ -30,7 +30,9 @@ import {
   FolderOpen,
   FingerprintPattern,
   FlaskConical,
+  GalleryHorizontalEnd,
   GitCompareArrows,
+  Grid2x2,
   Hash,
   Images,
   Italic,
@@ -41,6 +43,7 @@ import {
   Palette,
   Pause,
   Paperclip,
+  Pen,
   Plus,
   QrCode,
   Quote,
@@ -66,6 +69,7 @@ import {
   TriangleAlert,
   X,
   ListChecks,
+  Maximize2,
   Minus,
   Minimize2,
   Sigma,
@@ -153,6 +157,10 @@ const icons: Record<string, Component> = {
   download: Download,
   'qr-code': QrCode,
   'arrow-right': ArrowRight,
+  gallery: GalleryHorizontalEnd,
+  mosaic: Grid2x2,
+  pen: Pen,
+  maximize: Maximize2,
 }
 
 const icon = computed(() => icons[props.name])

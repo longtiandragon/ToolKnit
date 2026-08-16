@@ -11,6 +11,7 @@ import { imagePreviewDebounceMs } from '@/lib/image-preview-policy'
 import { filesWithinDropBudget } from '@/lib/file-drop-policy'
 import { createRasterProcessPlan, safeCompressionPassLimit, type RasterProcessOptions, type RasterOutputType } from '@/lib/image-processing'
 import { STITCH_MAX_FILES } from '@/lib/image-stitch'
+import { CONCAT_MAX_FILES } from '@/lib/image-concat'
 import { newId } from '@/lib/id'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
 import { blankCanvasFileName, blankCanvasPresetFromName, blankCanvasPresets, visualCanvasDimensions, visualCanvasForeground, type BlankCanvasPreset } from '@/lib/visual-blank-canvas'
@@ -21,7 +22,7 @@ import { useUiStore } from '@/stores/ui'
 import type { FileReference } from '@/types'
 
 type LayoutKind = 'single' | 'pair' | 'grid'
-type ImageMode = 'compose' | 'stitch' | 'convert' | 'resize' | 'crop' | 'rotate'
+type ImageMode = 'compose' | 'stitch' | 'concat' | 'convert' | 'resize' | 'crop' | 'rotate'
 type EncodableImageType = 'image/png' | 'image/jpeg' | 'image/webp'
 type SourceOutputType = EncodableImageType | 'image/gif'
 type CropHandle = 'create' | 'move' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw'
@@ -62,7 +63,7 @@ const AnnotationCanvas = defineAsyncComponent(() => import('@/components/Annotat
 const imageFiles = shallowRef<File[]>(store.consumeIntakeFiles().filter((file) => file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name)))
 const images = shallowRef<{ name: string; url: string; blank: boolean }[]>([])
 const activeImageIndex = ref(0)
-const activeMode = ref<ImageMode>(['stitch', 'convert', 'resize', 'crop', 'rotate'].includes(String(route.query.tool)) ? route.query.tool as ImageMode : 'compose')
+const activeMode = ref<ImageMode>(['stitch', 'concat', 'convert', 'resize', 'crop', 'rotate'].includes(String(route.query.tool)) ? route.query.tool as ImageMode : 'compose')
 const layout = ref<LayoutKind>('single')
 const title = ref('')
 const watermark = ref('')
@@ -81,10 +82,18 @@ const processedPreviewBytes = ref(0)
 const previewPending = ref(false)
 const stitchOverlapMode = ref<'auto' | 'manual'>('auto')
 const stitchManualOverlap = ref(15)
+const concatDirection = ref<'vertical' | 'horizontal'>('vertical')
+const concatGap = ref(0)
+const concatMaxCross = ref(2000)
+const concatUniform = ref(false)
+const concatFit = ref<'contain' | 'cover'>('contain')
+const concatWidthEnabled = ref(false)
+const concatWidth = ref(1600)
+const concatLockAspect = ref(true)
 const stitchBlob = shallowRef<Blob>()
 const stitchProgress = ref(0)
 const stitchDetail = ref('')
-const stitchRevision = ref(0)
+const compositionRevision = ref(0)
 const stitchResult = ref<{ width: number; height: number; overlaps: number[]; scores: number[]; warnings: string[] }>()
 const CAPTURE_SHORTCUT = 'Ctrl+Alt+P'
 const VISUAL_FILE_LIMIT = 32 * 1024 * 1024
@@ -98,6 +107,8 @@ let captureShortcutRegistered = false
 const canvasTool = ref<CanvasTool>('select')
 const annotationText = ref('重点')
 const annotationColor = ref('#ffbf69')
+const annotationStroke = ref(10)
+const composeFullscreen = ref(false)
 const annotations = shallowRef<CanvasAnnotation[]>([])
 const annotationHistory = shallowRef(createAnnotationHistory())
 const annotationCanvas = ref<AnnotationCanvasHandle>()
@@ -148,6 +159,7 @@ let disposed = false
 const quickTools = [
   { id: 'compose', title: '画布标注', description: '空白、拼图与标注', icon: 'palette' },
   { id: 'stitch', title: '滚动长图', description: '识别重叠并连续拼接', icon: 'sort' },
+  { id: 'concat', title: '拼成长图', description: '多图上下或左右拼接，可留白或叠压', icon: 'gallery' },
   { id: 'convert', title: '格式转换', description: 'PNG / JPG / WebP', icon: 'image' },
   { id: 'resize', title: '压缩缩放', description: '尺寸与质量', icon: 'resize' },
   { id: 'crop', title: '裁剪图片', description: '精确裁切区域', icon: 'crop' },
@@ -160,7 +172,7 @@ const quickTools = [
  * spent 90px of canvas height doing it, while saying nothing about the split.
  */
 const modeGroups = [
-  { label: '创作', ids: ['compose', 'stitch'] },
+  { label: '创作', ids: ['compose', 'stitch', 'concat'] },
   { label: '处理', ids: ['convert', 'resize', 'crop', 'rotate'] },
 ] as const
 const modeSections = computed(() => modeGroups.map((group) => ({
@@ -174,6 +186,8 @@ const annotationTools: { id: CanvasTool; label: string; icon: string; hint: stri
   { id: 'select', label: '选择', icon: 'pointer', hint: '选择、移动、缩放和旋转已有标注' },
   { id: 'box', label: '方框', icon: 'square', hint: '拖出一个方框' },
   { id: 'arrow', label: '箭头', icon: 'arrow-right', hint: '从起点拖到终点画箭头' },
+  { id: 'mosaic', label: '打码', icon: 'mosaic', hint: '拖出区域，导出时渲染成马赛克' },
+  { id: 'pen', label: '涂色', icon: 'pen', hint: '按住拖动自由涂画' },
   { id: 'text', label: '文字', icon: 'file-text', hint: '点一下放置文字，右键可再编辑' },
 ]
 const layoutOptions: { id: LayoutKind; label: string }[] = [
@@ -196,8 +210,21 @@ const compositionStyle = computed(() => ({
   '--canvas-text': compositionForeground.value.text,
   '--canvas-muted': compositionForeground.value.muted,
 }))
+/* The card used to cap itself at 760px even while the window offered twice
+   that. Fill the largest rectangle the viewport allows while keeping the
+   composition ratio, so the annotation canvas stops feeling like a postage
+   stamp in an empty room. */
+const compositionFillStyle = computed(() => {
+  const { width, height } = compositionDimensions.value
+  const ratio = width / height
+  return {
+    width: `min(100%, calc(100cqh * ${ratio}))`,
+    height: `min(100%, calc(100cqw / ${ratio}))`,
+  }
+})
 const activeTool = computed(() => quickTools.find((tool) => tool.id === activeMode.value) ?? quickTools[0])
-const outputReady = computed(() => activeMode.value === 'stitch' ? Boolean(stitchBlob.value) && !previewPending.value && !captureSessionActive.value : images.value.length > 0)
+const modeFileCap = computed(() => activeMode.value === 'concat' ? CONCAT_MAX_FILES : STITCH_MAX_FILES)
+const outputReady = computed(() => activeMode.value === 'stitch' || activeMode.value === 'concat' ? Boolean(stitchBlob.value) && !previewPending.value && !captureSessionActive.value : images.value.length > 0)
 const annotationMenuAnnotation = computed(() => annotationMenu.value.open ? annotations.value.find((item) => item.id === annotationMenu.value.id) : undefined)
 const annotationMenuLayer = computed(() => annotationLayerPosition(annotations.value, annotationMenu.value.id))
 const selectedAnnotation = computed(() => selectedAnnotationId.value === null ? undefined : annotations.value.find((item) => item.id === selectedAnnotationId.value))
@@ -205,8 +232,8 @@ const visibleAnnotationLayers = computed(() => annotations.value
   .map((annotation, index) => ({ annotation, index }))
   .reverse()
   .slice(0, layerVisibleLimit.value))
-const activeSourceOutputType = computed(() => activeMode.value === 'stitch' ? 'image/png' : sourceOutputType(activeImageFile.value))
-const activeOutputType = computed(() => activeMode.value === 'stitch' ? 'image/png' : imageFormat.value === 'source' ? activeSourceOutputType.value : imageFormat.value)
+const activeSourceOutputType = computed(() => activeMode.value === 'stitch' || activeMode.value === 'concat' ? 'image/png' : sourceOutputType(activeImageFile.value))
+const activeOutputType = computed(() => activeMode.value === 'stitch' || activeMode.value === 'concat' ? 'image/png' : imageFormat.value === 'source' ? activeSourceOutputType.value : imageFormat.value)
 const sourcePassThrough = computed(() => activeMode.value !== 'stitch' && imageFormat.value === 'source' && !activeSourceOutputType.value)
 const formatLabel = computed(() => {
   if (imageFormat.value !== 'source') return outputTypeLabel(imageFormat.value)
@@ -241,6 +268,10 @@ const cropLayerStyle = computed(() => ({
   transform: `translate(${viewportPan.value.x}px, ${viewportPan.value.y}px) scale(${viewportZoom.value})`,
 }))
 const viewportZoomLabel = computed(() => `${Math.round(viewportZoom.value * 100)}%`)
+const compositionViewportStyle = computed(() => ({
+  transform: `translate3d(${viewportPan.value.x}px, ${viewportPan.value.y}px, 0) scale(${viewportZoom.value})`,
+  transformOrigin: 'center center',
+}))
 const canUndoAnnotations = computed(() => canUndoAnnotationHistory(annotationHistory.value))
 const canRedoAnnotations = computed(() => canRedoAnnotationHistory(annotationHistory.value))
 const activeProjectSignature = computed(() => visualProjectSignature({
@@ -268,6 +299,12 @@ const processSummary = computed(() => activeMode.value === 'stitch'
     : stitchResult.value
       ? `${stitchResult.value.width} × ${stitchResult.value.height} px · ${imageFiles.value.length} 张${stitchResult.value.warnings.length ? ` · ${stitchResult.value.warnings.length} 处需检查` : ' · 重叠可信'}`
       : '按截图顺序导入 2–24 张图片'
+  : activeMode.value === 'concat'
+  ? previewPending.value
+    ? `${stitchDetail.value || '正在拼成长图…'} · ${stitchProgress.value}%`
+    : stitchResult.value
+      ? `${stitchResult.value.width} × ${stitchResult.value.height} px · ${imageFiles.value.length} 张 · ${concatWidthEnabled.value ? `统一宽度 ${concatWidth.value}px${concatLockAspect.value ? '' : ' · 拉伸'} · ` : concatUniform.value ? '统一大小 · ' : ''}${concatDirection.value === 'vertical' ? '上下' : '左右'}${concatGap.value > 0 ? ` · 间距 ${concatGap.value}px` : concatGap.value < 0 ? ` · 叠压 ${-concatGap.value}px` : '无缝'}`
+      : `按顺序拖入 2–${CONCAT_MAX_FILES} 张图片，拼成一张长图`
   : sourcePassThrough.value && activeMode.value !== 'compose'
   ? `${sourceExtensionLabel(activeImageFile.value)} 保持原样 · 动画与源文件不变`
   : previewPending.value
@@ -285,27 +322,32 @@ const processSummary = computed(() => activeMode.value === 'stitch'
    mode. Written here rather than as nested ternaries in the markup: the
    sentences are the product, and they are easier to get right when they sit
    next to each other. */
-const exportLabel = computed(() => activeMode.value === 'stitch'
+const exportLabel = computed(() => activeMode.value === 'stitch' || activeMode.value === 'concat'
   ? '导出长图'
   : activeMode.value !== 'compose' && images.value.length > 1 ? `导出 ${images.value.length} 张` : '导出')
 const canvasHeading = computed(() => activeMode.value === 'compose'
   ? activeBlankCanvas.value ? `${activeBlankCanvas.value.label}空白画布` : '拼图与标注'
   : activeMode.value === 'stitch' ? '滚动长图预览'
+  : activeMode.value === 'concat' ? '拼成长图预览'
   : sourcePassThrough.value ? '源文件预览'
   : activeMode.value === 'crop' ? '在原图上框选' : '处理后预览')
 const outputTitle = computed(() => activeMode.value === 'stitch'
   ? `${images.value.length} 张连续截图`
+  : activeMode.value === 'concat'
+  ? `${images.value.length} 张图片`
   : activeMode.value === 'compose'
     ? `${compositionDimensions.value.width} × ${compositionDimensions.value.height} px`
     : activeImage.value?.name ?? '')
 const outputDetail = computed(() => activeMode.value === 'stitch'
   ? '输出 PNG · 每张源截图保持不变'
+  : activeMode.value === 'concat' ? '输出 PNG · 每张源图保持不变'
   : activeMode.value === 'compose' ? '输出 PNG · 源图与标注都不写回原件'
   : sourcePassThrough.value ? '动画与源文件字节保持不变'
   : activeMode.value === 'crop' ? `${cropPixelSummary.value} · 输出 ${formatLabel.value}`
   : `输出 ${formatLabel.value} · 原文件保持不变`)
 const sourceEmptyHint = computed(() => activeMode.value === 'stitch'
   ? `按截图顺序拖入 2–${STITCH_MAX_FILES} 张同宽截图，或用桌面采集逐屏抓取。`
+  : activeMode.value === 'concat' ? `按想要的顺序拖入 2–${CONCAT_MAX_FILES} 张图片，上下或左右拼成一张长图；间距可为负数让后一张叠压前一张。`
   : activeMode.value === 'compose' ? '先选一块空白画布，或把要拼合、标注的图片拖进来。'
   : `支持 JPG、PNG、WebP、GIF，一次最多 ${STITCH_MAX_FILES} 张一起处理。`)
 
@@ -315,14 +357,14 @@ function formatProjectTime(value: string | number) {
 
 watch(imageFiles, (selected) => {
   images.value.forEach((item) => URL.revokeObjectURL(item.url))
-  images.value = selected.slice(0, STITCH_MAX_FILES).map((file) => ({ name: file.name, url: URL.createObjectURL(file), blank: Boolean(blankCanvasPresetFromName(file.name)) }))
+  images.value = selected.slice(0, modeFileCap.value).map((file) => ({ name: file.name, url: URL.createObjectURL(file), blank: Boolean(blankCanvasPresetFromName(file.name)) }))
   activeImageIndex.value = 0
   resetAnnotationHistory()
   message.value = images.value.length ? `已载入 ${images.value.length} 张图片，可以直接编辑。` : '拖入图片开始创作。'
 }, { immediate: true })
 
 watch(() => route.query.tool, (tool) => {
-  activeMode.value = ['stitch', 'convert', 'resize', 'crop', 'rotate'].includes(String(tool)) ? tool as ImageMode : 'compose'
+  activeMode.value = ['stitch', 'concat', 'convert', 'resize', 'crop', 'rotate'].includes(String(tool)) ? tool as ImageMode : 'compose'
 })
 
 watch(() => route.query.project, (project) => {
@@ -336,8 +378,18 @@ watch(() => route.query.canvas, (canvas) => {
   void createBlankCanvas(preset, Boolean(imageFiles.value.length || annotations.value.length))
 }, { immediate: true })
 
+/* Deep links from the toolbox: /visual?annotation=mosaic arms the named
+   annotation tool as soon as the compose canvas is ready, so the card
+   "图片打码" lands on the right tool instead of a generic empty canvas. */
+watch(() => route.query.annotation, (annotation) => {
+  if (activeMode.value !== 'compose') return
+  const value = String(annotation ?? '')
+  if (annotationTools.some((tool) => tool.id === value)) canvasTool.value = value as CanvasTool
+}, { immediate: true })
+
 watch(activeMode, (mode) => {
   if (mode !== 'stitch' && captureSessionActive.value) void stopCaptureSession(false)
+  if (mode !== 'compose') composeFullscreen.value = false
   if (mode === 'crop' && !cropInitialized.value) {
     cropLeft.value = 10
     cropTop.value = 10
@@ -798,6 +850,99 @@ async function renderStitchPreview(version: number) {
   }
 }
 
+type ConcatWorkerMessage =
+  | { kind: 'progress'; progress: number; detail: string }
+  | { kind: 'result'; blob: Blob; width: number; height: number; scales: number[] }
+  | { kind: 'error'; error: string }
+
+function processConcatOffThread(files: File[], signal: AbortSignal, onProgress: (progress: number, detail: string) => void) {
+  return new Promise<Extract<ConcatWorkerMessage, { kind: 'result' }>>((resolve, reject) => {
+    let worker: Worker
+    let settled = false
+    try {
+      worker = new Worker(new URL('../workers/image-concat.worker.ts', import.meta.url), { type: 'module' })
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error('无法启动拼图后台进程。'))
+      return
+    }
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      signal.removeEventListener('abort', abort)
+      worker.terminate()
+      callback()
+    }
+    const abort = () => finish(() => reject(new DOMException('长图拼接已取消。', 'AbortError')))
+    signal.addEventListener('abort', abort, { once: true })
+    worker.onerror = (event) => {
+      event.preventDefault()
+      finish(() => reject(new Error(event.message || '拼图后台进程异常退出。')))
+    }
+    worker.onmessage = ({ data }: MessageEvent<ConcatWorkerMessage>) => {
+      if (data.kind === 'progress') { onProgress(data.progress, data.detail); return }
+      if (data.kind === 'error') { finish(() => reject(new Error(data.error))); return }
+      finish(() => resolve(data))
+    }
+    worker.postMessage({
+      files,
+      direction: concatDirection.value,
+      gap: concatGap.value,
+      maxCross: concatMaxCross.value,
+      uniform: concatUniform.value,
+      fit: concatFit.value,
+      width: concatWidthEnabled.value ? concatWidth.value : undefined,
+      lockAspect: concatLockAspect.value,
+    })
+  })
+}
+
+async function renderConcatPreview(version: number) {
+  const controller = new AbortController()
+  previewAbortController = controller
+  stitchProgress.value = 0
+  stitchDetail.value = '正在读取图片…'
+  try {
+    const result = await processConcatOffThread(imageFiles.value.slice(0, CONCAT_MAX_FILES), controller.signal, (progress, detail) => {
+      if (version !== previewVersion || disposed) return
+      stitchProgress.value = progress
+      stitchDetail.value = detail
+    })
+    if (version !== previewVersion || disposed) return
+    const nextUrl = URL.createObjectURL(result.blob)
+    if (version !== previewVersion || disposed) { URL.revokeObjectURL(nextUrl); return }
+    const previousUrl = processedPreviewUrl.value
+    processedPreviewUrl.value = nextUrl
+    processedPreviewBytes.value = result.blob.size
+    stitchBlob.value = result.blob
+    const upscaled = result.scales
+      .map((scale, index) => ({ scale, index }))
+      .filter((entry) => entry.scale > 1.3)
+    const warnings = upscaled.length
+      ? [upscaled.length === 1
+        ? `第 ${upscaled[0].index + 1} 张会被放大 ${upscaled[0].scale.toFixed(1)} 倍，超过原图尺寸的部分靠插值补出，导出可能变糊；建议把统一宽度调到与原图宽度接近的值。`
+        : `${upscaled.length} 张图片会被放大（最大 ${Math.max(...upscaled.map((entry) => entry.scale)).toFixed(1)} 倍），超过原图尺寸的部分靠插值补出，导出可能变糊；建议把统一宽度调到与大多数原图接近的值。`]
+      : []
+    stitchResult.value = { width: result.width, height: result.height, overlaps: [], scores: [], warnings }
+    if (previousUrl) requestAnimationFrame(() => URL.revokeObjectURL(previousUrl))
+    const gapNote = concatGap.value > 0 ? `间距 ${concatGap.value}px` : concatGap.value < 0 ? `每张叠压 ${-concatGap.value}px` : '无缝'
+    const sizeNote = concatWidthEnabled.value
+      ? `统一宽度 ${concatWidth.value}px${concatLockAspect.value ? '' : '（拉伸到统一宽高）'} · `
+      : concatUniform.value ? `统一大小${concatFit.value === 'cover' ? '（裁满格子）' : '（居中留白）'} · ` : ''
+    message.value = `已把 ${imageFiles.value.length} 张图片按${concatDirection.value === 'vertical' ? '上下' : '左右'}方向拼成 ${result.width} × ${result.height} 长图（${sizeNote}${gapNote}）。`
+    await nextTick()
+    syncImageBounds()
+  } catch (error) {
+    if (version === previewVersion && !controller.signal.aborted) {
+      stitchBlob.value = undefined
+      stitchResult.value = undefined
+      message.value = error instanceof Error ? error.message : '无法拼成长图。'
+    }
+  } finally {
+    if (previewAbortController === controller) previewAbortController = undefined
+    if (version === previewVersion) previewPending.value = false
+  }
+}
+
 async function renderProcessedPreview(file: File, version: number) {
   const controller = new AbortController()
   previewAbortController = controller
@@ -829,7 +974,7 @@ async function renderProcessedPreview(file: File, version: number) {
 }
 
 watch([activeImageFile, activeMode, imageFormat, quality, compressionPasses, maxWidth, rotation], ([file]) => {
-  if (activeMode.value === 'stitch') return
+  if (activeMode.value === 'stitch' || activeMode.value === 'concat') return
   const version = ++previewVersion
   previewAbortController?.abort()
   previewAbortController = undefined
@@ -849,7 +994,7 @@ watch([activeImageFile, activeMode, imageFormat, quality, compressionPasses, max
   }, imagePreviewDebounceMs(file.size))
 }, { immediate: true })
 
-watch([imageFiles, activeMode, stitchOverlapMode, stitchManualOverlap, stitchRevision, captureSessionActive], ([files, mode, , , , capturing]) => {
+watch([imageFiles, activeMode, stitchOverlapMode, stitchManualOverlap, compositionRevision, captureSessionActive], ([files, mode, , , , capturing]) => {
   if (mode !== 'stitch') return
   const version = ++previewVersion
   previewAbortController?.abort()
@@ -877,6 +1022,30 @@ watch([imageFiles, activeMode, stitchOverlapMode, stitchManualOverlap, stitchRev
   previewRenderTimer = window.setTimeout(() => {
     previewRenderTimer = undefined
     void renderStitchPreview(version)
+  }, 180)
+}, { immediate: true })
+
+watch([imageFiles, activeMode, concatDirection, concatGap, concatMaxCross, concatUniform, concatFit, concatWidthEnabled, concatWidth, concatLockAspect, compositionRevision], ([files, mode]) => {
+  if (mode !== 'concat') return
+  const version = ++previewVersion
+  previewAbortController?.abort()
+  previewAbortController = undefined
+  if (previewRenderTimer !== undefined) window.clearTimeout(previewRenderTimer)
+  previewRenderTimer = undefined
+  clearProcessedPreview()
+  stitchBlob.value = undefined
+  stitchResult.value = undefined
+  if (files.length < 2) {
+    previewPending.value = false
+    stitchProgress.value = 0
+    stitchDetail.value = ''
+    message.value = `按想要的顺序导入 2–${CONCAT_MAX_FILES} 张图片，左右或上下拼成一张长图。`
+    return
+  }
+  previewPending.value = true
+  previewRenderTimer = window.setTimeout(() => {
+    previewRenderTimer = undefined
+    void renderConcatPreview(version)
   }, 180)
 }, { immediate: true })
 
@@ -945,7 +1114,9 @@ function moveStitchFrame(index: number, direction: -1 | 1) {
   next.splice(target, 0, file)
   imageFiles.value = next
   activeImageIndex.value = target
-  message.value = `已调整第 ${index + 1} 张截图顺序，正在重新识别重叠。`
+  message.value = activeMode.value === 'concat'
+    ? `已调整第 ${index + 1} 张图片顺序，正在重新拼接。`
+    : `已调整第 ${index + 1} 张截图顺序，正在重新识别重叠。`
 }
 
 function removeStitchFrame(index: number) {
@@ -953,9 +1124,9 @@ function removeStitchFrame(index: number) {
   activeImageIndex.value = Math.max(0, Math.min(activeImageIndex.value, imageFiles.value.length - 1))
 }
 
-function rebuildStitch() {
-  if (activeMode.value !== 'stitch' || imageFiles.value.length < 2) return
-  stitchRevision.value += 1
+function rebuildComposition() {
+  if ((activeMode.value !== 'stitch' && activeMode.value !== 'concat') || imageFiles.value.length < 2) return
+  compositionRevision.value += 1
   closeProcessMenu()
 }
 
@@ -998,7 +1169,8 @@ function handleViewportWheel(event: WheelEvent) {
 }
 
 function beginViewportPan(event: PointerEvent) {
-  const allowed = event.button === 1 || (event.button === 0 && (spacePressed.value || activeMode.value !== 'crop'))
+  const composeNeedsModifier = activeMode.value === 'compose'
+  const allowed = event.button === 1 || (event.button === 0 && (spacePressed.value || (!composeNeedsModifier && activeMode.value !== 'crop')))
   if (!allowed || !images.value.length) return
   viewportPanState.value = {
     startX: event.clientX,
@@ -1279,7 +1451,14 @@ function removeAnnotation(id: number) {
 function createCanvasAnnotation(annotation: CanvasAnnotation) {
   commitAnnotations([...annotations.value, annotation])
   selectedAnnotationId.value = annotation.id
+  canvasTool.value = 'select'
+  void nextTick(() => annotationCanvas.value?.select(annotation.id))
   message.value = '标注已加入画布；选中后可移动、缩放和旋转。'
+}
+
+function handleCanvasSelection(id: number | null) {
+  selectedAnnotationId.value = id
+  if (id !== null) canvasTool.value = 'select'
 }
 
 function updateCanvasAnnotation(annotation: CanvasAnnotation) {
@@ -1408,21 +1587,27 @@ function duplicateCanvasAnnotation(id: number) {
   message.value = '已复制标注。'
 }
 
-function editCanvasTextAnnotation(id: number) {
+function editCanvasTextAnnotation(id: number, x?: number, y?: number) {
   const annotation = annotations.value.find((item) => item.id === id)
   if (!annotation || annotation.kind !== 'text') return
+  const originX = x ?? annotationMenu.value.x
+  const originY = y ?? annotationMenu.value.y
   annotationTextEditor.value = {
     open: true,
     id,
     text: annotation.text,
-    x: Math.max(12, Math.min(annotationMenu.value.x, window.innerWidth - 326)),
-    y: Math.max(12, Math.min(annotationMenu.value.y, window.innerHeight - 156)),
+    x: Math.max(12, Math.min(originX, window.innerWidth - 326)),
+    y: Math.max(12, Math.min(originY, window.innerHeight - 156)),
   }
   closeAnnotationMenu()
   void nextTick(() => {
     annotationTextEditorInput.value?.focus()
     annotationTextEditorInput.value?.select()
   })
+}
+
+function editCanvasTextAnnotationAt(payload: { id: number; x: number; y: number }) {
+  editCanvasTextAnnotation(payload.id, payload.x, payload.y)
 }
 
 function saveCanvasTextEdit() {
@@ -1451,11 +1636,13 @@ function bringAnnotationToFront(id: number) {
 }
 
 function annotationKindLabel(annotation: CanvasAnnotation) {
-  return annotation.kind === 'box' ? '方框' : annotation.kind === 'arrow' ? '箭头' : '文字'
+  return annotation.kind === 'box' ? '方框' : annotation.kind === 'arrow' ? '箭头' : annotation.kind === 'mosaic' ? '打码' : annotation.kind === 'pen' ? '涂色' : '文字'
 }
 
 function annotationLayerSummary(annotation: CanvasAnnotation) {
   if (annotation.kind === 'text') return annotation.text || '未命名文字'
+  if (annotation.kind === 'mosaic') return '马赛克遮罩'
+  if (annotation.kind === 'pen') return `${(annotation.points ?? []).length} 个笔迹点`
   return annotation.kind === 'box' ? '框选区域' : '指向标记'
 }
 
@@ -1553,6 +1740,48 @@ function drawAnnotation(ctx: CanvasRenderingContext2D, annotation: CanvasAnnotat
     ctx.restore()
     return
   }
+  if (annotation.kind === 'mosaic') {
+    // Real pixelation: resample the already-painted region into a tiny canvas
+    // and stretch it back with smoothing off, so the covered area becomes a
+    // grid of colour blocks instead of a blurred smear.
+    const sampleWidth = Math.max(2, Math.min(64, Math.round(width / 14)))
+    const sampleHeight = Math.max(2, Math.min(64, Math.round(height / 14)))
+    const sample = document.createElement('canvas')
+    sample.width = sampleWidth
+    sample.height = sampleHeight
+    const sampleCtx = sample.getContext('2d')
+    if (sampleCtx) {
+      sampleCtx.imageSmoothingEnabled = true
+      sampleCtx.drawImage(ctx.canvas, x, y, width, height, 0, 0, sampleWidth, sampleHeight)
+      ctx.save()
+      ctx.translate(x, y)
+      ctx.rotate((annotation.rotation ?? 0) * Math.PI / 180)
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(sample, 0, 0, width, height)
+      ctx.restore()
+    }
+    return
+  }
+  if (annotation.kind === 'pen') {
+    const points = annotation.points ?? []
+    if (points.length < 2) return
+    ctx.save()
+    ctx.translate(x, y)
+    ctx.rotate((annotation.rotation ?? 0) * Math.PI / 180)
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = Math.max(2, (annotation.strokeWidth ?? 10) * canvasWidth / 1000)
+    ctx.beginPath()
+    points.forEach((point, index) => {
+      const px = point.x * canvasWidth - x
+      const py = point.y * canvasHeight - y
+      if (index === 0) ctx.moveTo(px, py)
+      else ctx.lineTo(px, py)
+    })
+    ctx.stroke()
+    ctx.restore()
+    return
+  }
   if (annotation.kind === 'arrow') {
     const endX = x + width
     const endY = y + height
@@ -1614,7 +1843,7 @@ function canProcessRasterOffThread() {
 
 function rasterProcessOptions(outputType: RasterOutputType): RasterProcessOptions {
   return {
-    mode: activeMode.value === 'compose' || activeMode.value === 'stitch' ? 'convert' : activeMode.value,
+    mode: activeMode.value === 'compose' || activeMode.value === 'stitch' || activeMode.value === 'concat' ? 'convert' : activeMode.value,
     outputType,
     quality: quality.value / 100,
     compressionPasses: compressionPasses.value,
@@ -1709,7 +1938,7 @@ async function renderProcessedBlob(file: File, requestedOutputType?: SourceOutpu
     if (activeMode.value === 'convert' && quality.value === 100) return file
     return processAnimatedGif(file, {
       quality: quality.value,
-      mode: activeMode.value === 'compose' || activeMode.value === 'stitch' ? 'convert' : activeMode.value,
+      mode: activeMode.value === 'compose' || activeMode.value === 'stitch' || activeMode.value === 'concat' ? 'convert' : activeMode.value,
       maxWidth: maxWidth.value,
       rotation: rotation.value,
       cropLeft: cropLeft.value,
@@ -1813,8 +2042,8 @@ async function copyCard() {
     }
     let encodedBlob: Blob
     if (activeMode.value === 'compose') encodedBlob = await renderCardBlob()
-    else if (activeMode.value === 'stitch') {
-      if (!stitchBlob.value) throw new Error(previewPending.value ? '滚动长图仍在生成，请稍候。' : '请先生成可用的滚动长图。')
+    else if (activeMode.value === 'stitch' || activeMode.value === 'concat') {
+      if (!stitchBlob.value) throw new Error(previewPending.value ? '长图仍在生成，请稍候。' : '请先生成可用的长图。')
       encodedBlob = stitchBlob.value
     } else encodedBlob = await renderProcessedBlob(activeImageFile.value)
     const blob = await makeClipboardPng(encodedBlob)
@@ -1836,9 +2065,10 @@ async function exportCard() {
     if (activeMode.value === 'compose') {
       const name = `image-card-${Date.now()}.png`
       outputs.push(await exportOutput(store.settings.outputDirectory, name, await renderCardBlob(), 'image/png'))
-    } else if (activeMode.value === 'stitch') {
-      if (!stitchBlob.value) throw new Error(previewPending.value ? '滚动长图仍在生成，请稍候。' : '请先生成可用的滚动长图。')
-      outputs.push(await exportOutput(store.settings.outputDirectory, `scroll-capture-${Date.now()}.png`, stitchBlob.value, 'image/png'))
+    } else if (activeMode.value === 'stitch' || activeMode.value === 'concat') {
+      if (!stitchBlob.value) throw new Error(previewPending.value ? '长图仍在生成，请稍候。' : '请先生成可用的长图。')
+      const name = activeMode.value === 'concat' ? `image-wall-${Date.now()}.png` : `scroll-capture-${Date.now()}.png`
+      outputs.push(await exportOutput(store.settings.outputDirectory, name, stitchBlob.value, 'image/png'))
     } else {
       for (const file of imageFiles.value) {
         const sourceType = sourceOutputType(file)
@@ -1859,7 +2089,7 @@ async function exportCard() {
     const job = store.addJob('image', activeMode.value === 'compose' ? '图片分享卡' : activeTool.value.title, images.value.map((item) => item.name), {
       toolId: `visual-${activeMode.value}`, route: `/visual${activeMode.value === 'compose' ? '' : `?tool=${activeMode.value}`}`, retryable: true,
       inputs: imageFiles.value.map((file) => ({ name: file.name, size: file.size, mime: file.type, path: (file as File & { path?: string }).path })),
-      parameters: { mode: activeMode.value, layout: layout.value, title: title.value, watermark: watermark.value, background: background.value, imageFormat: imageFormat.value, quality: quality.value, compressionPasses: compressionPasses.value, maxWidth: maxWidth.value, rotation: rotation.value, cropLeft: cropLeft.value, cropTop: cropTop.value, cropWidth: cropWidth.value, cropHeight: cropHeight.value, stitchOverlapMode: stitchOverlapMode.value, stitchManualOverlap: stitchManualOverlap.value }
+      parameters: { mode: activeMode.value, layout: layout.value, title: title.value, watermark: watermark.value, background: background.value, imageFormat: imageFormat.value, quality: quality.value, compressionPasses: compressionPasses.value, maxWidth: maxWidth.value, rotation: rotation.value, cropLeft: cropLeft.value, cropTop: cropTop.value, cropWidth: cropWidth.value, cropHeight: cropHeight.value, stitchOverlapMode: stitchOverlapMode.value, stitchManualOverlap: stitchManualOverlap.value, concatDirection: concatDirection.value, concatGap: concatGap.value, concatMaxCross: concatMaxCross.value, concatUniform: concatUniform.value ? 1 : 0, concatFit: concatFit.value, concatWidthEnabled: concatWidthEnabled.value ? 1 : 0, concatWidth: concatWidth.value, concatLockAspect: concatLockAspect.value ? 1 : 0 }
     })
     store.updateJob(job.id, { status: 'succeeded', progress: 100, outputNames: outputs.map((output) => output.name), outputs, detail: `已从实时预览导出 ${outputs.length} 张图片。` })
     message.value = `已导出 ${outputs.length} 张图片，可从下方直接打开位置。`
@@ -1995,10 +2225,10 @@ async function openLocation(path?: string) {
              grid at the bottom of the settings column. On a page about images
              they are the subject, so they get a column of their own that is
              also where you reorder a stitch. -->
-        <aside class="stack min-h-0 border-r border-line" :aria-label="activeMode === 'stitch' ? '截图顺序' : '源图'">
+        <aside class="stack min-h-0 border-r border-line" :aria-label="activeMode === 'stitch' ? '截图顺序' : activeMode === 'concat' ? '拼接顺序' : '源图'">
           <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
-            <span class="text-[11px] font-semibold text-fg-3">{{ activeMode === 'stitch' ? '截图顺序' : '源图' }}</span>
-            <span class="text-[11px] tabular-nums text-fg-3">{{ activeMode === 'stitch' ? `${images.length} / ${STITCH_MAX_FILES}` : images.length }}</span>
+            <span class="text-[11px] font-semibold text-fg-3">{{ activeMode === 'stitch' ? '截图顺序' : activeMode === 'concat' ? '拼接顺序' : '源图' }}</span>
+            <span class="text-[11px] tabular-nums text-fg-3">{{ activeMode === 'stitch' || activeMode === 'concat' ? `${images.length} / ${modeFileCap}` : images.length }}</span>
           </header>
           <!-- Stays mounted at every state: this component owns the desktop
                window drop listener. -->
@@ -2008,7 +2238,7 @@ async function openLocation(path?: string) {
             accept="image/*"
             :max-file-bytes="VISUAL_FILE_LIMIT"
             :max-total-bytes="VISUAL_TOTAL_LIMIT"
-            :max-files="STITCH_MAX_FILES"
+            :max-files="modeFileCap"
             title="拖入图片"
             class="shrink-0 rounded-none! border-0! border-b! border-line!"
             @error="message = $event"
@@ -2029,10 +2259,10 @@ async function openLocation(path?: string) {
                   </span>
                   <span class="stack gap-0.5 min-w-0">
                     <b class="text-[12px] font-normal truncate" :class="activeImageIndex === index ? 'text-accent' : 'text-fg'">{{ item.name }}</b>
-                    <small class="text-[11px] text-fg-3">{{ activeImageIndex === index ? '正在编辑' : '点击编辑' }}</small>
+                    <small class="text-[11px] text-fg-3">{{ activeMode === 'concat' ? '按此顺序拼接' : activeImageIndex === index ? '正在编辑' : '点击编辑' }}</small>
                   </span>
                 </button>
-                <template v-if="activeMode === 'stitch'">
+                <template v-if="activeMode === 'stitch' || activeMode === 'concat'">
                   <span class="stack shrink-0">
                     <button class="center w-5 h-4 rounded-[3px] text-[11px] text-fg-3 hover:bg-surface-3 hover:text-fg disabled:opacity-30" :disabled="index === 0" :aria-label="`将第 ${index + 1} 张上移`" @click="moveStitchFrame(index, -1)">↑</button>
                     <button class="center w-5 h-4 rounded-[3px] text-[11px] text-fg-3 hover:bg-surface-3 hover:text-fg disabled:opacity-30" :disabled="index === images.length - 1" :aria-label="`将第 ${index + 1} 张下移`" @click="moveStitchFrame(index, 1)">↓</button>
@@ -2088,6 +2318,10 @@ async function openLocation(path?: string) {
                 <button class="center w-7 h-7 rounded-sm text-fg-2 hover:not-disabled:bg-surface-2 hover:not-disabled:text-danger disabled:opacity-35 disabled:cursor-not-allowed" :disabled="!annotations.length" title="清空全部标注" aria-label="清空全部标注" @click="clearAnnotations">
                   <AppIcon name="trash" :size="14" />
                 </button>
+                <i class="w-px h-4.5 mx-1 bg-line" aria-hidden="true" />
+                <button class="row gap-1 h-7 px-2 rounded-sm text-[12px] text-fg-2 hover:bg-surface-2 hover:text-fg" :aria-pressed="composeFullscreen" title="让标注画布占满整个窗口" @click="composeFullscreen = !composeFullscreen">
+                  <AppIcon name="maximize" :size="14" />{{ composeFullscreen ? '退出全屏' : '全屏画布' }}
+                </button>
               </template>
               <template v-if="images.length && activeMode === 'rotate'">
                 <button class="btn-ghost btn-sm" :disabled="sourcePassThrough" aria-label="向左旋转 90 度" title="向左旋转 90°" @click="rotateBy(-90)">
@@ -2102,11 +2336,11 @@ async function openLocation(path?: string) {
               <!-- Zoom lives in the header rather than floating over the
                    bottom-right of the image, where it covered the pixels you
                    zoomed in to look at. -->
-              <span v-if="images.length && activeMode !== 'compose'" class="row gap-0.5 ml-1 pl-2 border-l border-line" aria-label="画布缩放控制">
+              <span v-if="images.length" class="row gap-0.5 ml-1 pl-2 border-l border-line" aria-label="画布缩放控制">
                 <button class="center w-6.5 h-6.5 rounded-sm text-fg-2 hover:bg-surface-2 hover:text-fg" title="缩小" aria-label="缩小画布" @click="zoomViewport(-1)">−</button>
                 <button class="center h-6.5 min-w-11 px-1 rounded-sm text-[11px] tabular-nums text-fg-2 hover:bg-surface-2 hover:text-fg" title="适应窗口 (Ctrl+0)" @click="resetViewport">{{ viewportZoomLabel }}</button>
                 <button class="center w-6.5 h-6.5 rounded-sm text-fg-2 hover:bg-surface-2 hover:text-fg" title="放大" aria-label="放大画布" @click="zoomViewport(1)">＋</button>
-                <button class="center h-6.5 px-1.5 rounded-sm text-[11px] text-fg-2 hover:bg-surface-2 hover:text-fg" title="实际像素 (Ctrl+1)" @click="actualSizeViewport">1:1</button>
+                <button v-if="activeMode !== 'compose'" class="center h-6.5 px-1.5 rounded-sm text-[11px] text-fg-2 hover:bg-surface-2 hover:text-fg" title="实际像素 (Ctrl+1)" @click="actualSizeViewport">1:1</button>
               </span>
             </span>
           </header>
@@ -2121,16 +2355,50 @@ async function openLocation(path?: string) {
                  old preview used `cover` and quietly cropped what you saw. -->
             <div
               v-if="images.length && activeMode === 'compose'"
-              class="absolute inset-0 grid justify-items-center overflow-auto p-6"
-              :class="[activeBlankCanvas?.id === 'portrait' ? 'items-start' : 'items-center', canvasTool === 'select' ? '' : 'cursor-crosshair']"
+              ref="previewViewport"
+              class="grid justify-items-center overflow-hidden p-6 [container-type:size] focus:outline-none focus-visible:ring-3 focus-visible:ring-[var(--accent-ring)] focus-visible:ring-inset"
+              :class="[composeFullscreen ? 'fixed inset-0 z-[90] bg-well' : 'absolute inset-0', activeBlankCanvas?.id === 'portrait' ? 'items-start' : 'items-center', viewportPanning ? 'cursor-grabbing' : spacePressed ? 'cursor-grab' : canvasTool === 'select' ? '' : 'cursor-crosshair']"
+              tabindex="0"
+              role="region"
+              aria-label="图片作品画布；Ctrl 加滚轮缩放，空格拖动平移"
+              @wheel="handleViewportWheel"
+              @pointerdown="beginViewportPan"
+              @dblclick.self="resetViewport"
             >
+              <!-- Fullscreen hides the page header and both side columns, so
+                   the essentials — tool switch, colour, stroke width, exit —
+                   float over the canvas instead of becoming unreachable. -->
+              <div v-if="composeFullscreen" class="absolute left-1/2 top-3 z-[95] -translate-x-1/2">
+                <div class="row gap-1 p-1.5 rounded-md bg-surface border border-line-strong shadow-lg">
+                  <button
+                    v-for="tool in annotationTools"
+                    :key="tool.id"
+                    type="button"
+                    class="center w-7 h-7 rounded-sm text-fg-2 transition-colors duration-120 hover:bg-surface-2 hover:text-fg"
+                    :class="canvasTool === tool.id ? 'bg-accent-soft text-accent font-medium' : ''"
+                    :aria-pressed="canvasTool === tool.id"
+                    :title="tool.hint"
+                    :aria-label="`全屏工具 ${tool.label}`"
+                    @click="canvasTool = tool.id"
+                  >
+                    <AppIcon :name="tool.icon" :size="15" />
+                  </button>
+                  <i class="w-px h-5 mx-1 bg-line" aria-hidden="true" />
+                  <input v-if="canvasTool === 'text'" v-model="annotationText" class="field w-24 h-7 text-[12px]" maxlength="12" aria-label="文字内容" />
+                  <input v-model="annotationColor" type="color" class="w-7 h-7 p-0.5 rounded-sm bg-well border border-line cursor-pointer" aria-label="标注颜色（全屏）" />
+                  <input v-model.number="annotationStroke" type="range" min="2" max="40" step="1" class="w-20 accent-[var(--accent)]" title="画笔粗细" aria-label="画笔粗细（全屏）" />
+                  <button type="button" class="btn-default btn-sm h-7" @click="composeFullscreen = false">
+                    <AppIcon name="minimize" :size="13" />退出全屏
+                  </button>
+                </div>
+              </div>
               <div
                 class="relative stack overflow-hidden rounded-sm border border-line shadow-lg [container-type:inline-size]"
                 :class="[
-                  activeBlankCanvas?.id === 'portrait' ? 'w-[min(430px,100%)]' : activeBlankCanvas ? 'w-[min(650px,100%)]' : 'w-[min(760px,100%)]',
+                  activeBlankCanvas?.id === 'portrait' ? 'w-[min(430px,100%)]' : activeBlankCanvas ? 'w-[min(650px,100%)]' : '',
                   activeBlankCanvas && layout === 'single' ? '' : 'p-[3%]',
                 ]"
-                :style="compositionStyle"
+                :style="[compositionStyle, activeBlankCanvas?.id === 'portrait' ? {} : compositionFillStyle, compositionViewportStyle]"
                 @click="closeAnnotationMenu()"
               >
                 <h3 v-if="title" class="relative z-4 shrink-0 mb-[2.5%] font-display font-semibold leading-tight text-[clamp(15px,2.9cqw,34px)]" :style="{ color: 'var(--canvas-text)' }">{{ title }}</h3>
@@ -2152,12 +2420,15 @@ async function openLocation(path?: string) {
                   :tool="canvasTool"
                   :color="annotationColor"
                   :text="annotationText"
+                  :stroke-width="annotationStroke"
+                  managed-viewport
                   @create="createCanvasAnnotation"
                   @update="updateCanvasAnnotation"
                   @remove="removeAnnotation"
-                  @select="selectedAnnotationId = $event"
+                  @select="handleCanvasSelection"
                   @context="openAnnotationMenu"
                   @canvas-context="openProjectMenu"
+                  @edit-text="editCanvasTextAnnotationAt"
                 />
               </div>
             </div>
@@ -2214,7 +2485,7 @@ async function openLocation(path?: string) {
               class="absolute inset-0 center p-6 focus:outline-none"
               tabindex="0"
               role="region"
-              :aria-label="activeMode === 'stitch' ? '滚动截图空画布；右键或菜单键可开始桌面采集' : activeMode === 'compose' ? '自由画布起点；选择尺寸、导入图片，或右键打开画布菜单' : '图片处理空画布；选择或拖入图片'"
+              :aria-label="activeMode === 'stitch' ? '滚动截图空画布；右键或菜单键可开始桌面采集' : activeMode === 'concat' ? '拼成长图空画布；选择或拖入图片' : activeMode === 'compose' ? '自由画布起点；选择尺寸、导入图片，或右键打开画布菜单' : '图片处理空画布；选择或拖入图片'"
               :aria-haspopup="activeMode === 'stitch' || activeMode === 'compose' ? 'menu' : undefined"
               :aria-expanded="activeMode === 'stitch' || activeMode === 'compose' ? processMenu.open : undefined"
               @contextmenu="(activeMode === 'stitch' || activeMode === 'compose') && openProcessMenu($event)"
@@ -2222,18 +2493,20 @@ async function openLocation(path?: string) {
             >
               <div class="stack items-center gap-3 max-w-100 text-center">
                 <span class="center w-12 h-12 rounded-lg bg-accent-soft text-accent">
-                  <AppIcon :name="activeMode === 'compose' ? 'palette' : activeMode === 'stitch' ? 'camera' : 'file-image'" :size="24" />
+                  <AppIcon :name="activeMode === 'compose' ? 'palette' : activeMode === 'stitch' ? 'camera' : activeMode === 'concat' ? 'gallery' : 'file-image'" :size="24" />
                 </span>
                 <div class="stack gap-1.5">
                   <strong class="text-[15px] font-semibold text-fg">
-                    {{ activeMode === 'stitch' ? '采集窗口，或加入连续截图' : activeMode === 'compose' ? '从一块空白画布开始' : '把图片拖进画布' }}
+                    {{ activeMode === 'stitch' ? '采集窗口，或加入连续截图' : activeMode === 'concat' ? '按顺序拖入图片，拼成一张长图' : activeMode === 'compose' ? '从一块空白画布开始' : '把图片拖进画布' }}
                   </strong>
                   <p class="text-[12px] leading-relaxed text-fg-3">
                     {{ activeMode === 'stitch'
                       ? `桌面版按 ${CAPTURE_SHORTCUT} 逐屏采集，结束后自动识别重叠；也可以直接导入 2–${STITCH_MAX_FILES} 张同宽截图。`
-                      : activeMode === 'compose'
-                        ? '空白画布可以直接画方框、箭头和文字，随时保存成可继续编辑的本地项目。'
-                        : `支持 JPG、PNG、WebP、GIF，一次最多 ${STITCH_MAX_FILES} 张一起处理。` }}
+                      : activeMode === 'concat'
+                        ? `一次最多 ${CONCAT_MAX_FILES} 张；可选上下或左右方向，间距 0 无缝、正数留白、负数叠压。`
+                        : activeMode === 'compose'
+                          ? '空白画布可以直接画方框、箭头和文字，随时保存成可继续编辑的本地项目。'
+                          : `支持 JPG、PNG、WebP、GIF，一次最多 ${STITCH_MAX_FILES} 张一起处理。` }}
                   </p>
                 </div>
 
@@ -2325,6 +2598,11 @@ async function openLocation(path?: string) {
               <label class="stack gap-1.5" :class="canvasTool === 'text' ? '' : 'opacity-60'">
                 <span class="text-[12px] text-fg-3">文字内容</span>
                 <input v-model="annotationText" class="field" :disabled="canvasTool !== 'text'" placeholder="选择文字工具后可编辑" />
+              </label>
+              <label class="stack gap-1.5">
+                <span class="row-between text-[12px] text-fg-3">画笔粗细<b class="tabular-nums text-fg">{{ annotationStroke }}px</b></span>
+                <input v-model.number="annotationStroke" type="range" min="2" max="40" step="1" class="w-full accent-[var(--accent)]" :disabled="canvasTool === 'select'" aria-label="画笔粗细" />
+                <span class="text-[11px] leading-relaxed text-fg-3">影响之后画下的涂色笔迹；已有的笔迹保持原样。</span>
               </label>
               <label class="stack gap-1.5" :class="canvasTool === 'select' ? 'opacity-60' : ''">
                 <span class="text-[12px] text-fg-3">标注颜色</span>
@@ -2458,13 +2736,78 @@ async function openLocation(path?: string) {
                     ? '只裁掉可信的重叠区域；识别不可靠时完整保留截图并提示检查，绝不静默丢内容。'
                     : '固定裁掉每张后续截图顶部的相同比例，适合滚动距离一致的页面。' }}
                 </span>
-                <button class="btn-default btn-sm self-start" :disabled="previewPending || images.length < 2" @click="rebuildStitch">重新识别</button>
+                <button class="btn-default btn-sm self-start" :disabled="previewPending || images.length < 2" @click="rebuildComposition">重新识别</button>
               </div>
               <div v-if="stitchResult?.warnings.length" class="stack gap-1 p-2.5 rounded-sm bg-warn-soft" role="status">
                 <b class="text-[11px] font-medium text-warn">需要检查 {{ stitchResult.warnings.length }} 处接缝</b>
                 <span v-for="warning in stitchResult.warnings" :key="warning" class="text-[11px] leading-relaxed text-warn">{{ warning }}</span>
               </div>
               <p class="text-[11px] leading-relaxed text-fg-3">左侧列表可以调整截图顺序或移除某一张；右键预览还能管理采集、重新识别和查看实际像素。</p>
+            </section>
+          </template>
+
+          <template v-else-if="activeMode === 'concat'">
+            <section class="stack gap-2.5 p-3 border-b border-line">
+              <h3 class="text-[11px] font-semibold text-fg-3">拼接</h3>
+              <label class="stack gap-1.5">
+                <span class="text-[12px] text-fg-3">方向</span>
+                <select v-model="concatDirection" class="field">
+                  <option value="vertical">上下拼接 · 竖长图</option>
+                  <option value="horizontal">左右拼接 · 横长图</option>
+                </select>
+              </label>
+              <label class="row gap-2 text-[12px] text-fg-2 cursor-pointer">
+                <input v-model="concatUniform" type="checkbox" class="accent-[var(--accent)]" @change="concatUniform && (concatWidthEnabled = false)" />调整成统一大小
+              </label>
+              <label v-if="concatUniform" class="stack gap-1.5">
+                <span class="text-[12px] text-fg-3">图片放入格子的方式</span>
+                <select v-model="concatFit" class="field">
+                  <option value="contain">完整保留，居中留白</option>
+                  <option value="cover">裁掉超出部分，填满格子</option>
+                </select>
+              </label>
+              <label class="row gap-2 text-[12px] text-fg-2 cursor-pointer">
+                <input v-model="concatWidthEnabled" type="checkbox" class="accent-[var(--accent)]" @change="concatWidthEnabled && (concatUniform = false)" />统一宽度
+              </label>
+              <template v-if="concatWidthEnabled">
+                <label class="stack gap-1.5">
+                  <span class="row-between text-[12px] text-fg-3">宽度<b class="tabular-nums text-fg">{{ concatWidth }} px</b></span>
+                  <input v-model.number="concatWidth" type="number" min="200" max="4000" step="50" class="field" />
+                  <span class="text-[11px] leading-relaxed text-fg-3">每张图片都缩放到这个宽度，较小的图片也会被放大到同样大小。</span>
+                </label>
+                <label class="row gap-2 text-[12px] text-fg-2 cursor-pointer">
+                  <input v-model="concatLockAspect" type="checkbox" class="accent-[var(--accent)]" />锁定纵横比
+                </label>
+                <p class="text-[11px] leading-relaxed text-fg-3">
+                  {{ concatLockAspect
+                    ? '锁定后高度按每张图片自己的比例计算，只保证宽度一致。'
+                    : '取消后高度也统一（按全部图片的中位比例计算），比例不同的图片会被拉伸。' }}
+                </p>
+              </template>
+              <label class="stack gap-1.5">
+                <span class="row-between text-[12px] text-fg-3">间距<b class="tabular-nums text-fg">{{ concatGap }} px</b></span>
+                <input v-model.number="concatGap" type="range" min="-400" max="400" step="10" class="w-full accent-[var(--accent)]" />
+                <span class="text-[11px] leading-relaxed text-fg-3">0 无缝拼接；正数在图片之间留白；负数是叠压——后一张盖在前一张上，像一层层叠加。</span>
+              </label>
+              <label v-if="!concatWidthEnabled" class="stack gap-1.5">
+                <span class="row-between text-[12px] text-fg-3">尺寸上限<b class="tabular-nums text-fg">{{ concatMaxCross }} px</b></span>
+                <input v-model.number="concatMaxCross" type="number" min="400" max="4000" step="50" class="field" />
+                <span class="text-[11px] leading-relaxed text-fg-3">
+                  {{ concatUniform
+                    ? '统一大小后格子宽度就是这个值（上下拼接时），格子高度按全部图片的中位比例计算。'
+                    : '所有图片统一缩放，最宽的一张不超过这个值，几十张照片也不会拼出超大的文件。' }}
+                </span>
+              </label>
+              <div class="stack gap-2 p-2.5 rounded-sm bg-surface-2">
+                <b class="text-[12px] font-medium text-fg">{{ previewPending ? `${stitchProgress}% · ${stitchDetail}` : stitchResult ? `${stitchResult.width} × ${stitchResult.height} px` : '等待图片' }}</b>
+                <progress v-if="previewPending" class="w-full h-1" max="100" :value="stitchProgress" :aria-label="stitchDetail" />
+                <button class="btn-default btn-sm self-start" :disabled="previewPending || images.length < 2" @click="rebuildComposition">重新拼接</button>
+              </div>
+              <div v-if="stitchResult?.warnings.length" class="stack gap-1 p-2.5 rounded-sm bg-warn-soft" role="status">
+                <b class="text-[11px] font-medium text-warn">部分图片被放大，可能变糊</b>
+                <span v-for="warning in stitchResult.warnings" :key="warning" class="text-[11px] leading-relaxed text-warn">{{ warning }}</span>
+              </div>
+              <p class="text-[11px] leading-relaxed text-fg-3">左侧列表可以调整拼接顺序或移除某一张；改参数后预览会立即重拼。</p>
             </section>
           </template>
 
@@ -2621,7 +2964,7 @@ async function openLocation(path?: string) {
         </button>
         <button v-if="activeMode === 'stitch' && captureSessionActive" class="menu-item" role="menuitem" :disabled="captureSessionBusy" @click="hideForCapture">隐藏 Knitspace 继续采集</button>
         <button class="menu-item" role="menuitem" :disabled="copying || exporting || !outputReady" @click="copyProcessPreview">复制当前预览</button>
-        <button v-if="activeMode === 'stitch'" class="menu-item" role="menuitem" :disabled="previewPending || images.length < 2" @click="rebuildStitch">重新识别重叠</button>
+        <button v-if="activeMode === 'stitch'" class="menu-item" role="menuitem" :disabled="previewPending || images.length < 2" @click="rebuildComposition">重新识别重叠</button>
         <button class="menu-item" role="menuitem" @click="resetProcessViewport">适应窗口<kbd class="kbd">Ctrl/⌘ 0</kbd></button>
         <button class="menu-item" role="menuitem" @click="actualSizeProcessViewport">实际像素<kbd class="kbd">Ctrl/⌘ 1</kbd></button>
         <button v-if="activeMode === 'crop' && !sourcePassThrough" class="menu-item" role="menuitem" @click="resetProcessCrop">恢复完整画面</button>
