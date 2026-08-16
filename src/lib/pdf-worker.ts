@@ -1,4 +1,4 @@
-export type PdfTaskOperation = 'merge' | 'split' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'text' | 'pdf-to-image'
+export type PdfTaskOperation = 'merge' | 'split' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'text' | 'pdf-to-image' | 'compress' | 'redact'
 
 export interface PdfTaskInput { name: string; data: ArrayBuffer }
 
@@ -17,6 +17,8 @@ export interface PdfTaskRequest {
   imageDpi?: number
   /** 仅 pdf-to-image：JPG/WebP 压缩质量 1–100，默认 90；PNG 忽略。 */
   imageQuality?: number
+  /** 仅 redact：逗号、换行分隔的敏感文本。匹配页面会被永久栅格化并覆盖。 */
+  redactTerms?: string
 }
 
 export interface PdfTaskOutput { name: string; data: ArrayBuffer; mime: 'application/pdf' | 'text/plain;charset=utf-8' | 'image/png' | 'image/jpeg' | 'image/webp' }

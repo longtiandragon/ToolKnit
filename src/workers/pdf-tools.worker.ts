@@ -5,6 +5,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import { assertPdfImageFits, cleanOutputName, parsePageIndexes, pdfImageOutputName, pdfImageScaleForDpi, type PdfImageFormat } from '@/lib/file-tools'
 import type { PdfTaskOutput, PdfTaskRequest } from '@/lib/pdf-worker'
+import { parseRedactionTerms, redactionRectangle, type PdfTextItemForRedaction } from '@/lib/pdf-redaction'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -54,6 +55,18 @@ class OffscreenCanvasFactory {
   }
 }
 
+async function renderPageToCanvas(page: pdfjs.PDFPageProxy, scale: number) {
+  if (typeof OffscreenCanvas === 'undefined' || typeof OffscreenCanvas.prototype.convertToBlob !== 'function') {
+    throw new Error('当前环境不支持离屏画布，无法重建 PDF 页面。请使用桌面版或新版 Chrome/Edge。')
+  }
+  const viewport = page.getViewport({ scale })
+  const canvas = new OffscreenCanvas(viewport.width, viewport.height)
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('无法建立 PDF 渲染画布。')
+  await page.render({ canvas: null, canvasContext: context as unknown as CanvasRenderingContext2D, viewport, background: '#ffffff' }).promise
+  return { canvas, context, viewport }
+}
+
 async function extractText(taskId: string, source: ArrayBuffer, name: string, progressStart: number, progressEnd: number) {
   const loading = pdfjs.getDocument({ data: source })
   const document = await loading.promise
@@ -82,6 +95,74 @@ async function runTask(taskId: string, request: PdfTaskRequest) {
   const publishPdf = async (name: string, document: PDFDocument) => {
     const data = toBuffer(await document.save())
     await publish(taskId, ++outputSequence, { name, data, mime: 'application/pdf' })
+  }
+
+  if (request.operation === 'compress') {
+    for (let index = 0; index < files.length; index += 1) {
+      const source = await PDFDocument.load(files[index].data)
+      const data = toBuffer(await source.save({ useObjectStreams: true, addDefaultPage: false, objectsPerTick: 20, updateFieldAppearances: false }))
+      await publish(taskId, ++outputSequence, { name: `${cleanOutputName(files[index].name)}-optimized.pdf`, data, mime: 'application/pdf' })
+      postProgress(taskId, 10 + 84 * (index + 1) / files.length, `正在优化 ${index + 1}/${files.length} 份 PDF…`)
+    }
+    return
+  }
+
+  if (request.operation === 'redact') {
+    const terms = parseRedactionTerms(request.redactTerms ?? '')
+    if (!terms.length) throw new Error('请输入至少一个要永久脱敏的文本。多个内容可用逗号或换行分隔。')
+    const scale = 1.5
+    for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+      const file = files[fileIndex]
+      const loading = pdfjs.getDocument({ data: file.data, disableFontFace: true })
+      const document = await loading.promise
+      try {
+        let matchCount = 0
+        for (let pageIndex = 1; pageIndex <= document.numPages; pageIndex += 1) {
+          const page = await document.getPage(pageIndex)
+          const content = await page.getTextContent()
+          const items = content.items.map((item) => ({
+            str: 'str' in item ? item.str : '',
+            transform: 'transform' in item ? [...item.transform] : undefined,
+            width: 'width' in item ? item.width : undefined,
+          }))
+          const pageMatches = items.filter((item) => redactionRectangle(item, [1, 0, 0, -1, 0, 0], 1, terms))
+          matchCount += pageMatches.length
+          page.cleanup()
+        }
+        if (!matchCount) throw new Error(`“${file.name}”未找到要脱敏的文本；为避免误生成空结果，未导出文件。`)
+
+        const output = await PDFDocument.create()
+        for (let pageIndex = 1; pageIndex <= document.numPages; pageIndex += 1) {
+          const page = await document.getPage(pageIndex)
+          const { canvas, context, viewport } = await renderPageToCanvas(page, scale)
+          const content = await page.getTextContent()
+          const pageMatches = content.items
+            .map((item) => ({
+              str: 'str' in item ? item.str : '',
+              transform: 'transform' in item ? [...item.transform] : undefined,
+              width: 'width' in item ? item.width : undefined,
+            }))
+            .map((item) => redactionRectangle(item, viewport.transform, viewport.scale, terms))
+            .filter((rectangle): rectangle is NonNullable<typeof rectangle> => Boolean(rectangle))
+          context.fillStyle = '#000000'
+          for (const rectangle of pageMatches) context.fillRect(rectangle.x, rectangle.y, rectangle.width, rectangle.height)
+          const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 })
+          const image = await output.embedJpg(await blob.arrayBuffer())
+          const outputPage = output.addPage([viewport.width / scale, viewport.height / scale])
+          outputPage.drawImage(image, { x: 0, y: 0, width: viewport.width / scale, height: viewport.height / scale })
+          canvas.width = 0
+          canvas.height = 0
+          page.cleanup()
+          postProgress(taskId, 8 + 86 * (fileIndex + (pageIndex / document.numPages)) / files.length, `正在永久脱敏“${file.name}”第 ${pageIndex}/${document.numPages} 页…`)
+        }
+        const data = toBuffer(await output.save({ useObjectStreams: true, addDefaultPage: false, objectsPerTick: 20 }))
+        await publish(taskId, ++outputSequence, { name: `${cleanOutputName(file.name)}-redacted.pdf`, data, mime: 'application/pdf' })
+      } finally {
+        document.cleanup()
+        await loading.destroy()
+      }
+    }
+    return
   }
 
   if (request.operation === 'merge') {

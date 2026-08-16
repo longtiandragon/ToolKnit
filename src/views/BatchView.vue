@@ -45,6 +45,7 @@ const watermarkOpacity = ref(18)
 const watermarkColor = ref('#8a8f98')
 const pageNumberStart = ref(1)
 const pageNumberPosition = ref<'bottom-center' | 'bottom-right'>('bottom-center')
+const redactTerms = ref('')
 const imageFormat = ref<'image/png' | 'image/jpeg' | 'image/webp'>('image/png')
 const pdfImageDpi = ref(150)
 const cropLeft = ref(0)
@@ -81,7 +82,7 @@ const groups: [ToolGroup, string, string, string][] = [
 ]
 
 const operationMap: Record<ToolGroup, ToolOption[]> = {
-  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本']],
+  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['redact', '永久脱敏'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本']],
   image: [['convert', '转换图片'], ['resize', '缩放并压缩'], ['crop', '裁剪图片'], ['rotate', '旋转图片']],
   text: [['transform', '文本转换']],
   organize: [['rename-report', '命名预览'], ['dedupe-report', '哈希去重报告']]
@@ -103,6 +104,8 @@ const operationNotes: Record<string, string> = {
   'page-number': '按起始数字和位置批量添加页码',
   'images-to-pdf': '把多张图片按顺序合成一份 PDF',
   'pdf-to-image': '把每一页渲染成图片,可选格式、分辨率与页码范围',
+  compress: '重写 PDF 结构与对象流，尽量减小体积，不改变页面内容',
+  redact: '按文本匹配覆盖并栅格化页面，输出后无法恢复原文字层',
   'extract-text': '导出 PDF 里已有的文字层,不做 OCR',
   convert: '在 PNG、JPG 与 WebP 之间转换',
   resize: '限制最大宽度并调整压缩质量',
@@ -123,12 +126,16 @@ const accept = computed(() => group.value === 'pdf' && operation.value !== 'imag
       : group.value === 'text'
         ? '.txt,.md,.json,.js,.ts,.py,.java,.csv,text/*,application/json'
         : '*/*')
-const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'watermark', 'page-number', 'rotate', 'split', 'text', 'pdf-to-image'].includes(operation.value))
+const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'watermark', 'page-number', 'rotate', 'split', 'text', 'pdf-to-image', 'compress', 'redact'].includes(operation.value))
 const usesOutputName = computed(() => group.value === 'text' || group.value === 'organize' || (group.value === 'pdf' && ['merge', 'images-to-pdf'].includes(operation.value)))
-const canRun = computed(() => !running.value && (files.value.length > 0 || (group.value === 'text' && textInput.value.trim().length > 0)))
+const canRun = computed(() => !running.value
+  && (files.value.length > 0 || (group.value === 'text' && textInput.value.trim().length > 0))
+  && !(group.value === 'pdf' && operation.value === 'redact' && !redactTerms.value.trim()))
 const outputHint = computed(() => {
   if (!files.value.length && !(group.value === 'text' && textInput.value.trim())) return '等待输入内容'
   if (group.value === 'pdf' && operation.value === 'split') return `将把 ${files.value.length} 份 PDF 拆成独立页面`
+  if (group.value === 'pdf' && operation.value === 'redact') return '匹配到的页面会变成不可搜索的图片，并永久覆盖敏感文字'
+  if (group.value === 'pdf' && operation.value === 'compress') return '仅重写 PDF 结构；图片型 PDF 体积可能变化不大'
   if (group.value === 'organize') return '仅生成预览报告，不修改原文件'
   return `将为 ${Math.max(files.value.length, 1)} 个输入生成新输出`
 })
@@ -232,7 +239,7 @@ function recipeParameters() {
     cropWidth: cropWidth.value, cropHeight: cropHeight.value, maxWidth: maxWidth.value,
     quality: quality.value, watermarkText: watermarkText.value, watermarkOpacity: watermarkOpacity.value,
     watermarkColor: watermarkColor.value, pageNumberStart: pageNumberStart.value,
-    pageNumberPosition: pageNumberPosition.value, textMode: textMode.value, renamePrefix: renamePrefix.value,
+    pageNumberPosition: pageNumberPosition.value, redactTerms: redactTerms.value, textMode: textMode.value, renamePrefix: renamePrefix.value,
     renameSuffix: renameSuffix.value, renameStart: renameStart.value, renameDigits: renameDigits.value,
     renameSeparator: renameSeparator.value, renameKeepOriginal: renameKeepOriginal.value ? 1 : 0
   }
@@ -258,6 +265,7 @@ function applyRecipe(recipe: ToolRecipe) {
   watermarkColor.value = String(params.watermarkColor ?? watermarkColor.value)
   pageNumberStart.value = Number(params.pageNumberStart ?? pageNumberStart.value)
   pageNumberPosition.value = params.pageNumberPosition === 'bottom-right' ? 'bottom-right' : 'bottom-center'
+  redactTerms.value = String(params.redactTerms ?? redactTerms.value)
   const supportedTextModes: TextTransformMode[] = ['json', 'trim', 'markdown', 'dedupe-lines', 'sort-lines', 'extract-contacts', 'statistics']
   textMode.value = supportedTextModes.includes(params.textMode as TextTransformMode) ? params.textMode as TextTransformMode : textMode.value
   renamePrefix.value = String(params.renamePrefix ?? renamePrefix.value)
@@ -471,6 +479,7 @@ async function runPdf(onProgress?: (progress: number, detail: string) => void, o
     pageNumberStart: pageNumberStart.value,
     pageNumberPosition: pageNumberPosition.value,
     watermark,
+    ...(operation.value === 'redact' ? { redactTerms: redactTerms.value } : {}),
     ...(operation.value === 'pdf-to-image'
       ? { imageFormat: imageFormat.value.split('/')[1] as 'png' | 'jpeg' | 'webp', imageDpi: pdfImageDpi.value, imageQuality: quality.value }
       : {})
@@ -845,6 +854,17 @@ onBeforeUnmount(() => {
                 </select>
               </FieldRow>
             </template>
+
+            <template v-if="operation === 'redact'">
+              <FieldRow label="要隐藏的文本" hint="支持逗号或换行分隔；按 PDF 文字层匹配">
+                <textarea v-model="redactTerms" name="redact-terms" class="field min-h-24 w-full resize-y" placeholder="姓名，手机号\n邮箱地址" />
+              </FieldRow>
+              <p class="text-[11px] text-warn leading-relaxed">脱敏后页面会重建为图片，匹配文字不可搜索、复制或恢复。扫描件或拆分文字可能需要先用更短的关键词试跑。</p>
+            </template>
+
+            <p v-if="operation === 'compress'" class="text-[12px] text-fg-3 leading-snug">
+              这是无损结构优化：不会降低图片分辨率或删除文字。图片型 PDF 若仍很大，下一步可用图片质量工具重建。
+            </p>
 
             <template v-if="operation === 'pdf-to-image'">
               <FieldRow label="输出格式">
