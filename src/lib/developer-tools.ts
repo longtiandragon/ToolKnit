@@ -132,6 +132,172 @@ export function transformJson(value: string, compact = false) {
   }
 }
 
+type SqlToken = { kind: 'word' | 'quoted' | 'string' | 'number' | 'operator' | 'punctuation' | 'comment'; value: string }
+
+const SQL_KEYWORDS = new Set([
+  'all', 'and', 'as', 'asc', 'between', 'by', 'case', 'cast', 'create', 'delete', 'desc', 'distinct', 'else', 'end', 'exists', 'from', 'full', 'having', 'in', 'inner', 'insert', 'into', 'is', 'join', 'left', 'like', 'limit', 'not', 'null', 'offset', 'on', 'or', 'order', 'outer', 'over', 'partition', 'right', 'select', 'set', 'then', 'union', 'update', 'using', 'values', 'when', 'where', 'with', 'returning', 'cross', 'group', 'table', 'as', 'primary', 'key', 'references', 'alter', 'drop', 'view', 'index', 'begin', 'commit', 'rollback',
+])
+const SQL_CLAUSES = new Set(['select', 'from', 'where', 'having', 'order', 'group', 'limit', 'offset', 'union', 'returning', 'values', 'set', 'with', 'join', 'left', 'right', 'inner', 'outer', 'cross'])
+const SQL_FUNCTIONS = new Set(['avg', 'cast', 'coalesce', 'concat', 'count', 'date', 'datetime', 'json_extract', 'lower', 'max', 'min', 'sum', 'trim', 'upper'])
+const SQL_OPERATORS = ['::', '<=', '>=', '<>', '!=', '||', '&&', ':=', '+=', '-=', '*=', '/=', '=>', '=', '<', '>', '+', '-', '*', '/', '%']
+
+function tokenizeSql(value: string) {
+  const tokens: SqlToken[] = []
+  let cursor = 0
+  while (cursor < value.length) {
+    const character = value[cursor]
+    if (/\s/.test(character)) { cursor += 1; continue }
+    if (value.startsWith('--', cursor)) {
+      const end = value.indexOf('\n', cursor + 2)
+      tokens.push({ kind: 'comment', value: value.slice(cursor, end < 0 ? value.length : end).trim() })
+      cursor = end < 0 ? value.length : end + 1
+      continue
+    }
+    if (value.startsWith('/*', cursor)) {
+      const end = value.indexOf('*/', cursor + 2)
+      if (end < 0) throw new Error('SQL 块注释缺少结束标记。')
+      tokens.push({ kind: 'comment', value: value.slice(cursor, end + 2).trim() })
+      cursor = end + 2
+      continue
+    }
+    if (character === "'" || character === '"' || character === '`' || character === '[') {
+      const quote = character === '[' ? ']' : character
+      let end = cursor + 1
+      let closed = false
+      while (end < value.length) {
+        if (value[end] === quote) {
+          if (value[end + 1] === quote) { end += 2; continue }
+          closed = true
+          end += 1
+          break
+        }
+        end += 1
+      }
+      if (!closed) throw new Error('SQL 字符串或标识符缺少结束引号。')
+      tokens.push({ kind: character === "'" ? 'string' : 'quoted', value: value.slice(cursor, end) })
+      cursor = end
+      continue
+    }
+    const word = /^[A-Za-z_][\w$]*/.exec(value.slice(cursor))
+    if (word) {
+      tokens.push({ kind: 'word', value: word[0] })
+      cursor += word[0].length
+      continue
+    }
+    const number = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/.exec(value.slice(cursor))
+    if (number) {
+      tokens.push({ kind: 'number', value: number[0] })
+      cursor += number[0].length
+      continue
+    }
+    const operator = SQL_OPERATORS.find((candidate) => value.startsWith(candidate, cursor))
+    if (operator) {
+      tokens.push({ kind: 'operator', value: operator })
+      cursor += operator.length
+      continue
+    }
+    if ('(),.;'.includes(character)) {
+      tokens.push({ kind: 'punctuation', value: character })
+      cursor += 1
+      continue
+    }
+    throw new Error(`无法识别 SQL 字符“${character}”。`)
+  }
+  return tokens
+}
+
+export function formatSql(value: string) {
+  if (!value.trim()) throw new Error('请输入 SQL 内容。')
+  assertStructuredTextSize(value)
+  const tokens = tokenizeSql(value)
+  const lines: string[] = []
+  let line = ''
+  let depth = 0
+  let continuation = false
+  let previous: SqlToken | undefined
+  const indent = () => '  '.repeat(Math.max(0, depth + (continuation ? 1 : 0)))
+  const newline = (nextIndent = true) => {
+    const trimmed = line.trimEnd()
+    if (trimmed) lines.push(trimmed)
+    line = nextIndent ? indent() : ''
+    continuation = false
+  }
+  const append = (text: string, needsSpace = false) => {
+    if (!line) line = indent()
+    if (needsSpace && line.trim() && !line.endsWith(' ') && !line.endsWith('(') && !line.endsWith('.')) line += ' '
+    line += text
+  }
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    const normalized = token.kind === 'word' && (SQL_KEYWORDS.has(token.value.toLowerCase()) || SQL_FUNCTIONS.has(token.value.toLowerCase())) ? token.value.toUpperCase() : token.value
+    const lower = token.kind === 'word' ? token.value.toLowerCase() : ''
+    if (token.kind === 'comment') {
+      if (line.trim()) newline()
+      const commentLines = token.value.split(/\r?\n/)
+      commentLines.forEach((comment, commentIndex) => {
+        if (commentIndex) newline()
+        append(comment.trim())
+      })
+      newline(false)
+      previous = token
+      continue
+    }
+    if (token.kind === 'punctuation' && token.value === ')') {
+      depth = Math.max(0, depth - 1)
+      if (line.endsWith(' ')) line = line.trimEnd()
+      append(')')
+      previous = token
+      continue
+    }
+    if (token.kind === 'punctuation' && token.value === '(') {
+      append('(', Boolean(previous) && !(previous?.kind === 'word' && SQL_FUNCTIONS.has(previous.value.toLowerCase())))
+      depth += 1
+      previous = token
+      continue
+    }
+    if (token.kind === 'punctuation' && token.value === ',') {
+      append(',')
+      if (depth === 0) newline()
+      else append(' ')
+      previous = token
+      continue
+    }
+    if (token.kind === 'punctuation' && token.value === ';') {
+      append(';')
+      newline(false)
+      previous = token
+      continue
+    }
+    if (token.kind === 'punctuation' && token.value === '.') {
+      append('.')
+      previous = token
+      continue
+    }
+    if (token.kind === 'operator') {
+      append(token.value, true)
+      append(' ')
+      previous = token
+      continue
+    }
+    const isClause = token.kind === 'word' && SQL_CLAUSES.has(lower)
+    const previousWasModifier = previous?.kind === 'word' && ['left', 'right', 'inner', 'outer', 'cross', 'group', 'order'].includes(previous.value.toLowerCase())
+    if (isClause && line.trim() && !previousWasModifier) newline()
+    if ((lower === 'and' || lower === 'or') && line.trim()) {
+      continuation = true
+      newline()
+      append(normalized)
+      continuation = false
+    } else {
+      const needsSpace = Boolean(previous && previous.kind !== 'punctuation' && previous.kind !== 'operator' && previous.value !== '(' && previous.value !== '.')
+      append(normalized, needsSpace)
+    }
+    previous = token
+  }
+  if (line.trim()) newline(false)
+  return lines.join('\n')
+}
+
 type JsonSchemaObject = Record<string, unknown>
 
 const JSON_SCHEMA_MAX_DEPTH = 32

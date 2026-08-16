@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
+import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -170,6 +170,17 @@ describe('JSON Schema generation and validation', () => {
     const report = JSON.parse(transformJsonSchema('{"ok":true}', 'validate', '{"type":"object","required":["ok"]}'))
     expect(report).toEqual({ valid: true, errorCount: 0, errors: [] })
     expect(() => transformJsonSchema('{}', 'validate', '[]')).toThrow('必须是对象')
+  })
+})
+
+describe('SQL formatter', () => {
+  it('normalizes common clauses, operators and boolean continuation', () => {
+    expect(formatSql("select id,name from users where active=1 and role='admin' order by id desc;")).toBe("SELECT id,\nname\nFROM users\nWHERE active = 1\n  AND role = 'admin'\nORDER BY id DESC;")
+  })
+
+  it('keeps strings, quoted identifiers, functions and comments intact', () => {
+    expect(formatSql('select u."display.name",count(*) from users u -- keep this\nwhere u.id in (1,2)')).toBe('SELECT u."display.name",\nCOUNT(*)\nFROM users u\n-- keep this\nWHERE u.id IN (1, 2)')
+    expect(() => formatSql("select 'unfinished")).toThrow('缺少结束引号')
   })
 })
 
