@@ -4,6 +4,7 @@ import * as pdfjs from 'pdfjs-dist'
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import { assertPdfImageFits, cleanOutputName, parsePageIndexes, pdfImageOutputName, pdfImageScaleForDpi, type PdfImageFormat } from '@/lib/file-tools'
+import { calculatePdfCropBox } from '@/lib/pdf-crop'
 import type { PdfTaskOutput, PdfTaskRequest } from '@/lib/pdf-worker'
 import { parseRedactionTerms, redactionRectangle, type PdfTextItemForRedaction } from '@/lib/pdf-redaction'
 
@@ -282,6 +283,24 @@ async function runTask(taskId: string, request: PdfTaskRequest) {
     pages.forEach((page) => output.addPage(page))
     postProgress(taskId, 82, `正在生成 ${indexes.length} 页的新 PDF…`)
     await publishPdf(`${cleanOutputName(files[0].name)}-${request.operation === 'reorder' ? 'reordered' : 'extract'}.pdf`, output)
+    return
+  }
+
+  if (request.operation === 'crop') {
+    const left = request.cropLeft ?? 0
+    const top = request.cropTop ?? 0
+    const width = request.cropWidth ?? 100
+    const height = request.cropHeight ?? 100
+    for (let index = 0; index < files.length; index += 1) {
+      const source = await PDFDocument.load(files[index].data)
+      source.getPages().forEach((page) => {
+        const { width: pageWidth, height: pageHeight } = page.getSize()
+        const box = calculatePdfCropBox(pageWidth, pageHeight, left, top, width, height)
+        page.setCropBox(box.x, box.y, box.width, box.height)
+      })
+      postProgress(taskId, 12 + 72 * (index + 1) / files.length, `正在裁剪 ${index + 1}/${files.length} 份 PDF…`)
+      await publishPdf(`${cleanOutputName(files[index].name)}-cropped.pdf`, source)
+    }
     return
   }
 

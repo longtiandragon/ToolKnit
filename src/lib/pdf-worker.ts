@@ -1,4 +1,4 @@
-export type PdfTaskOperation = 'merge' | 'split' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'text' | 'pdf-to-image' | 'compress' | 'redact' | 'ocr'
+export type PdfTaskOperation = 'merge' | 'split' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'crop' | 'text' | 'pdf-to-image' | 'compress' | 'redact' | 'ocr'
 
 export interface PdfTaskInput { name: string; data: ArrayBuffer }
 
@@ -19,6 +19,11 @@ export interface PdfTaskRequest {
   imageQuality?: number
   /** 仅 redact：逗号、换行分隔的敏感文本。匹配页面会被永久栅格化并覆盖。 */
   redactTerms?: string
+  /** 仅 crop：相对每页的百分比裁剪框。 */
+  cropLeft?: number
+  cropTop?: number
+  cropWidth?: number
+  cropHeight?: number
 }
 
 export interface PdfTaskOutput {

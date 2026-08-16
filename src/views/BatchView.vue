@@ -85,7 +85,7 @@ const groups: [ToolGroup, string, string, string][] = [
 ]
 
 const operationMap: Record<ToolGroup, ToolOption[]> = {
-  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本']],
+  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本']],
   image: [['convert', '转换图片'], ['resize', '缩放并压缩'], ['crop', '裁剪图片'], ['rotate', '旋转图片']],
   text: [['transform', '文本转换']],
   organize: [['rename-report', '命名预览'], ['dedupe-report', '哈希去重报告']]
@@ -103,6 +103,7 @@ const operationNotes: Record<string, string> = {
   rotate: '批量旋转页面方向,不重新编码内容',
   extract: '按页码范围导出成新的 PDF',
   reorder: '按你指定的页序重新组织后导出',
+  crop: '调整 PDF 页面可见区域，不栅格化文字和矢量内容',
   watermark: '在每页叠加文字水印,可调透明度与角度',
   'page-number': '按起始数字和位置批量添加页码',
   'images-to-pdf': '把多张图片按顺序合成一份 PDF',
@@ -113,14 +114,14 @@ const operationNotes: Record<string, string> = {
   'extract-text': '导出 PDF 里已有的文字层,不做 OCR',
   convert: '在 PNG、JPG 与 WebP 之间转换',
   resize: '限制最大宽度并调整压缩质量',
-  crop: '按选区裁剪并批量导出',
+  'image-crop': '按选区裁剪并批量导出',
   transform: '格式化、清理或重排文本内容',
   'rename-report': '预览批量重命名结果,先看再改',
   'dedupe-report': '按内容哈希找出重复文件并生成报告',
 }
 
 const activeOperationLabel = computed(() => operations.value.find((item) => item[0] === operation.value)?.[1] ?? '文件处理')
-const activeOperationNote = computed(() => operationNotes[operation.value] ?? '选择输入后生成新文件,原件保持不变')
+const activeOperationNote = computed(() => operationNotes[group.value === 'image' && operation.value === 'crop' ? 'image-crop' : operation.value] ?? '选择输入后生成新文件,原件保持不变')
 const accept = computed(() => group.value === 'pdf' && operation.value !== 'images-to-pdf'
   ? '.pdf,application/pdf'
   : group.value === 'pdf'
@@ -130,7 +131,7 @@ const accept = computed(() => group.value === 'pdf' && operation.value !== 'imag
       : group.value === 'text'
         ? '.txt,.md,.json,.js,.ts,.py,.java,.csv,text/*,application/json'
         : '*/*')
-const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'watermark', 'page-number', 'rotate', 'split', 'text', 'pdf-to-image', 'compress', 'redact', 'ocr'].includes(operation.value))
+const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'crop', 'watermark', 'page-number', 'rotate', 'split', 'text', 'pdf-to-image', 'compress', 'redact', 'ocr'].includes(operation.value))
 const usesOutputName = computed(() => group.value === 'text' || group.value === 'organize' || (group.value === 'pdf' && ['merge', 'images-to-pdf'].includes(operation.value)))
 const canRun = computed(() => !running.value
   && (files.value.length > 0 || (group.value === 'text' && textInput.value.trim().length > 0))
@@ -548,6 +549,7 @@ async function runPdf(onProgress?: (progress: number, detail: string) => void, o
     rotation: rotation.value,
     pageNumberStart: pageNumberStart.value,
     pageNumberPosition: pageNumberPosition.value,
+    ...(operation.value === 'crop' ? { cropLeft: cropLeft.value, cropTop: cropTop.value, cropWidth: cropWidth.value, cropHeight: cropHeight.value } : {}),
     watermark,
     ...(operation.value === 'redact' ? { redactTerms: redactTerms.value } : {}),
     ...(operation.value === 'pdf-to-image'
@@ -882,6 +884,16 @@ onBeforeUnmount(() => {
             <FieldRow v-if="operation === 'reorder'" label="新的页面顺序" hint="按写下的先后重排，未列出的页会被丢弃">
               <input v-model="pageRange" name="page-order" class="field w-full" placeholder="3,1,2" />
             </FieldRow>
+
+            <template v-if="operation === 'crop'">
+              <div class="grid grid-cols-2 gap-3">
+                <FieldRow label="左侧起点"><input v-model.number="cropLeft" type="number" min="0" max="99" class="field w-full" /></FieldRow>
+                <FieldRow label="顶部起点"><input v-model.number="cropTop" type="number" min="0" max="99" class="field w-full" /></FieldRow>
+                <FieldRow label="裁剪宽度"><input v-model.number="cropWidth" type="number" min="1" max="100" class="field w-full" /></FieldRow>
+                <FieldRow label="裁剪高度"><input v-model.number="cropHeight" type="number" min="1" max="100" class="field w-full" /></FieldRow>
+              </div>
+              <p class="text-[11px] text-fg-3 leading-snug">四个值都是相对每页的百分比；只调整可见裁剪框，不会把页面转成图片。</p>
+            </template>
 
             <template v-if="operation === 'watermark'">
               <FieldRow label="水印文字">
