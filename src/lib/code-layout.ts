@@ -13,6 +13,17 @@ export interface CodeCapturePageEstimate {
   bodyHeight: number
 }
 
+/** Returns the exact source represented by the requested preview pages.
+ * Invalid and duplicate indexes are ignored so keyboard/context-menu actions
+ * cannot accidentally add blank pages or repeat source text. */
+export function joinCodePages(pages: readonly string[], indexes: readonly number[]) {
+  const seen = new Set<number>()
+  return indexes
+    .filter((index) => Number.isInteger(index) && index >= 0 && index < pages.length && !seen.has(index) && seen.add(index))
+    .map((index) => pages[index])
+    .join('\n')
+}
+
 const CODE_CAPTURE_WIDTH = 720
 const CODE_CAPTURE_HORIZONTAL_PADDING = 60
 const CODE_CAPTURE_LINE_NUMBER_WIDTH = 59

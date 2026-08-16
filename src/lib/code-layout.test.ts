@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateCodeLayout, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages } from './code-layout'
+import { calculateCodeLayout, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages, joinCodePages } from './code-layout'
 
 describe('calculateCodeLayout', () => {
   it('keeps an empty snippet exportable as one blank page', () => {
@@ -43,5 +43,12 @@ describe('calculateCodeLayout', () => {
     expect(codeLongImageFileNames(1)).toEqual(['code-long.png'])
     expect(codeLongImageFileNames(3)).toEqual(['code-long-01.png', 'code-long-02.png', 'code-long-03.png'])
     expect(codeLongImageFileNames(0)).toEqual(['code-long.png'])
+  })
+
+  it('copies only exact source pages without preview chrome or duplicate separators', () => {
+    const pages = ['const first = 1', 'const second = 2\n// keep this slash']
+    expect(joinCodePages(pages, [0])).toBe('const first = 1')
+    expect(joinCodePages(pages, [0, 1])).toBe('const first = 1\nconst second = 2\n// keep this slash')
+    expect(joinCodePages(pages, [1, 1, -1, 8])).toBe('const second = 2\n// keep this slash')
   })
 })

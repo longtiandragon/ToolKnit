@@ -1,5 +1,6 @@
 <script setup lang="ts">
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
+  codeText?: string
   codeHtml: string
   lineCount: number
   startLine: number
@@ -11,11 +12,17 @@ withDefaults(defineProps<{
   theme: 'midnight' | 'forest' | 'paper'
   wrapLongLines?: boolean
   continuousPosition?: 'single' | 'start' | 'middle' | 'end'
-}>(), { continuousPosition: 'single' })
+}>(), { codeText: '', continuousPosition: 'single' })
+
+function copyExactCode(event: ClipboardEvent) {
+  if (!event.clipboardData || !props.codeText) return
+  event.preventDefault()
+  event.clipboardData.setData('text/plain', props.codeText)
+}
 </script>
 
 <template>
-  <article class="codesnap-card" :class="[`codesnap-${theme}`, `codesnap-continuous-${continuousPosition}`, { 'codesnap-wrap-lines': wrapLongLines }]">
+  <article class="codesnap-card" :class="[`codesnap-${theme}`, `codesnap-continuous-${continuousPosition}`, { 'codesnap-wrap-lines': wrapLongLines }]" @copy="copyExactCode">
     <header v-if="continuousPosition === 'single' || continuousPosition === 'start'" class="codesnap-titlebar">
       <span class="mac-controls" aria-hidden="true"><i></i><i></i><i></i></span>
     </header>

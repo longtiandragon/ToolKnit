@@ -21,9 +21,10 @@ const props = withDefaults(defineProps<{
   placeholder?: string
   debounceMs?: number
   focusOnMount?: boolean
+  pasteMode?: 'rich' | 'plain'
   searchRequest?: number
   scrollTarget?: { line: number; query?: string; revision: number }
-}>(), { ariaLabel: '文本编辑器', placeholder: '', debounceMs: 120, focusOnMount: false, searchRequest: 0, scrollTarget: undefined })
+}>(), { ariaLabel: '文本编辑器', placeholder: '', debounceMs: 120, focusOnMount: false, pasteMode: 'rich', searchRequest: 0, scrollTarget: undefined })
 
 const emit = defineEmits<{
   'update:modelValue': [value: string, documentId?: string]
@@ -282,6 +283,13 @@ function handlePaste(event: ClipboardEvent) {
     event.stopPropagation()
     emit('paste-image')
     return true
+  }
+  if (props.pasteMode === 'plain') {
+    const text = event.clipboardData?.getData('text/plain')
+    if (text === undefined || text === '') return false
+    event.preventDefault()
+    event.stopPropagation()
+    return insertText(text)
   }
   const html = event.clipboardData?.getData('text/html') ?? ''
   if (!html) return false

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { toBlob } from 'html-to-image'
-import { calculateCodeLayout, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages, type CodeLayout } from '@/lib/code-layout'
+import { calculateCodeLayout, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages, joinCodePages, type CodeLayout } from '@/lib/code-layout'
 import { getBoundedCacheValue, setBoundedCacheValue } from '@/lib/bounded-lru-cache'
 import { codeLanguages, detectCodeLanguage, highlightCode, type CodeLanguage } from '@/lib/code-highlight'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
@@ -110,6 +110,17 @@ const copyLabel = computed(() => selectedPageIndexes.value.length > 1 ? `复制�
 const copyBusyLabel = computed(() => copyProgress.value.total > 1
   ? copyPreparing.value ? `首次生成 ${copyProgress.value.current}/${copyProgress.value.total}` : '正在复制…'
   : '正在复制…')
+
+async function copyCurrentCode() {
+  await syncRenderedCode()
+  const text = joinCodePages(pages.value, [activePage.value])
+  try {
+    await navigator.clipboard.writeText(text)
+    ui.toast('代码已复制', `第 ${activePage.value + 1} 页，保持原始换行。`, 'success')
+  } catch (error) {
+    ui.toast('复制代码失败', error instanceof Error ? error.message : '系统剪贴板不可用。', 'error')
+  }
+}
 const longProgressPercent = computed(() => Math.round(longProgress.value.current / Math.max(1, longProgress.value.total) * 100))
 const longProgressLabel = computed(() => longProgress.value.phase === 'render'
   ? `步骤 1/3 · 生成代码段 ${longProgress.value.current}/${longProgress.value.total}`
@@ -945,7 +956,7 @@ async function exportPdf() {
             title="拖入代码文件，自动识别语言"
             class="shrink-0 rounded-none! border-0! border-b! border-line!"
           />
-          <LargeTextEditor ref="codeEditor" v-model="code" class="flex-1 min-h-0" aria-label="代码编辑器" placeholder="在这里粘贴或输入代码…" @blur="flushCodeDraft" />
+          <LargeTextEditor ref="codeEditor" v-model="code" paste-mode="plain" class="flex-1 min-h-0" aria-label="代码编辑器" placeholder="在这里粘贴或输入代码…" @blur="flushCodeDraft" />
         </section>
 
         <!-- ── Preview ────────────────────────────────────────────────────
@@ -958,7 +969,9 @@ async function exportPdf() {
             <span class="row gap-2 text-[11px] text-fg-3">
               <span>2× 高清</span>
               <i class="w-px h-3 bg-line" aria-hidden="true" />
-              <span>右键图片可复制</span>
+              <button type="button" class="tap row gap-1 hover:text-fg" title="复制当前页原始代码，不包含行号和页脚" @click="copyCurrentCode">
+                <AppIcon name="clipboard" :size="12" />复制代码
+              </button>
             </span>
           </header>
 
@@ -969,6 +982,7 @@ async function exportPdf() {
               aria-haspopup="menu"
               :aria-expanded="contextMenu.open"
               aria-label="代码图片预览；右键或菜单键打开操作"
+              :code-text="pages[activePage] ?? ''"
               :code-html="highlightedPage(activePage)"
               :line-count="pageLineCount(activePage)"
               :start-line="activePage * linesPerPage + 1"
@@ -1094,10 +1108,10 @@ async function exportPdf() {
     </Teleport>
 
     <div ref="captureHost" class="codesnap-capture-host" aria-hidden="true">
-      <div class="codesnap-export-frame" data-export-frame><CodeSnapCard :code-html="highlightedPage(capturePageIndex)" :line-count="pageLineCount(capturePageIndex)" :start-line="capturePageIndex * linesPerPage + 1" :page-number="capturePageIndex + 1" :total-pages="pages.length" :font-size="fontSize" :show-line-numbers="showLineNumbers" :watermark="byline" :theme="theme" :wrap-long-lines="wrapLongLines"/></div>
+      <div class="codesnap-export-frame" data-export-frame><CodeSnapCard :code-text="pages[capturePageIndex] ?? ''" :code-html="highlightedPage(capturePageIndex)" :line-count="pageLineCount(capturePageIndex)" :start-line="capturePageIndex * linesPerPage + 1" :page-number="capturePageIndex + 1" :total-pages="pages.length" :font-size="fontSize" :show-line-numbers="showLineNumbers" :watermark="byline" :theme="theme" :wrap-long-lines="wrapLongLines"/></div>
     </div>
     <div ref="longCaptureHost" class="codesnap-capture-host" aria-hidden="true">
-      <div v-for="(pageIndex, position) in longCaptureIndexes" :key="pageIndex" class="codesnap-export-frame codesnap-long-export-frame" data-long-export-frame><CodeSnapCard :code-html="highlightedPage(pageIndex)" :line-count="pageLineCount(pageIndex)" :start-line="pageIndex * linesPerPage + 1" :page-number="1" :total-pages="1" :font-size="fontSize" :show-line-numbers="showLineNumbers" :watermark="byline" :theme="theme" :wrap-long-lines="wrapLongLines" :continuous-position="longCaptureIndexes.length === 1 ? 'single' : position === 0 ? 'start' : position === longCaptureIndexes.length - 1 ? 'end' : 'middle'"/></div>
+      <div v-for="(pageIndex, position) in longCaptureIndexes" :key="pageIndex" class="codesnap-export-frame codesnap-long-export-frame" data-long-export-frame><CodeSnapCard :code-text="pages[pageIndex] ?? ''" :code-html="highlightedPage(pageIndex)" :line-count="pageLineCount(pageIndex)" :start-line="pageIndex * linesPerPage + 1" :page-number="1" :total-pages="1" :font-size="fontSize" :show-line-numbers="showLineNumbers" :watermark="byline" :theme="theme" :wrap-long-lines="wrapLongLines" :continuous-position="longCaptureIndexes.length === 1 ? 'single' : position === 0 ? 'start' : position === longCaptureIndexes.length - 1 ? 'end' : 'middle'"/></div>
     </div>
   </div>
 </template>
