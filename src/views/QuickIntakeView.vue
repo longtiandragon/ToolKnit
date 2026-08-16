@@ -54,6 +54,8 @@ const kindMeta: Record<IntakeKind, { label: string; description: string; icon: s
   image: { label: '识别为图片', description: '可以裁剪、压缩、标注或转换格式', icon: 'file-image' },
   code: { label: '识别为代码', description: '可以制作分享图、保存片段或交给 AI 解释', icon: 'terminal' },
   json: { label: '识别为 JSON', description: '可以校验、格式化或提取结构信息', icon: 'json' },
+  jwt: { label: '识别为 JWT', description: '只解码 Header 与 Payload，不验证签名', icon: 'shield' },
+  base64: { label: '识别为 Base64', description: '可以解码文本，或查看是否是图片等二进制内容', icon: 'binary' },
   url: { label: '识别为网页链接', description: '可以解析编码、保存笔记或生成摘要', icon: 'link' },
   text: { label: '识别为文本', description: '可以整理成笔记、清理排版或生成摘要', icon: 'file-text' },
   mixed: { label: '识别为混合文件', description: '适合统一归档、批量命名或检查重复项', icon: 'archive' },
@@ -113,6 +115,16 @@ const actions = computed<IntakeAction[]>(() => {
     { id: 'snippet', title: '保存为常用片段', description: '固定到本地剪贴板，随时复用', icon: 'clipboard' },
     { id: 'note', title: '保存为笔记', description: '保留原始 JSON 和 Markdown 说明', icon: 'book' },
     { id: 'ai-extract', title: 'AI 提取结构', description: '发送前仍可确认具体内容', icon: 'sparkle', to: { path: '/ai', query: { action: 'extract' } } }
+  ]
+  if (kind.value === 'jwt') return [
+    { id: 'jwt', title: '解析 JWT', description: '本地解码 Header、Payload 与过期时间，不验证签名', icon: 'shield', to: { path: '/developer-tools', query: { tool: 'jwt' } }, primary: true },
+    { id: 'snippet', title: '保存为常用片段', description: '固定到本地剪贴板，随时复用', icon: 'clipboard' },
+    { id: 'note', title: '保存为笔记', description: '保留原始令牌和本地说明', icon: 'book' }
+  ]
+  if (kind.value === 'base64') return [
+    { id: 'base64', title: '打开 Base64 工具', description: '本地解码并识别可读文本或图片数据', icon: 'binary', to: { path: '/developer-tools', query: { tool: 'base64' } }, primary: true },
+    { id: 'snippet', title: '保存为常用片段', description: '固定到本地剪贴板，随时复用', icon: 'clipboard' },
+    { id: 'note', title: '保存为笔记', description: '保留原始编码内容和说明', icon: 'book' }
   ]
   if (kind.value === 'code') return [
     { id: 'code-image', title: '生成代码分享图', description: '自动高亮并按行分页', icon: 'terminal', to: { path: '/code-image' }, primary: true },

@@ -10,6 +10,8 @@ describe('universal intake detection', () => {
 
   it('detects structured pasted content', () => {
     expect(detectIntake([], '{"ok":true}')).toBe('json')
+    expect(detectIntake([], 'eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjMifQ.unsigned')).toBe('jwt')
+    expect(detectIntake([], 'SGVsbG8sIEtuaXRzcGFjZSE=')).toBe('base64')
     expect(detectIntake([], 'https://example.com/path?q=1')).toBe('url')
     expect(detectIntake([], 'const answer = 42;')).toBe('code')
     expect(detectIntake([], '今天整理课程笔记')).toBe('text')
