@@ -1,3 +1,5 @@
+import { JSON_SCHEMA, dump, load } from 'js-yaml'
+
 export type DiffKind = 'same' | 'added' | 'removed'
 
 export interface DiffLine {
@@ -42,6 +44,17 @@ export interface JwtResult {
   signature: string
   expiresAt?: string
   expired?: boolean
+}
+
+export type JsonYamlDirection = 'json-to-yaml' | 'yaml-to-json'
+export type CsvJsonDirection = 'csv-to-json' | 'json-to-csv'
+
+const STRUCTURED_TEXT_MAX_BYTES = 2 * 1024 * 1024
+
+function assertStructuredTextSize(value: string) {
+  if (new TextEncoder().encode(value).byteLength > STRUCTURED_TEXT_MAX_BYTES) {
+    throw new Error('结构化文本超过 2 MB，请先拆分后再转换。')
+  }
 }
 
 export function encodeBase64(value: string) {
@@ -94,6 +107,100 @@ export function transformJson(value: string, compact = false) {
   } catch (reason) {
     const detail = reason instanceof Error ? reason.message : '语法错误'
     throw new Error(`JSON 解析失败：${detail}`)
+  }
+}
+
+export function transformJsonYaml(value: string, direction: JsonYamlDirection) {
+  if (!value.trim()) throw new Error('请输入 JSON 或 YAML 内容。')
+  assertStructuredTextSize(value)
+  try {
+    if (direction === 'json-to-yaml') {
+      return dump(JSON.parse(value), { noRefs: true, lineWidth: -1, sortKeys: false })
+    }
+    const parsed = load(value, { schema: JSON_SCHEMA })
+    if (parsed === undefined) throw new Error('YAML 内容为空。')
+    return JSON.stringify(parsed, null, 2)
+  } catch (reason) {
+    const detail = reason instanceof Error ? reason.message : '语法错误'
+    throw new Error(`${direction === 'json-to-yaml' ? 'JSON' : 'YAML'} 解析失败：${detail}`)
+  }
+}
+
+function parseCsvRows(value: string) {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let quoted = false
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (quoted) {
+      if (character === '"' && value[index + 1] === '"') {
+        cell += '"'
+        index += 1
+      } else if (character === '"') {
+        quoted = false
+      } else {
+        cell += character
+      }
+    } else if (character === '"' && cell === '') {
+      quoted = true
+    } else if (character === ',') {
+      row.push(cell)
+      cell = ''
+    } else if (character === '\n' || character === '\r') {
+      row.push(cell)
+      if (row.some((item) => item.length > 0) || rows.length === 0) rows.push(row)
+      row = []
+      cell = ''
+      if (character === '\r' && value[index + 1] === '\n') index += 1
+    } else {
+      cell += character
+    }
+  }
+  if (quoted) throw new Error('CSV 引号未闭合，请检查字段内容。')
+  if (cell || row.length) row.push(cell)
+  if (row.length && (row.some((item) => item.length > 0) || rows.length === 0)) rows.push(row)
+  if (!rows.length) throw new Error('CSV 内容为空。')
+  if (rows.length > 10_001) throw new Error('CSV 最多支持 10000 行数据。')
+  return rows
+}
+
+function uniqueCsvHeaders(values: string[]) {
+  const seen = new Map<string, number>()
+  return values.map((value, index) => {
+    const base = value.trim() || `column_${index + 1}`
+    const count = (seen.get(base) ?? 0) + 1
+    seen.set(base, count)
+    return count === 1 ? base : `${base}_${count}`
+  })
+}
+
+function csvCell(value: unknown) {
+  if (value === null || value === undefined) return ''
+  const text = typeof value === 'object' ? JSON.stringify(value) : String(value)
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+export function transformCsvJson(value: string, direction: CsvJsonDirection) {
+  if (!value.trim()) throw new Error('请输入 CSV 或 JSON 内容。')
+  assertStructuredTextSize(value)
+  try {
+    if (direction === 'csv-to-json') {
+      const rows = parseCsvRows(value)
+      const headers = uniqueCsvHeaders(rows[0])
+      const records = rows.slice(1).map((values) => Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ''])))
+      return JSON.stringify(records, null, 2)
+    }
+    const parsed: unknown = JSON.parse(value)
+    if (!Array.isArray(parsed) || parsed.some((item) => item === null || typeof item !== 'object' || Array.isArray(item))) {
+      throw new Error('JSON → CSV 需要一个对象数组，例如 [{"name":"Ada"}]。')
+    }
+    const headers = [...new Set(parsed.flatMap((item) => Object.keys(item as Record<string, unknown>)))]
+    if (!headers.length) throw new Error('对象数组没有可导出的字段。')
+    return [headers.map(csvCell).join(','), ...parsed.map((item) => headers.map((header) => csvCell((item as Record<string, unknown>)[header])).join(','))].join('\r\n') + '\r\n'
+  } catch (reason) {
+    const detail = reason instanceof Error ? reason.message : '语法错误'
+    throw new Error(`${direction === 'csv-to-json' ? 'CSV' : 'JSON'} 解析失败：${detail}`)
   }
 }
 

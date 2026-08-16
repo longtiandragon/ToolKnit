@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, generateUuids, sha256, testRegex, transformJson, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
+import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, generateUuids, sha256, testRegex, transformCsvJson, transformJson, transformJsonYaml, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
 import { decodeQrImage, generateQrCode } from '@/lib/qr-tools'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import AppIcon from '@/components/AppIcon.vue'
@@ -9,7 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import FieldRow from '@/components/FieldRow.vue'
 import { useWorkbenchStore } from '@/stores/workbench'
 
-type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'url' | 'json' | 'jwt' | 'hash' | 'uuid' | 'timestamp' | 'radix' | 'regex' | 'diff'
+type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'url' | 'json' | 'json-yaml' | 'csv-json' | 'jwt' | 'hash' | 'uuid' | 'timestamp' | 'radix' | 'regex' | 'diff'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,6 +20,8 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
   { id: 'base64', icon: 'code', title: 'Base64', description: 'Unicode 文本编码与解码' },
   { id: 'url', icon: 'link', title: 'URL 编解码', description: '处理查询参数与特殊字符' },
   { id: 'json', icon: 'json', title: 'JSON', description: '格式化、压缩与语法检查' },
+  { id: 'json-yaml', icon: 'file-code', title: 'JSON ↔ YAML', description: '在 JSON 与 YAML 之间安全转换' },
+  { id: 'csv-json', icon: 'table', title: 'CSV ↔ JSON', description: '转换表格数据并保留引号字段' },
   { id: 'jwt', icon: 'shield', title: 'JWT 查看器', description: '读取 Header 与 Payload' },
   { id: 'hash', icon: 'hash', title: 'SHA-256', description: '生成文本内容指纹' },
   { id: 'uuid', icon: 'fingerprint', title: 'UUID', description: '批量生成 UUID v4' },
@@ -78,7 +80,7 @@ const hasOutput = computed(() => processed.value)
  * amount of work that should not fire while you are still choosing.
  */
 const LIVE_TOOLS = new Set<DeveloperToolId>([
-  'base64', 'url', 'json', 'jwt', 'hash', 'timestamp', 'radix', 'regex', 'diff', 'datecalc',
+  'base64', 'url', 'json', 'json-yaml', 'csv-json', 'jwt', 'hash', 'timestamp', 'radix', 'regex', 'diff', 'datecalc',
 ])
 const isLive = computed(() => LIVE_TOOLS.has(tool.value) || (tool.value === 'qrcode' && qrMode.value === 'generate'))
 const hasInput = computed(() => {
@@ -95,9 +97,15 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
   switch (tool.value) {
     case 'base64':
     case 'url':
+    case 'json-yaml':
+    case 'csv-json':
       return {
         label: '转换方向',
-        options: [{ id: 'encode', label: '编码' }, { id: 'decode', label: '解码' }],
+        options: tool.value === 'json-yaml'
+          ? [{ id: 'encode', label: 'JSON → YAML' }, { id: 'decode', label: 'YAML → JSON' }]
+          : tool.value === 'csv-json'
+            ? [{ id: 'encode', label: 'CSV → JSON' }, { id: 'decode', label: 'JSON → CSV' }]
+            : [{ id: 'encode', label: '编码' }, { id: 'decode', label: '解码' }],
         value: direction.value,
         set: (id) => { direction.value = id as 'encode' | 'decode' },
       }
@@ -137,6 +145,8 @@ const emptyResultHint = computed(() => {
     case 'qrcode': return qrMode.value === 'generate' ? '在左侧输入网址或文字，二维码会即时生成。' : '选择一张含二维码的图片，然后点击识别。'
     case 'regex': return '先写正则表达式，再粘贴待匹配的文本。'
     case 'diff': return '左右两个输入框都填上内容，差异会逐行标出。'
+    case 'json-yaml': return direction.value === 'encode' ? '粘贴 JSON，结果会转换为可读 YAML。' : '粘贴 YAML，结果会转换为严格 JSON。'
+    case 'csv-json': return direction.value === 'encode' ? '首行作为字段名，把 CSV 转成对象数组。' : '粘贴对象数组，把 JSON 转成可直接保存的 CSV。'
     default: return '在左侧输入内容，结果会随输入即时更新。'
   }
 })
@@ -184,6 +194,8 @@ async function run() {
     if (tool.value === 'base64') output.value = direction.value === 'encode' ? encodeBase64(input.value) : decodeBase64(input.value)
     else if (tool.value === 'url') output.value = direction.value === 'encode' ? encodeUrl(input.value) : decodeUrl(input.value)
     else if (tool.value === 'json') output.value = transformJson(input.value, jsonCompact.value)
+    else if (tool.value === 'json-yaml') output.value = transformJsonYaml(input.value, direction.value === 'encode' ? 'json-to-yaml' : 'yaml-to-json')
+    else if (tool.value === 'csv-json') output.value = transformCsvJson(input.value, direction.value === 'encode' ? 'csv-to-json' : 'json-to-csv')
     else if (tool.value === 'jwt') output.value = JSON.stringify(decodeJwt(input.value), null, 2)
     else if (tool.value === 'hash') output.value = await sha256(input.value)
     else if (tool.value === 'uuid') output.value = generateUuids(uuidCount.value)
@@ -391,8 +403,10 @@ onBeforeUnmount(() => {
               : tool === 'timestamp' ? '时间戳或日期'
                 : tool === 'regex' ? '待匹配文本'
                   : tool === 'jwt' ? 'JWT Token'
-                    : tool === 'radix' ? '待转换整数'
-                      : tool === 'qrcode' ? (qrMode === 'generate' ? '二维码内容' : '二维码图片')
+              : tool === 'radix' ? '待转换整数'
+                : tool === 'json-yaml' ? (direction === 'encode' ? 'JSON 内容' : 'YAML 内容')
+                  : tool === 'csv-json' ? (direction === 'encode' ? 'CSV 内容' : 'JSON 对象数组')
+                    : tool === 'qrcode' ? (qrMode === 'generate' ? '二维码内容' : '二维码图片')
                         : tool === 'datecalc' ? '日期' : tool === 'uuid' ? '生成设置' : '输入' }}
           </p>
           <span v-if="input && tool !== 'uuid' && tool !== 'datecalc'" class="text-[11px] text-fg-3 tabular-nums">
@@ -477,10 +491,13 @@ onBeforeUnmount(() => {
             spellcheck="false"
             class="code-area"
             :placeholder="tool === 'timestamp' ? '1723046400 或 2026-08-08T12:00:00+08:00'
-              : tool === 'json' ? '粘贴 JSON 内容…'
-                : tool === 'jwt' ? '粘贴 eyJ… 格式的 Token'
-                  : tool === 'radix' ? '65535 或 FF_FF'
-                    : tool === 'qrcode' ? '网址、文字、Wi-Fi 信息或联系方式…'
+              : tool === 'json' || (tool === 'json-yaml' && direction === 'encode') ? '粘贴 JSON 内容…'
+                : tool === 'json-yaml' ? '粘贴 YAML 内容…'
+                  : tool === 'jwt' ? '粘贴 eyJ… 格式的 Token'
+                    : tool === 'radix' ? '65535 或 FF_FF'
+                      : tool === 'csv-json' && direction === 'encode' ? 'name,age\nAda,36\n'
+                        : tool === 'csv-json' ? '[{name: Ada, age: 36}]'
+                          : tool === 'qrcode' ? '网址、文字、Wi-Fi 信息或联系方式…'
                       : '粘贴或输入内容…'"
           />
 
@@ -529,7 +546,7 @@ onBeforeUnmount(() => {
         </div>
 
         <textarea
-          v-else-if="hasOutput && ['base64', 'url', 'json', 'jwt', 'hash', 'uuid', 'radix'].includes(tool)"
+          v-else-if="hasOutput && ['base64', 'url', 'json', 'json-yaml', 'csv-json', 'jwt', 'hash', 'uuid', 'radix'].includes(tool)"
           :value="output"
           readonly
           aria-label="处理结果"

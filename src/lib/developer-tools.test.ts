@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, generateUuids, sha256, testRegex, transformJson } from './developer-tools'
+import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, generateUuids, sha256, testRegex, transformCsvJson, transformJson, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -90,6 +90,19 @@ describe('structured data utilities', () => {
 
   it('reports invalid JSON clearly', () => {
     expect(() => transformJson('{broken}')).toThrow('JSON 解析失败')
+  })
+
+  it('converts JSON and YAML with the safe JSON schema', () => {
+    const yaml = transformJsonYaml('{"name":"工具箱","enabled":true}', 'json-to-yaml')
+    expect(yaml).toContain('name: 工具箱')
+    expect(transformJsonYaml(yaml, 'yaml-to-json')).toBe('{\n  "name": "工具箱",\n  "enabled": true\n}')
+    expect(() => transformJsonYaml('!!js/function >\n  () => 1', 'yaml-to-json')).toThrow('YAML 解析失败')
+  })
+
+  it('round-trips CSV with quoted commas and duplicate headers', () => {
+    const json = transformCsvJson('name,name,note\nAda,Ada,"hello, world"\n', 'csv-to-json')
+    expect(JSON.parse(json)).toEqual([{ name: 'Ada', name_2: 'Ada', note: 'hello, world' }])
+    expect(transformCsvJson(json, 'json-to-csv')).toContain('"hello, world"')
   })
 
   it('decodes JWT claims without verifying the signature', () => {
