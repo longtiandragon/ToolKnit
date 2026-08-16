@@ -14,6 +14,7 @@ pub const MAX_SCAN_FILES: usize = 40_000;
 pub const MAX_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub const DEFAULT_LARGE_FILE_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_COMPARE_ITEMS: usize = 20_000;
+pub const MAX_MANIFEST_FILES: usize = 40_000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,6 +108,29 @@ pub struct DirectoryCompareReport {
     pub truncated: bool,
     pub warnings: Vec<String>,
     pub items: Vec<DirectoryCompareItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileManifestEntry {
+    pub relative_path: String,
+    pub name: String,
+    pub size: u64,
+    pub sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileManifestReport {
+    pub root: String,
+    pub scanned_entries: usize,
+    pub scanned_files: usize,
+    pub total_bytes: u64,
+    pub hash_bytes: u64,
+    pub hashed_files: usize,
+    pub truncated: bool,
+    pub warnings: Vec<String>,
+    pub files: Vec<FileManifestEntry>,
 }
 
 #[derive(Debug)]
@@ -349,6 +373,93 @@ fn compare_folders(left_root: &Path, right_root: &Path) -> Result<DirectoryCompa
         truncated,
         warnings,
         items,
+    })
+}
+
+fn create_manifest(root: &Path, include_hash: bool) -> Result<FileManifestReport> {
+    let mut scanned_entries = 0_usize;
+    let mut scanned_files = 0_usize;
+    let mut total_bytes = 0_u64;
+    let mut hash_bytes = 0_u64;
+    let mut hashed_files = 0_usize;
+    let mut truncated = false;
+    let mut warnings = Vec::new();
+    let mut files = Vec::new();
+
+    for entry in WalkDir::new(root).follow_links(false).into_iter() {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                warnings.push(format!("部分路径无法读取：{error}"));
+                continue;
+            }
+        };
+        scanned_entries += 1;
+        if scanned_entries > MAX_SCAN_ENTRIES || scanned_files >= MAX_MANIFEST_FILES {
+            truncated = true;
+            warnings.push(format!(
+                "校验清单已达到上限（最多 {MAX_SCAN_ENTRIES} 个条目、{MAX_MANIFEST_FILES} 个文件）。"
+            ));
+            break;
+        }
+        let path = entry.path().to_path_buf();
+        if entry.file_type().is_symlink() {
+            warnings.push(format!("已跳过符号链接：{}", relative_label(root, &path)));
+            continue;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                warnings.push(format!("无法读取 {}：{error}", relative_label(root, &path)));
+                continue;
+            }
+        };
+        let size = metadata.len();
+        scanned_files += 1;
+        total_bytes = total_bytes.saturating_add(size);
+        let relative_path = relative_label(root, &path);
+        let mut sha256 = None;
+        if include_hash {
+            if hash_bytes.saturating_add(size) > MAX_HASH_BYTES {
+                truncated = true;
+                warnings.push(format!(
+                    "未计算 {} 的 SHA-256：累计哈希内容已达到 {} 字节上限。",
+                    relative_path, MAX_HASH_BYTES
+                ));
+            } else {
+                match sha256_file(&path) {
+                    Ok(hash) => {
+                        hash_bytes = hash_bytes.saturating_add(size);
+                        hashed_files += 1;
+                        sha256 = Some(hash);
+                    }
+                    Err(error) => {
+                        warnings.push(format!("无法计算 {} 的哈希：{error}", relative_path))
+                    }
+                }
+            }
+        }
+        files.push(FileManifestEntry {
+            relative_path,
+            name: file_name(&path),
+            size,
+            sha256,
+        });
+    }
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(FileManifestReport {
+        root: root.to_string_lossy().into_owned(),
+        scanned_entries,
+        scanned_files,
+        total_bytes,
+        hash_bytes,
+        hashed_files,
+        truncated,
+        warnings,
+        files,
     })
 }
 
@@ -699,6 +810,15 @@ pub fn compare_directories(
 }
 
 #[tauri::command]
+pub fn create_file_manifest(
+    root: String,
+    include_hash: Option<bool>,
+) -> Result<FileManifestReport, String> {
+    let root = canonical_directory(&root).map_err(|error| error.to_string())?;
+    create_manifest(&root, include_hash.unwrap_or(true)).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn recycle_file_health_paths(root: String, paths: Vec<String>) -> Result<usize, String> {
     let root = canonical_directory(&root).map_err(|error| error.to_string())?;
     if paths.is_empty() {
@@ -782,6 +902,28 @@ mod tests {
         assert_eq!(report.unverified_count, 0);
         fs::remove_dir_all(left_root)?;
         fs::remove_dir_all(right_root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn creates_sorted_manifest_with_optional_hashes() -> Result<()> {
+        let root = temp_root("manifest");
+        fs::create_dir_all(root.join("nested"))?;
+        fs::write(root.join("z.txt"), b"last")?;
+        fs::write(root.join("nested").join("a.txt"), b"first")?;
+        let report = create_manifest(&root, true)?;
+        assert_eq!(report.scanned_files, 2);
+        assert_eq!(report.hashed_files, 2);
+        assert_eq!(report.files[0].relative_path, "nested/a.txt");
+        assert_eq!(
+            report.files[0].sha256.as_deref(),
+            Some("a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e")
+        );
+        assert_eq!(report.files[1].relative_path, "z.txt");
+        let without_hash = create_manifest(&root, false)?;
+        assert_eq!(without_hash.hashed_files, 0);
+        assert!(without_hash.files.iter().all(|file| file.sha256.is_none()));
+        fs::remove_dir_all(root)?;
         Ok(())
     }
 }

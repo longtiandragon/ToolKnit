@@ -5837,6 +5837,7 @@ pub fn run() {
             windows_ocr::recognize_image_bytes,
             file_health::scan_file_health,
             file_health::compare_directories,
+            file_health::create_file_manifest,
             file_health::recycle_file_health_paths,
             reveal_in_folder,
             check_github_update,

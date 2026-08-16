@@ -79,6 +79,25 @@ export interface DirectoryCompareReport {
   items: DirectoryCompareItem[]
 }
 
+export interface FileManifestEntry {
+  relativePath: string
+  name: string
+  size: number
+  sha256?: string
+}
+
+export interface FileManifestReport {
+  root: string
+  scannedEntries: number
+  scannedFiles: number
+  totalBytes: number
+  hashBytes: number
+  hashedFiles: number
+  truncated: boolean
+  warnings: string[]
+  files: FileManifestEntry[]
+}
+
 export async function scanDesktopFileHealth(root: string, largeFileBytes?: number) {
   if (!isDesktop()) throw new Error('文件健康扫描需要桌面端文件权限。')
   return invoke<FileHealthReport>('scan_file_health', { root, largeFileBytes })
@@ -87,6 +106,11 @@ export async function scanDesktopFileHealth(root: string, largeFileBytes?: numbe
 export async function compareDesktopDirectories(leftRoot: string, rightRoot: string) {
   if (!isDesktop()) throw new Error('目录对比需要桌面端文件权限。')
   return invoke<DirectoryCompareReport>('compare_directories', { leftRoot, rightRoot })
+}
+
+export async function createDesktopFileManifest(root: string, includeHash = true) {
+  if (!isDesktop()) throw new Error('文件清单需要桌面端文件权限。')
+  return invoke<FileManifestReport>('create_file_manifest', { root, includeHash })
 }
 
 export async function recycleDesktopFileHealthPaths(root: string, paths: string[]) {

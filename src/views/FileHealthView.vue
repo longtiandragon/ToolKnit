@@ -7,7 +7,7 @@ import ToolLayout from '@/components/ToolLayout.vue'
 import FieldRow from '@/components/FieldRow.vue'
 import { isDesktop } from '@/lib/native'
 import { exportOutput } from '@/lib/output'
-import { compareDesktopDirectories, recycleDesktopFileHealthPaths, scanDesktopFileHealth, type DirectoryCompareReport, type DirectoryCompareStatus, type FileHealthDuplicateGroup, type FileHealthFinding, type FileHealthPath, type FileHealthReport } from '@/lib/file-health-native'
+import { compareDesktopDirectories, createDesktopFileManifest, recycleDesktopFileHealthPaths, scanDesktopFileHealth, type DirectoryCompareReport, type DirectoryCompareStatus, type FileHealthDuplicateGroup, type FileHealthFinding, type FileHealthPath, type FileHealthReport } from '@/lib/file-health-native'
 import { useUiStore } from '@/stores/ui'
 import { useWorkbenchStore } from '@/stores/workbench'
 
@@ -209,6 +209,24 @@ async function exportReport() {
   }
 }
 
+async function exportManifest() {
+  if (!root.value || busy.value) return
+  busy.value = true
+  message.value = '正在生成文件清单并计算 SHA-256…'
+  try {
+    const manifest = await createDesktopFileManifest(root.value, true)
+    const name = `knitspace-file-manifest-${new Date().toISOString().slice(0, 10)}.json`
+    const output = await exportOutput(store.settings.outputDirectory, name, JSON.stringify(manifest, null, 2), 'application/json;charset=utf-8')
+    message.value = manifest.truncated ? '校验清单已导出，但部分文件因安全上限未计算哈希。' : `校验清单已导出：${manifest.scannedFiles} 个文件。`
+    ui.toast('校验清单已导出', output.path || output.name, manifest.truncated ? 'warning' : 'success')
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '无法生成文件清单。'
+    ui.toast('生成校验清单失败', message.value, 'error')
+  } finally {
+    busy.value = false
+  }
+}
+
 async function exportCompareReport() {
   if (!compareReport.value || busy.value) return
   const name = `knitspace-directory-compare-${new Date().toISOString().slice(0, 10)}.json`
@@ -282,7 +300,7 @@ function directoryLabel(path: string) {
         <section class="panel p-3 stack gap-3">
           <div class="row-between gap-3">
             <div class="stack gap-0.5 min-w-0"><p class="eyebrow">扫描结果</p><p class="text-[12px] text-fg-2 truncate" :title="report.root">{{ report.root }}</p></div>
-            <div class="row gap-1.5 shrink-0"><button class="btn-default btn-sm" :disabled="busy" @click="exportReport"><AppIcon name="download" :size="14" />导出报告</button><button class="btn-default btn-sm" :disabled="busy" @click="scan"><AppIcon name="refresh" :size="14" />重新扫描</button></div>
+            <div class="row gap-1.5 shrink-0"><button class="btn-default btn-sm" :disabled="busy" @click="exportReport"><AppIcon name="download" :size="14" />导出报告</button><button class="btn-default btn-sm" :disabled="busy || !desktop" @click="exportManifest"><AppIcon name="hash" :size="14" />校验清单</button><button class="btn-default btn-sm" :disabled="busy" @click="scan"><AppIcon name="refresh" :size="14" />重新扫描</button></div>
           </div>
           <div class="row gap-1.5 flex-wrap" role="tablist" aria-label="问题类型">
             <button v-for="item in filters" :key="item.id" class="h-7 px-2.5 rounded-full text-[11px] transition-colors" :class="filter === item.id ? 'bg-accent-solid text-accent-fg font-medium' : 'text-fg-2 hover:bg-surface-2'" :aria-selected="filter === item.id" role="tab" @click="filter = item.id">{{ item.label }} <span class="tabular-nums opacity-70">{{ report ? item.count(report) : 0 }}</span></button>
