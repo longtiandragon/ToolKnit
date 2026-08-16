@@ -16,7 +16,7 @@ import { isQuickIntakeShortcut } from '@/lib/intake'
 import { readClipboardPayload } from '@/lib/clipboard'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { createAsyncSearchGate } from '@/lib/async-search-gate'
-import { activeWorkspaceChildTarget, searchWorkspaceCommands, workspaceContextActionGroups, workspaceFeatureGroups, workspaceNavGroups as navGroups, type WorkspaceNavAction as NavAction, type WorkspaceNavItem as NavItem } from '@/lib/workspace-navigation'
+import { searchWorkspaceCommands, workspaceContextActionGroups, workspaceFeatureGroups, workspaceNavGroups as navGroups, type WorkspaceNavAction as NavAction, type WorkspaceNavItem as NavItem } from '@/lib/workspace-navigation'
 import { discoverVisualProjects, visualProjectRoute } from '@/lib/visual-project'
 import { favoriteContentIcons, favoriteContentLabels, favoriteContentRoute, resolveFavoriteContent, type FavoriteContentItem } from '@/lib/content-favorites'
 import { resolveRecentContent } from '@/lib/content-recents'
@@ -32,8 +32,6 @@ type VaultMarkdownSurfaceChange=VaultMarkdownNativeChange&{status:'pending'|'upd
 let discardDirtyRecovery: (() => Promise<void>) | undefined
 const commandFeatureGroups=workspaceFeatureGroups()
 const commandFeatureCount=commandFeatureGroups.reduce((count,group)=>count+group.features.length,0)
-const initialSpace=navGroups.flatMap(group=>group.items).find(item=>isNavActive(item.to))??navGroups[0]?.items[0]
-const expandedSpaces=ref(new Set(initialSpace?[initialSpace.to]:[]))
 const activeWorkspace=computed(()=>navGroups.flatMap(group=>group.items).find(item=>isNavActive(item.to))??navGroups[0]?.items[0])
 const workspaceContextGroups=computed(()=>activeWorkspace.value?workspaceContextActionGroups(activeWorkspace.value.to):{primary:[],more:[]})
 const workspaceContextFeatures=computed(()=>workspaceContextGroups.value.primary)
@@ -67,16 +65,13 @@ const vaultBootstrapStages=[
   {id:'sources',label:'接入本地资料',detail:'把图片、PDF 与文件引用交给 Vault 管理。'},
   {id:'pointers',label:'恢复收藏与最近使用',detail:'重建轻量导航入口，不重复读取正文。'},
   {id:'activity',label:'整理学习活动',detail:'载入专注记录、纪念日和操作时间线。'},
+  {id:'processing',label:'恢复处理任务',detail:'从 SQLite 接续有界任务历史，并标记上次未完成的任务。'},
   {id:'clipboard',label:'连接剪贴板历史',detail:'仅载入有界预览，完整内容按需读取。'},
 ] as const
 const vaultBootstrapIndex=computed(()=>Math.max(0,vaultBootstrapStages.findIndex(stage=>stage.id===store.vaultBootstrapStage)))
 const vaultBootstrapCopy=computed(()=>vaultBootstrapStages[vaultBootstrapIndex.value]??vaultBootstrapStages[0])
 function routeMatches(to:string){const target=router.resolve(to);return route.path===target.path&&Object.entries(target.query).every(([key,value])=>String(route.query[key]??'')===String(value))&&(!target.hash||route.hash===target.hash)}
 function isNavActive(to:string){const item=navGroups.flatMap(group=>group.items).find(entry=>entry.to===to);return routeMatches(to)||Boolean(item?.children.some(child=>routeMatches(child.to)))}
-function isChildNavActive(item:NavItem,child:NavAction){return activeWorkspaceChildTarget(item.children,{path:route.path,query:route.query,hash:route.hash})===child.to}
-function isSpaceExpanded(item:NavItem){return expandedSpaces.value.has(item.to)}
-function toggleSpace(item:NavItem){const next=new Set(expandedSpaces.value);if(next.has(item.to))next.delete(item.to);else next.add(item.to);expandedSpaces.value=next}
-function expandActiveSpace(){const active=navGroups.flatMap(group=>group.items).find(item=>isNavActive(item.to));if(active)expandedSpaces.value=new Set([active.to])}
 function openCommand(trigger?:HTMLElement){commandTrigger=trigger??(document.activeElement instanceof HTMLElement?document.activeElement:undefined);window.dispatchEvent(new CustomEvent('knitspace:close-context-menus'));commandBrowseOpen.value=false;commandOpen.value=true;void loadVisualProjectCatalog();nextTick(()=>commandInput.value?.focus())}
 function openFeatureMap(trigger?:HTMLElement){
   if(!commandOpen.value)openCommand(trigger)
@@ -367,7 +362,7 @@ async function openDesktopMarkdownFiles(){
     await routeMarkdownFiles(paths,'系统打开')
   }catch(error){ui.toast('无法接收系统打开的 Markdown',error instanceof Error?error.message:'桌面文件入口暂时不可用。','error')}
 }
-watch(()=>route.fullPath,()=>{routeError.value='';closeCommand();closeShellMenus();expandActiveSpace()})
+watch(()=>route.fullPath,()=>{routeError.value='';closeCommand();closeShellMenus()})
 watch(()=>toolForRoute()?.id,()=>{const tool=toolForRoute();if(tool)store.recordToolUsage(tool.id,router.resolve(tool.to).fullPath)})
 watch(commandQuery,query=>{closeCommandContentContext();closeCommandToolContext();scheduleDocumentSearch(query)})
 onErrorCaptured((error)=>{routeError.value=error instanceof Error?error.message:'页面初始化失败';return false})
@@ -458,7 +453,11 @@ onBeforeUnmount(()=>{store.persist();window.removeEventListener('keydown',handle
     >
       跳到主要内容
     </a>
-    <AppRail @open-command="openCommand" />
+    <AppRail
+      @open-command="openCommand"
+      @open-space-context="openNavContext"
+      @open-space-context-keyboard="openNavContextFromKeyboard"
+    />
 
     <section class="workspace" :class="`workspace--${String(route.name || route.path.slice(1) || 'dashboard').replaceAll('/', '-')}`" @contextmenu="openWorkspaceContext">
       <!-- The rail owns identity and search now, so the top bar carries only

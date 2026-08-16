@@ -1,12 +1,13 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { appRoutes } from '@/routes'
 import { activeWorkspaceChildTarget, searchWorkspaceCommands, workspaceCommandCatalog, workspaceContextActionGroups, workspaceContextActions, workspaceDiscoverablePaths, workspaceFeatureGroups, workspaceNavGroups, workspaceRouteOwners } from './workspace-navigation'
 
 describe('workspace navigation', () => {
-  // The toolbox rail (`AppRail.vue`) owns these directly: the category grid is
-  // parameterised, and `/today` is listed under 工作区. They are outside the
-  // legacy five-space model, so they are excluded rather than left orphaned.
-  const railOwnedPaths = new Set(['/', '/c/:category', '/today'])
+  const rail = readFileSync(new URL('../components/AppRail.vue', import.meta.url), 'utf8')
+  // Category pages are parameterised results inside the toolbox browser rather
+  // than standalone product spaces, so the route itself is not advertised.
+  const indirectToolBrowsePaths = new Set(['/c/:category'])
 
   /* A redirect is an old link kept working, not a page. `/tool-space` is one:
      it used to be a second tool browser and now lands on the toolbox. Asking
@@ -16,7 +17,7 @@ describe('workspace navigation', () => {
 
   it('keeps every implemented user-facing route visible in navigation or Ctrl+K', () => {
     const paths = workspaceDiscoverablePaths()
-    const implementedPaths = renderedRoutes.map(route => route.path).filter(path => !railOwnedPaths.has(path))
+    const implementedPaths = renderedRoutes.map(route => route.path).filter(path => !indirectToolBrowsePaths.has(path))
     expect(implementedPaths.filter(path => !paths.has(path))).toEqual([])
   })
 
@@ -28,13 +29,22 @@ describe('workspace navigation', () => {
 
   it('keeps every feature route owned by a primary space', () => {
     const owners = workspaceRouteOwners()
-    const utilityPaths = new Set(['/settings', ...railOwnedPaths])
+    const utilityPaths = new Set(['/settings', ...indirectToolBrowsePaths])
     expect(renderedRoutes.map(route => route.path).filter(path => !utilityPaths.has(path) && !owners.has(path))).toEqual([])
     expect(owners.get('/lab')).toEqual(['/'])
   })
 
   it('puts all five spaces in the empty Ctrl+K state', () => {
     expect(searchWorkspaceCommands().map(item => item.label)).toEqual(['今天', '知识库', '创作', '复习', '工具'])
+  })
+
+  it('renders the shared five-space model in the permanent rail', () => {
+    expect(rail).toContain('workspaceNavGroups')
+    expect(rail).toContain('v-for="space in spaces"')
+    expect(rail).toContain('v-for="child in visibleChildren(space)"')
+    expect(rail).toContain("emit('openSpaceContext', $event, space)")
+    expect(rail).toContain("emit('openSpaceContextKeyboard', space")
+    expect(rail).not.toContain('v-for="category in toolCategories"')
   })
 
   it('builds a complete browse map without repeating space overview links', () => {

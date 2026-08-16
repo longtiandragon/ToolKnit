@@ -1,4 +1,5 @@
 import type { ContentFavorite, ContentFavoriteKind, Source, StudyDocument, VocabularyEntry } from '@/types'
+import { vocabularySenseCount } from './vocabulary'
 
 export interface FavoriteContentItem extends ContentFavorite {
   title: string
@@ -51,7 +52,7 @@ export function resolveFavoriteContent(
     .flatMap((favorite) => {
       if (favorite.itemKind === 'word') {
         const entry = vocabularyMap.get(favorite.itemId)
-        return entry ? [{ ...favorite, title: entry.lemma, detail: `${entry.language} · ${entry.senses.length} 个义项`, updatedAt: entry.updatedAt }] : []
+        return entry ? [{ ...favorite, title: entry.lemma, detail: `${entry.language} · ${vocabularySenseCount(entry)} 个义项`, updatedAt: entry.updatedAt }] : []
       }
       if (favorite.itemKind === 'source') {
         const source = sourceMap.get(favorite.itemId)

@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
+import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { toolCategories, findCategory } from '@/lib/toolbox-nav'
-import type { ToolCatalogItem } from '@/lib/tool-catalog'
+import { searchTools, toolCatalog, toolCatalogOwnerLocation, toolWorkflows, type ToolCatalogItem } from '@/lib/tool-catalog'
+import { useUiStore } from '@/stores/ui'
 import { useWorkbenchStore } from '@/stores/workbench'
 
 /**
@@ -19,8 +21,13 @@ import { useWorkbenchStore } from '@/stores/workbench'
  * again.
  */
 const route = useRoute()
+const router = useRouter()
 const store = useWorkbenchStore()
+const ui = useUiStore()
 const query = ref('')
+const toolMenu = ref<{ item: ToolCatalogItem; x: number; y: number }>()
+const toolMenuElement = ref<HTMLElement>()
+let toolMenuTrigger: HTMLElement | undefined
 
 const activeCategory = computed(() =>
   typeof route.params.category === 'string' ? findCategory(route.params.category) : undefined,
@@ -30,14 +37,13 @@ const sections = computed(() => (activeCategory.value ? [activeCategory.value] :
 
 /** Filtering searches titles, descriptions and keywords, then drops empty sections. */
 const filtered = computed(() => {
-  const term = query.value.trim().toLowerCase()
+  const term = query.value.trim()
   if (!term) return sections.value
+  const matched = new Set(searchTools(term, toolCatalog.length).map((tool) => tool.id))
   return sections.value
     .map((section) => ({
       ...section,
-      tools: section.tools.filter((tool) =>
-        [tool.title, tool.description, ...tool.keywords].some((field) => field.toLowerCase().includes(term)),
-      ),
+      tools: section.tools.filter((tool) => matched.has(tool.id)),
     }))
     .filter((section) => section.tools.length)
 })
@@ -70,10 +76,73 @@ const recentTools = computed<ToolCatalogItem[]>(() => {
 
 /** The extra rows only make sense on the unfiltered home view. */
 const showPersonalRows = computed(() => !activeCategory.value && !query.value.trim())
+const workflowRows = computed(() => toolWorkflows.map((workflow) => ({
+  ...workflow,
+  tools: workflow.toolIds.flatMap((id) => toolCatalog.find((tool) => tool.id === id) ?? []),
+})))
+
+function closeToolMenu(restoreFocus = false) {
+  toolMenu.value = undefined
+  if (restoreFocus) void nextTick(() => toolMenuTrigger?.focus({ preventScroll: true }))
+}
+function closeToolMenuFromGlobal() { closeToolMenu() }
+
+function showToolMenu(tool: ToolCatalogItem, x: number, y: number, trigger: HTMLElement) {
+  window.dispatchEvent(new CustomEvent('knitspace:close-context-menus'))
+  toolMenuTrigger = trigger
+  toolMenu.value = { item: tool, ...clampMenuPosition(x, y, { menuWidth: 252, menuHeight: 209, margin: 12 }) }
+  void nextTick(() => toolMenuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus({ preventScroll: true }))
+}
+
+function openToolMenu(event: MouseEvent, tool: ToolCatalogItem) {
+  event.preventDefault()
+  event.stopPropagation()
+  showToolMenu(tool, event.clientX, event.clientY, event.currentTarget as HTMLElement)
+}
+
+function openToolMenuFromKeyboard(event: KeyboardEvent, tool: ToolCatalogItem) {
+  if (!isContextMenuShortcut(event)) return
+  event.preventDefault()
+  event.stopPropagation()
+  const trigger = event.currentTarget as HTMLElement
+  const bounds = trigger.getBoundingClientRect()
+  showToolMenu(tool, bounds.right - 18, bounds.top + 12, trigger)
+}
+
+function handleToolMenuKeydown(event: KeyboardEvent) {
+  const items = [...(toolMenuElement.value?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
+  if (event.key === 'Escape') { event.preventDefault(); closeToolMenu(true); return }
+  const index = nextMenuItemIndex(event.key, items.indexOf(document.activeElement as HTMLButtonElement), items.length)
+  if (index === undefined) return
+  event.preventDefault()
+  items[index]?.focus({ preventScroll: true })
+}
+
+async function runToolMenuAction(action: 'open' | 'favorite' | 'copy-description' | 'browse-tools') {
+  const tool = toolMenu.value?.item
+  if (!tool) return
+  closeToolMenu()
+  if (action === 'open') { await router.push(tool.to); return }
+  if (action === 'favorite') {
+    const wasFavorite = favoriteIds.value.has(tool.id)
+    store.toggleFavorite(tool.id)
+    ui.toast(wasFavorite ? '已取消收藏' : '已加入常用工具', tool.title, 'success')
+    return
+  }
+  if (action === 'browse-tools') { await router.push(toolCatalogOwnerLocation(tool)); return }
+  const description = `${tool.title} — ${tool.description}`
+  try {
+    await navigator.clipboard.writeText(description)
+    ui.toast('已复制工具说明', description, 'success')
+  } catch (error) { ui.toast('复制失败', error instanceof Error ? error.message : '系统剪贴板暂时不可用。', 'error') }
+}
+
+onMounted(() => window.addEventListener('knitspace:close-context-menus', closeToolMenuFromGlobal))
+onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus', closeToolMenuFromGlobal))
 </script>
 
 <template>
-  <div class="mx-auto w-full max-w-300 px-8 py-7">
+  <div class="mx-auto w-full max-w-300 px-8 py-7" @click="closeToolMenu()">
     <header class="row-between gap-4 flex-wrap mb-6">
       <div class="stack gap-1 min-w-0">
         <h1 class="text-[26px] font-semibold tracking-tight font-display">
@@ -99,6 +168,27 @@ const showPersonalRows = computed(() => !activeCategory.value && !query.value.tr
         aria-label="搜索工具"
       >
     </div>
+
+    <section v-if="showPersonalRows" class="mb-8">
+      <div class="row-between gap-3 mb-2.5">
+        <h2 class="eyebrow">常用工作流</h2>
+        <span class="text-[11px] text-fg-3">按想完成的事找工具</span>
+      </div>
+      <div class="grid gap-2.5 grid-cols-[repeat(auto-fit,minmax(12rem,1fr))]">
+        <article v-for="workflow in workflowRows" :key="workflow.id" class="stack gap-2.5 p-3 rounded-md bg-surface border border-line">
+          <span class="row gap-2 min-w-0">
+            <AppIcon :name="workflow.icon" :size="16" class="shrink-0 text-accent" />
+            <b class="text-[13px] font-semibold truncate">{{ workflow.title }}</b>
+          </span>
+          <p class="text-[11px] leading-relaxed text-fg-3">{{ workflow.description }}</p>
+          <span class="row flex-wrap gap-1.5 mt-auto">
+            <RouterLink v-for="tool in workflow.tools" :key="tool.id" :to="tool.to" class="chip h-6 px-2 text-[11px] hover:border-line-strong hover:text-fg">
+              {{ tool.title }}
+            </RouterLink>
+          </span>
+        </article>
+      </div>
+    </section>
 
     <section v-if="showPersonalRows && favoriteTools.length" class="mb-8">
       <h2 class="eyebrow mb-2.5">收藏</h2>
@@ -163,6 +253,11 @@ const showPersonalRows = computed(() => !activeCategory.value && !query.value.tr
             :to="tool.to"
             class="stack gap-1 h-full p-3.5 rounded-md bg-surface border border-line overflow-hidden
                    transition-[border-color,background] duration-120 hover:border-line-strong hover:bg-surface-2"
+            aria-haspopup="menu"
+            :aria-expanded="toolMenu?.item.id === tool.id"
+            :title="`${tool.title}；右键或 Shift+F10 查看更多操作`"
+            @contextmenu="openToolMenu($event, tool)"
+            @keydown="openToolMenuFromKeyboard($event, tool)"
           >
             <!-- The category colour reads as a spine on the card rather than a fill,
                  so nine hues can share a page without competing. -->
@@ -200,5 +295,25 @@ const showPersonalRows = computed(() => !activeCategory.value && !query.value.tr
       <RouterLink to="/lab" class="tap hover:text-fg">本机能力与实验</RouterLink>
       <span>检查 Vault、FFmpeg、输出目录与本机转写引擎的真实边界。</span>
     </footer>
+
+    <Teleport to="body">
+      <section
+        v-if="toolMenu"
+        ref="toolMenuElement"
+        class="menu-panel w-64"
+        role="menu"
+        :aria-label="`${toolMenu.item.title} 工具操作`"
+        :style="{ left: `${toolMenu.x}px`, top: `${toolMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleToolMenuKeydown"
+      >
+        <p class="menu-title stack items-start gap-0.5"><span>{{ toolMenu.item.group }} · TOOL</span><b class="text-[12px] font-medium text-fg">{{ toolMenu.item.title }}</b></p>
+        <button class="menu-item" role="menuitem" @click="runToolMenuAction('open')"><AppIcon :name="toolMenu.item.icon" :size="16" /><span>打开工具</span></button>
+        <button class="menu-item" role="menuitem" @click="runToolMenuAction('favorite')"><AppIcon name="star" :size="16" /><span>{{ favoriteIds.has(toolMenu.item.id) ? '取消收藏' : '加入收藏' }}</span></button>
+        <button class="menu-item" role="menuitem" @click="runToolMenuAction('copy-description')"><AppIcon name="clipboard" :size="16" /><span>复制工具说明</span></button>
+        <button class="menu-item" role="menuitem" @click="runToolMenuAction('browse-tools')"><AppIcon name="toolbox" :size="16" /><span>在所属空间中查看</span></button>
+      </section>
+    </Teleport>
   </div>
 </template>

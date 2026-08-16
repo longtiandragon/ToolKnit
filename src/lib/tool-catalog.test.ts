@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { browseCommandTools, searchTools, toolCatalog, toolCatalogOwnerLocation } from './tool-catalog'
+import { browseCommandTools, searchTools, toolCatalog, toolCatalogOwnerLocation, toolWorkflows } from './tool-catalog'
 import { toolCategories } from './toolbox-nav'
 
 describe('tool catalog', () => {
@@ -11,7 +11,9 @@ describe('tool catalog', () => {
   it('searches titles and aliases', () => {
     expect(searchTools('合并')[0]?.id).toBe('pdf-merge')
     expect(searchTools('去重')[0]?.id).toBe('organize-dedupe-report')
-    expect(searchTools('webp')[0]?.id).toBe('image-convert')
+    expect(searchTools('webp')[0]?.id).toBe('pdf-pdf-to-image')
+    expect(searchTools('pdf 转图片')[0]?.id).toBe('pdf-pdf-to-image')
+    expect(searchTools('pdf to image')[0]?.id).toBe('pdf-pdf-to-image')
     expect(searchTools('邮箱')[0]?.to.query?.mode).toBe('extract-contacts')
     expect(searchTools('字数')[0]?.to.query?.mode).toBe('statistics')
     expect(searchTools('二维码')[0]?.to.query?.tool).toBe('qrcode')
@@ -22,6 +24,14 @@ describe('tool catalog', () => {
     expect(searchTools('16khz')[0]?.id).toBe('media-speech-wav')
     expect(searchTools('视频静音')[0]?.id).toBe('media-mute-video')
     expect(searchTools('whisper')[0]?.id).toBe('local-transcription')
+    expect(searchTools('把 PDF 转成图片')[0]?.id).toBe('pdf-pdf-to-image')
+    expect(searchTools('多张图片拼成一张长图')[0]?.id).toBe('image-concat')
+  })
+
+  it('keeps every common workflow linked to real catalog tools', () => {
+    const ids = new Set(toolCatalog.map((tool) => tool.id))
+    expect(toolWorkflows.length).toBeGreaterThanOrEqual(5)
+    expect(toolWorkflows.every((workflow) => workflow.toolIds.length >= 2 && workflow.toolIds.every((id) => ids.has(id)))).toBe(true)
   })
 
   it('returns curated popular tools for an empty query', () => {

@@ -6,6 +6,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import { createAsyncSearchGate } from '@/lib/async-search-gate'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { knowledgeSnippetParts, type KnowledgeSnippetPart } from '@/lib/knowledge-search'
+import { vocabularySenseCount } from '@/lib/vocabulary'
 import { knowledgeAreaActions, knowledgeWorkflowActions, type KnowledgeAreaId, type KnowledgeWorkflowAction } from '@/lib/knowledge-workflows'
 import { listDesktopVisualProjects, type DesktopVaultSearchResult, type DesktopVisualProjectSummary } from '@/lib/native'
 import { useWorkbenchStore } from '@/stores/workbench'
@@ -46,7 +47,9 @@ let searchTimer: number | undefined
 
 const notes = computed(() => store.documents.filter((document) => document.kind === 'note'))
 const questions = computed(() => store.documents.filter((document) => document.kind === 'question'))
-const dueCount = computed(() => store.dueQuestionCards.length + store.dueVocabularyCards.length)
+const dueCount = computed(() => store.desktopVaultActive && store.desktopReviewSummary
+  ? store.desktopReviewSummary.dueCount
+  : store.dueQuestionCards.length + store.dueVocabularyCards.length)
 
 const areas = computed<KnowledgeArea[]>(() => [
   { id: 'note' as const, label: 'Markdown 笔记', detail: '源码、分屏、阅读与图谱', icon: 'book', count: notes.value.length, to: '/documents?kind=note' },
@@ -68,7 +71,7 @@ const allItems = computed<KnowledgeItem[]>(() => [
     id: entry.id,
     kind: 'word' as const,
     title: entry.lemma,
-    detail: `${entry.language} · ${entry.senses.length} 个义项`,
+    detail: `${entry.language} · ${vocabularySenseCount(entry)} 个义项`,
     timestamp: entry.updatedAt,
     to: { path: '/words', query: { word: entry.id } },
   })),

@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import { toolCategories } from '@/lib/toolbox-nav'
 import { applyTheme, resolveTheme, themePreference, type ThemePreference } from '@/lib/theme'
+import { activeWorkspaceChildTarget, workspaceNavGroups, type WorkspaceNavItem } from '@/lib/workspace-navigation'
 
-const emit = defineEmits<{ openCommand: [HTMLElement] }>()
+const emit = defineEmits<{
+  openCommand: [HTMLElement]
+  openSpaceContext: [MouseEvent, WorkspaceNavItem]
+  openSpaceContextKeyboard: [WorkspaceNavItem, HTMLElement]
+}>()
 
 const route = useRoute()
 // Read from the shared preference so the rail and the settings picker
@@ -17,14 +22,42 @@ const preference = themePreference
 const resolved = computed(() => resolveTheme(preference.value))
 
 const totalTools = computed(() => toolCategories.reduce((sum, category) => sum + category.tools.length, 0))
+const spaces = workspaceNavGroups.flatMap((group) => group.items)
+const expandedSpace = ref(activeSpace()?.to ?? '/today')
 
-/** Workspaces that are not tool categories but still need a permanent home. */
-const workspaces = [
-  { to: '/today', label: '今天', icon: 'dashboard' },
-  { to: '/documents', label: '资料与笔记', icon: 'book' },
-  { to: '/review', label: '复习', icon: 'review' },
-  { to: '/history', label: '处理记录', icon: 'clock' },
-]
+function routeMatches(to: string) {
+  const target = new URL(to, 'https://knitspace.local')
+  if (route.path !== target.pathname) return false
+  if (target.hash && route.hash !== target.hash) return false
+  return [...target.searchParams].every(([key, value]) => String(route.query[key] ?? '') === value)
+}
+
+function activeSpace() {
+  return spaces.find((space) => routeMatches(space.to) || space.children.some((child) => routeMatches(child.to)))
+}
+
+function visibleChildren(space: WorkspaceNavItem) {
+  return space.children.filter((child) => child.to !== space.to)
+}
+
+function activeChild(space: WorkspaceNavItem) {
+  return activeWorkspaceChildTarget(space.children, { path: route.path, query: route.query, hash: route.hash })
+}
+
+function toggleSpace(space: WorkspaceNavItem) {
+  expandedSpace.value = expandedSpace.value === space.to ? '' : space.to
+}
+
+function handleSpaceKeydown(event: KeyboardEvent, space: WorkspaceNavItem) {
+  if (!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return
+  event.preventDefault()
+  emit('openSpaceContextKeyboard', space, event.currentTarget as HTMLElement)
+}
+
+watch(() => route.fullPath, () => {
+  const active = activeSpace()
+  if (active) expandedSpace.value = active.to
+})
 
 function isActive(path: string) {
   return route.path === path || route.path.startsWith(`${path}/`)
@@ -71,29 +104,56 @@ function cycleTheme() {
       </button>
     </div>
 
-    <nav class="flex-1 min-h-0 overflow-y-auto px-2.5 pb-2" aria-label="工具类别">
-      <p class="eyebrow px-2.5 pt-1 pb-1.5">工具</p>
-      <RouterLink
-        v-for="category in toolCategories"
-        :key="category.id"
-        :to="`/c/${category.id}`"
-        :class="[`cat-${category.accent}`, 'nav-item', isActive(`/c/${category.id}`) && 'nav-item-active']"
+    <!-- The five spaces are the product's stable mental model. Their children
+         expose implemented workflows without growing another top-level list;
+         only the active space expands, so an ordinary desktop window remains
+         compact. Right click opens the same complete menu used elsewhere. -->
+    <nav class="flex-1 min-h-0 overflow-y-auto px-2.5 pb-2" aria-label="主导航目录">
+      <p class="eyebrow px-2.5 pt-1 pb-1.5">五个空间</p>
+      <section
+        v-for="space in spaces"
+        :key="space.to"
+        class="rail-space stack gap-0.5"
+        :class="expandedSpace === space.to && 'expanded'"
       >
-        <AppIcon :name="category.icon" :size="15" class="shrink-0 text-cat" />
-        <span class="truncate">{{ category.label }}</span>
-        <span class="ml-auto text-[11px] text-fg-3 tabular-nums">{{ category.tools.length }}</span>
-      </RouterLink>
-
-      <p class="eyebrow px-2.5 pt-4 pb-1.5">工作区</p>
-      <RouterLink
-        v-for="workspace in workspaces"
-        :key="workspace.to"
-        :to="workspace.to"
-        :class="['nav-item', isActive(workspace.to) && 'nav-item-active']"
-      >
-        <AppIcon :name="workspace.icon" :size="15" class="shrink-0 text-fg-3" />
-        <span class="truncate">{{ workspace.label }}</span>
-      </RouterLink>
+        <div class="row gap-0.5">
+          <RouterLink
+            :to="space.to"
+            :class="['nav-item min-w-0 flex-1', activeSpace()?.to === space.to && 'nav-item-active']"
+            :title="`打开${space.label}；右键查看全部功能`"
+            aria-haspopup="menu"
+            @contextmenu.prevent.stop="emit('openSpaceContext', $event, space)"
+            @keydown="handleSpaceKeydown($event, space)"
+          >
+            <AppIcon :name="space.icon" :size="15" class="shrink-0 text-fg-3" />
+            <span class="truncate">{{ space.label }}</span>
+          </RouterLink>
+          <button
+            type="button"
+            class="rail-space__toggle center w-7 h-8 shrink-0 rounded-sm text-fg-3 transition-colors duration-120 hover:bg-surface-2 hover:text-fg"
+            :aria-label="`${expandedSpace === space.to ? '收起' : '展开'}${space.label}功能`"
+            :aria-expanded="expandedSpace === space.to"
+            @click="toggleSpace(space)"
+            @contextmenu.prevent.stop="emit('openSpaceContext', $event, space)"
+            @keydown="handleSpaceKeydown($event, space)"
+          >
+            <span class="transition-transform duration-120"><AppIcon name="chevron-left" :size="12" class="rotate-180" /></span>
+          </button>
+        </div>
+        <nav v-if="expandedSpace === space.to" class="rail-space__children stack gap-0.5 max-h-64 overflow-y-auto pr-0.5 pb-1" :aria-label="`${space.label}功能`">
+          <RouterLink
+            v-for="child in visibleChildren(space)"
+            :key="child.to"
+            :to="child.to"
+            class="rail-child row gap-2 min-h-7 pl-7 pr-2 py-1 rounded-sm text-[11px] leading-snug text-fg-2 transition-colors duration-120"
+            :class="activeChild(space) === child.to && 'active'"
+            :title="child.label"
+          >
+            <AppIcon :name="child.icon" :size="12" />
+            <span class="min-w-0 truncate">{{ child.label }}</span>
+          </RouterLink>
+        </nav>
+      </section>
     </nav>
 
     <div class="shrink-0 p-2.5 border-t border-line stack gap-0.5">

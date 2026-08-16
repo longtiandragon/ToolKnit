@@ -19,6 +19,14 @@ export interface CommandToolGroup {
   tools: ToolCatalogItem[]
 }
 
+export interface ToolWorkflow {
+  id: string
+  title: string
+  description: string
+  icon: string
+  toolIds: string[]
+}
+
 /* The toolbox's own category ids, by catalogue group. Kept here rather than
    imported from `toolbox-nav`, which reads this module — and short enough that
    the duplication is cheaper than the cycle. `buildToolCategories` is the
@@ -64,11 +72,14 @@ export const toolCatalog: ToolCatalogItem[] = [
   fileTool('watermark', 'PDF 添加水印', '添加文字水印并控制颜色和透明度', 'pdf', 'watermark', ['watermark', '版权']),
   fileTool('page-number', 'PDF 添加页码', '设置起始数字和页码位置', 'pdf', 'number', ['编号', 'page number']),
   fileTool('images-to-pdf', '图片转 PDF', '把多张图片合成一份 PDF', 'pdf', 'file-image', ['照片', 'image to pdf']),
+  fileTool('pdf-to-image', 'PDF 转图片', '把 PDF 每一页渲染成 PNG、JPG 或 WebP 图片', 'pdf', 'image', ['导出图片', '渲染', 'png', 'jpg', 'webp', 'pdf to image']),
   fileTool('text', '提取 PDF 文字', '导出 PDF 已有的文字层', 'pdf', 'file-text', ['文本', '复制', 'extract text']),
   { ...imageTool('convert', '转换图片格式', '在 PNG、JPG 与 WebP 之间转换并实时预览', 'image', ['格式', 'png', 'jpg', 'webp']), popular: true },
   imageTool('resize', '缩放压缩图片', '限制最大宽度、调整质量并实时预览', 'resize', ['压缩', '尺寸', 'resize']),
   imageTool('crop', '裁剪图片', '在图片工作室实时查看裁剪结果', 'crop', ['截图', 'crop']),
   imageTool('rotate', '旋转图片', '实时预览方向并批量导出', 'rotate', ['方向', 'rotate']),
+  { id: 'image-mosaic', title: '图片打码', description: '拖出区域，导出时渲染成真实马赛克', group: '图片', icon: 'mosaic', to: { path: '/visual', query: { annotation: 'mosaic' } }, keywords: ['打码', '马赛克', '遮挡', '隐私', 'pixelate'] },
+  { id: 'image-doodle', title: '图片涂鸦', description: '自由画笔在图上涂色标记', group: '图片', icon: 'pen', to: { path: '/visual', query: { annotation: 'pen' } }, keywords: ['涂色', '涂鸦', '画笔', '画线', '标记', 'draw'] },
   { id: 'media-desk', title: '音视频转换', description: '桌面端调用本机 FFmpeg，转换或提取媒体并保留原件', group: '媒体', icon: 'play', to: { path: '/media' }, keywords: ['视频', '音频', 'mp3', 'mp4', 'm4a', 'ffmpeg', '提取音频'] },
   { id: 'media-clip', title: '截取音视频片段', description: '按开始与结束时间生成新的本地片段', group: '媒体', icon: 'cut', to: { path: '/media', query: { operation: 'clip' } }, keywords: ['剪辑', '裁剪视频', '截取音频', 'trim', 'clip', '录课片段'] },
   { id: 'media-speech-wav', title: '音频转语音 WAV', description: '生成适合本机转写和语音处理的 16 kHz 单声道 WAV', group: '媒体', icon: 'file-text', to: { path: '/media', query: { operation: 'transcode-wav' } }, keywords: ['wav', '16khz', '单声道', '语音预处理', '音频转码'] },
@@ -101,10 +112,21 @@ export const toolCatalog: ToolCatalogItem[] = [
   { id: 'clipboard-history', title: '剪贴板历史', description: '重新复制、固定或归档最近收集的文本、代码和图片', group: '整理', icon: 'clipboard', to: { path: '/clipboard' }, keywords: ['剪贴板', '粘贴', '复制', '收集'] },
   { id: 'visual-card', title: '图片分享卡', description: '拼图、标题、水印与标注', group: '表达', icon: 'palette', to: { path: '/visual' }, keywords: ['拼图', '海报', '标注'], popular: true },
   { id: 'scroll-capture', title: '滚动截图拼接', description: '自动识别连续截图重叠并生成 PNG 长图', group: '表达', icon: 'sort', to: { path: '/visual', query: { tool: 'stitch' } }, keywords: ['滚动截图', '长截图', '网页截图', '拼接', 'stitch', 'overlap'], popular: true },
+  imageTool('concat', '图片拼成长图', '多张图片上下或左右拼接，可留白或叠压', 'gallery', ['拼长图', '拼接', '荣誉墙', '照片墙', 'long image', 'wall']),
   { id: 'code-image', title: '代码分享图', description: '高亮并按行分页导出 PNG 或 PDF', group: '表达', icon: 'terminal', to: { path: '/code-image' }, keywords: ['代码截图', '高亮', 'code'], popular: true },
   { id: 'ai-content', title: 'AI 内容处理', description: '摘要、翻译、改写与信息提取', group: 'AI', icon: 'sparkle', to: { path: '/ai' }, keywords: ['摘要', '翻译', '改写', '邮件'] },
   { id: 'formula-image-recognition', title: '公式图片识别', description: '确认发送预览图后生成可校对的 LaTeX 草稿', group: 'AI', icon: 'math', to: { path: '/documents', query: { kind: 'note', create: 'note', mode: 'split', insert: 'formula', recognize: 'formula' } }, keywords: ['公式识别', '图片转公式', 'latex', '数学公式', 'mathpix', 'vision', '截图'] },
   { id: 'library', title: '收集与归档', description: '保存截图、PDF、文本和代码来源', group: '资料', icon: 'inbox', to: { path: '/library' }, keywords: ['资料库', '导入', 'archive'] }
+]
+
+/** Common outcomes expressed as short paths through the canonical catalog.
+ * Keeping IDs here avoids a second, drifting set of tool routes and labels. */
+export const toolWorkflows: ToolWorkflow[] = [
+  { id: 'pdf-images', title: 'PDF 与图片互转', description: '逐页导图，或把多张图片装订成 PDF', icon: 'file-pdf', toolIds: ['pdf-pdf-to-image', 'pdf-images-to-pdf'] },
+  { id: 'long-image', title: '长图与截图', description: '普通图片顺序拼接，滚动截图自动找重叠', icon: 'gallery', toolIds: ['image-concat', 'scroll-capture'] },
+  { id: 'privacy-markup', title: '图片隐私与标注', description: '打码、涂画，再整理为分享卡片', icon: 'palette', toolIds: ['image-mosaic', 'image-doodle', 'visual-card'] },
+  { id: 'code-text', title: '代码与文本', description: '代码长图、JSON 整理与文本差异比较', icon: 'terminal', toolIds: ['code-image', 'developer-json', 'developer-diff'] },
+  { id: 'media-subtitle', title: '音视频到字幕', description: '提取语音、离线转写并继续校对字幕', icon: 'file-text', toolIds: ['media-speech-wav', 'local-transcription', 'subtitle-editor'] },
 ]
 
 /** High-frequency desktop jobs exposed before the complete catalog. IDs are
@@ -114,14 +136,30 @@ function searchableText(item: ToolCatalogItem) {
   return [item.title, item.description, item.group, ...item.keywords].join(' ').toLocaleLowerCase('zh-CN')
 }
 
+function normalizeToolQuery(value: string) {
+  return value
+    .toLocaleLowerCase('zh-CN')
+    .replace(/转换成|导出成|变成|转成/g, '转')
+    .replace(/拼接成|合并成|拼成/g, '拼')
+    .replace(/请帮我|帮我|我想要|我需要|怎么|如何|一下/g, '')
+    .replace(/多张|多个|一张|一个/g, '')
+    .replace(/[把将的到为和、，。！？!?：:\s/_-]+/g, '')
+}
+
 export function searchTools(query: string, limit = 8) {
   const normalized = query.trim().toLocaleLowerCase('zh-CN')
   if (!normalized) return toolCatalog.filter((item) => item.popular).slice(0, Math.min(limit, 5))
+  const intent = normalizeToolQuery(normalized)
   return toolCatalog
     .map((item, index) => {
       const title = item.title.toLocaleLowerCase('zh-CN')
       const content = searchableText(item)
-      const score = title === normalized ? 0 : title.startsWith(normalized) ? 1 : title.includes(normalized) ? 2 : content.includes(normalized) ? 3 : 99
+      const compactTitle = normalizeToolQuery(title)
+      const compactContent = normalizeToolQuery(content)
+      const score = title === normalized || compactTitle === intent ? 0
+        : title.startsWith(normalized) ? 1
+          : title.includes(normalized) || compactTitle.includes(intent) ? 2
+            : content.includes(normalized) || compactContent.includes(intent) || intent.includes(compactTitle) ? 3 : 99
       return { item, score, index }
     })
     .filter((entry) => entry.score < 99)

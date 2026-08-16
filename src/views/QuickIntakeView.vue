@@ -96,6 +96,7 @@ const actions = computed<IntakeAction[]>(() => {
     { id: 'merge', title: files.value.length > 1 ? '合并这些 PDF' : '打开 PDF 工具', description: files.value.length > 1 ? `按当前顺序合并 ${files.value.length} 份文件` : '拆分、旋转、提取或添加水印', icon: 'merge', to: { path: '/tools', query: { group: 'pdf', operation: files.value.length > 1 ? 'merge' : 'split' } }, primary: true },
     { id: 'pdf-text', title: '提取 PDF 文字', description: '读取已有文字层并导出文本', icon: 'file-text', to: { path: '/tools', query: { group: 'pdf', operation: 'text' } } },
     { id: 'pdf-pages', title: '提取指定页面', description: '输入页码范围生成新文件', icon: 'split', to: { path: '/tools', query: { group: 'pdf', operation: 'extract' } } },
+    { id: 'pdf-to-image', title: 'PDF 转图片', description: '逐页渲染为 PNG、JPG 或 WebP', icon: 'image', to: { path: '/tools', query: { group: 'pdf', operation: 'pdf-to-image' } } },
     { id: 'library', title: '收进资料库', description: '建立本地索引，后续继续做笔记', icon: 'inbox', to: { path: '/library' } }
   ]
   if (kind.value === 'image') return [
@@ -103,6 +104,8 @@ const actions = computed<IntakeAction[]>(() => {
     { id: 'image-ocr', title: '离线识别文字', description: files.value.length > 1 ? `先把第一张带入识别（本次共 ${files.value.length} 张）` : '使用 Windows 本机语言包，不上传图片', icon: 'file-text', to: { path: '/ocr' } },
     { id: 'image-resize', title: '压缩图片', description: '限制尺寸并调整输出质量', icon: 'resize', to: { path: '/visual', query: { tool: 'resize' } } },
     { id: 'image-convert', title: '转换图片格式', description: 'PNG、JPG 与 WebP 互转', icon: 'image', to: { path: '/visual', query: { tool: 'convert' } } },
+    { id: 'image-concat', title: '图片拼成长图', description: '多张图片上下或左右拼成一张', icon: 'gallery', to: { path: '/visual', query: { tool: 'concat' } } },
+    { id: 'image-mosaic', title: '图片打码', description: '拖出区域，导出时渲染成真实马赛克', icon: 'mosaic', to: { path: '/visual', query: { annotation: 'mosaic' } } },
     { id: 'image-pdf', title: '图片合成 PDF', description: `把 ${files.value.length} 张图片整理为一份文档`, icon: 'file-pdf', to: { path: '/tools', query: { group: 'pdf', operation: 'images-to-pdf' } } }
   ]
   if (kind.value === 'json') return [
@@ -274,7 +277,9 @@ async function createVocabularyFromCapture() {
   if (existing) {
     const confirmed = await ui.confirm({ title: `“${existing.lemma}”已经在单词库`, message: `把这次识别出的 ${capture.senses.length} 个义项与现有词条合并；相同词性和释义不会重复。`, confirmLabel: '合并义项' })
     if (!confirmed) return
-    entry = mergeVocabularyCapture(existing, capture)
+    const complete = await store.loadVocabulary(existing.id)
+    if (!complete) throw new Error('已有词条已不存在。')
+    entry = mergeVocabularyCapture(complete, capture)
     store.saveVocabularyEntry(entry)
   } else {
     const timestamp = new Date().toISOString()

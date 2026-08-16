@@ -113,6 +113,11 @@
     display: none;
   }
 
+  .app-shell .rail .rail-space__children,
+  .app-shell .rail .rail-space__toggle {
+    display: none;
+  }
+
   .app-shell .rail a,
   .app-shell .rail button {
     justify-content: center;
