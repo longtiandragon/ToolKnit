@@ -33,4 +33,5 @@ test('requires the export target to be absolute and outside the workspace', () =
   assert.throws(() => assertSafeExportTarget(root, 'public-export'))
   assert.throws(() => assertSafeExportTarget(root, `${root}\\release`))
   assert.equal(assertSafeExportTarget(root, 'F:\\KnitspacePublic'), 'F:\\KnitspacePublic')
+  assert.equal(assertSafeExportTarget(root, 'C:\\Temp\\KnitspacePublic'), 'C:\\Temp\\KnitspacePublic')
 })

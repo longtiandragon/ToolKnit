@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { isAbsolute, parse, relative, resolve, sep } from 'node:path'
 
 export const forbiddenPublicPath = /(?:^|\/)(?:\.env(?!\.(?:example|sample|template)$)(?:$|\.)|\.toolknit(?:$|\/)|toolknitvault(?:$|\/)|knitspacevault(?:$|\/)|personal-pack(?:$|\/)|private-pack(?:$|\/)|personal-data(?:$|\/)|private-data(?:$|\/)|models(?:$|\/)|engines(?:$|\/)|[^/]+\.(?:key|pem)$|[^/]+\.(?:knitspace-)?(?:private|personal)\.json$)/i
 
@@ -42,6 +42,9 @@ export function assertSafeExportTarget(workspaceRoot, outputPath) {
   if (!isAbsolute(outputPath)) throw new Error('Public export output must be an absolute path.')
   const root = resolve(workspaceRoot)
   const output = resolve(outputPath)
+  // `path.relative()` returns an absolute path when Windows drives differ.
+  // That is safely outside the workspace, not a child path.
+  if (parse(root).root.toLocaleLowerCase() !== parse(output).root.toLocaleLowerCase()) return output
   const fromRoot = relative(root, output)
   if (!fromRoot || (!fromRoot.startsWith(`..${sep}`) && fromRoot !== '..')) {
     throw new Error('Public export output must be outside the workspace.')
