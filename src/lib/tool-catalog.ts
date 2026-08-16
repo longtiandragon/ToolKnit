@@ -64,7 +64,7 @@ function imageTool(id: string, title: string, description: string, icon: string,
 export const toolCatalog: ToolCatalogItem[] = [
   { id: 'universal-intake', title: '万能处理入口', description: '拖入或粘贴内容，自动推荐下一步', group: '整理', icon: 'inbox', to: { path: '/quick' }, keywords: ['快速处理', '万能', '粘贴', '拖入', '智能推荐'], popular: true },
   { id: 'tool-pipeline', title: '文本流水线', description: '把多个文本工具串成一次可复用处理', group: '整理', icon: 'task', to: { path: '/tools', query: { mode: 'pipeline' } }, keywords: ['流水线', '配方', '批处理', '自动化', 'recipe', 'pipeline'], popular: true },
-  { id: 'archive-zip', title: '归档', description: 'ZIP、TAR', group: '整理', icon: 'archive', to: { path: '/tools', query: { mode: 'archive' } }, keywords: ['zip', 'tar'] },
+  { id: 'archive-zip', title: '归档', description: 'ZIP、7Z、TAR', group: '整理', icon: 'archive', to: { path: '/tools', query: { mode: 'archive' } }, keywords: ['zip', '7z', 'tar'] },
   { id: 'local-ocr', title: '离线文字识别', description: '用 Windows 本机语言包提取截图和扫描图片文字', group: '文本', icon: 'file-text', to: { path: '/ocr' }, keywords: ['OCR', '识字', '图片文字', '扫描题', '截图', '离线', 'Windows'], popular: true },
   { ...fileTool('merge', '合并 PDF', '把多份 PDF 按顺序合成一份', 'pdf', 'merge', ['拼接', 'combine', 'merge']), popular: true },
   fileTool('split', '拆分 PDF', '把每一页导出为独立 PDF', 'pdf', 'split', ['分页', 'split']),

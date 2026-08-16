@@ -723,6 +723,51 @@ async fn extract_tar_archive(
 }
 
 #[tauri::command]
+async fn seven_zip_engine_status() -> archive_tools::SevenZipEngineStatus {
+    tauri::async_runtime::spawn_blocking(archive_tools::seven_zip_engine_status)
+        .await
+        .unwrap_or(archive_tools::SevenZipEngineStatus {
+            available: false,
+            executable: None,
+            version: None,
+        })
+}
+
+#[tauri::command]
+async fn create_seven_zip_archive(
+    input_paths: Vec<String>,
+    output_path: String,
+) -> Result<archive_tools::ArchiveOperationSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        archive_tools::create_seven_zip(input_paths, output_path).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("7z 创建任务失败：{error}"))?
+}
+
+#[tauri::command]
+async fn list_seven_zip_archive(archive_path: String) -> Result<archive_tools::ArchiveListing, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        archive_tools::list_seven_zip(archive_path).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("7z 检查任务失败：{error}"))?
+}
+
+#[tauri::command]
+async fn extract_seven_zip_archive(
+    archive_path: String,
+    output_directory: String,
+) -> Result<archive_tools::ArchiveOperationSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        archive_tools::extract_seven_zip(archive_path, output_directory)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("7z 解压任务失败：{error}"))?
+}
+
+#[tauri::command]
 fn save_default_source(app: tauri::AppHandle, source: VaultSource) -> Result<(), String> {
     let path = default_vault_path(&app)?;
     VaultService::open(path)
@@ -5709,6 +5754,10 @@ pub fn run() {
             create_tar_archive,
             list_tar_archive,
             extract_tar_archive,
+            seven_zip_engine_status,
+            create_seven_zip_archive,
+            list_seven_zip_archive,
+            extract_seven_zip_archive,
             save_default_source,
             get_default_source,
             touch_default_source,

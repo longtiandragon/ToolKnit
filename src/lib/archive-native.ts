@@ -25,6 +25,12 @@ export interface DesktopArchiveOperationSummary {
   outputPath: string
 }
 
+export interface SevenZipEngineStatus {
+  available: boolean
+  executable?: string
+  version?: string
+}
+
 export async function createDesktopZipArchive(inputPaths: string[], outputPath: string) {
   if (!isDesktop()) throw new Error('ZIP 创建仅支持桌面模式。')
   return invoke<DesktopArchiveOperationSummary>('create_zip_archive', { inputPaths, outputPath })
@@ -53,4 +59,24 @@ export async function listDesktopTarArchive(archivePath: string) {
 export async function extractDesktopTarArchive(archivePath: string, outputDirectory: string) {
   if (!isDesktop()) throw new Error('TAR 解压仅支持桌面模式。')
   return invoke<DesktopArchiveOperationSummary>('extract_tar_archive', { archivePath, outputDirectory })
+}
+
+export async function getSevenZipEngineStatus() {
+  if (!isDesktop()) return { available: false } satisfies SevenZipEngineStatus
+  return invoke<SevenZipEngineStatus>('seven_zip_engine_status')
+}
+
+export async function createDesktopSevenZipArchive(inputPaths: string[], outputPath: string) {
+  if (!isDesktop()) throw new Error('7z 创建仅支持桌面模式。')
+  return invoke<DesktopArchiveOperationSummary>('create_seven_zip_archive', { inputPaths, outputPath })
+}
+
+export async function listDesktopSevenZipArchive(archivePath: string) {
+  if (!isDesktop()) throw new Error('7z 检查仅支持桌面模式。')
+  return invoke<DesktopArchiveListing>('list_seven_zip_archive', { archivePath })
+}
+
+export async function extractDesktopSevenZipArchive(archivePath: string, outputDirectory: string) {
+  if (!isDesktop()) throw new Error('7z 解压仅支持桌面模式。')
+  return invoke<DesktopArchiveOperationSummary>('extract_seven_zip_archive', { archivePath, outputDirectory })
 }
