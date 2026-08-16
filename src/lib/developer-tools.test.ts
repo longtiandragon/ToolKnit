@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonYaml } from './developer-tools'
+import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -145,6 +145,31 @@ describe('JSONPath queries', () => {
     expect(JSON.parse(transformJsonPath(document, '$..name'))).toEqual(['Ada', 'Lin', 'Root'])
     expect(() => transformJsonPath(document, 'users.name')).toThrow('必须以 $ 开头')
     expect(() => transformJsonPath(document, '$.users[')).toThrow('缺少右方括号')
+  })
+})
+
+describe('JSON Schema generation and validation', () => {
+  it('infers nested fields and array item types from a JSON sample', () => {
+    const schema = JSON.parse(transformJsonSchema(JSON.stringify({ name: 'Ada', age: 36, tags: ['admin', 'author'], profile: { active: true } }), 'generate'))
+    expect(schema.$schema).toContain('2020-12')
+    expect(schema.type).toBe('object')
+    expect(schema.required).toEqual(['name', 'age', 'tags', 'profile'])
+    expect(schema.properties.tags).toEqual({ type: 'array', items: { type: 'string' } })
+    expect(schema.properties.profile.properties.active).toEqual({ type: 'boolean' })
+  })
+
+  it('returns bounded validation errors without modifying the input', () => {
+    const schema = JSON.stringify({ type: 'object', properties: { name: { type: 'string', minLength: 3 }, age: { type: 'integer', minimum: 18 } }, required: ['name', 'age'], additionalProperties: false })
+    const report = JSON.parse(transformJsonSchema('{"name":"Al","age":17,"extra":true}', 'validate', schema))
+    expect(report.valid).toBe(false)
+    expect(report.errorCount).toBe(3)
+    expect(report.errors.map((item: { keyword: string }) => item.keyword)).toEqual(['minLength', 'minimum', 'additionalProperties'])
+  })
+
+  it('accepts valid JSON and explains malformed schemas', () => {
+    const report = JSON.parse(transformJsonSchema('{"ok":true}', 'validate', '{"type":"object","required":["ok"]}'))
+    expect(report).toEqual({ valid: true, errorCount: 0, errors: [] })
+    expect(() => transformJsonSchema('{}', 'validate', '[]')).toThrow('必须是对象')
   })
 })
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonYaml, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type HtmlEntityDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
+import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
 import { decodeQrImage, generateQrCode } from '@/lib/qr-tools'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import AppIcon from '@/components/AppIcon.vue'
@@ -9,7 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import FieldRow from '@/components/FieldRow.vue'
 import { useWorkbenchStore } from '@/stores/workbench'
 
-type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'hex' | 'url' | 'json' | 'json-yaml' | 'csv-json' | 'xml' | 'html-entities' | 'jwt' | 'hash' | 'uuid' | 'timestamp' | 'radix' | 'regex' | 'diff'
+type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'hex' | 'url' | 'json' | 'json-yaml' | 'csv-json' | 'json-schema' | 'xml' | 'html-entities' | 'jwt' | 'hash' | 'uuid' | 'timestamp' | 'radix' | 'regex' | 'diff'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,6 +23,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
   { id: 'json', icon: 'json', title: 'JSON', description: '格式化、压缩与语法检查' },
   { id: 'json-yaml', icon: 'file-code', title: 'JSON ↔ YAML', description: '在 JSON 与 YAML 之间安全转换' },
   { id: 'csv-json', icon: 'table', title: 'CSV ↔ JSON', description: '转换表格数据并保留引号字段' },
+  { id: 'json-schema', icon: 'json', title: 'JSON Schema', description: '从样例生成或校验数据结构' },
   { id: 'xml', icon: 'file-code', title: 'XML', description: '本地格式化并检查标签闭合' },
   { id: 'html-entities', icon: 'code', title: 'HTML 实体', description: '转换常见和数字实体' },
   { id: 'jwt', icon: 'shield', title: 'JWT 查看器', description: '读取 Header 与 Payload' },
@@ -44,6 +45,7 @@ const jsonCompact = ref(false)
 const jsonMode = ref<'pretty' | 'compact' | 'path'>('pretty')
 const jsonPath = ref('$.users[*].name')
 const entityDirection = ref<HtmlEntityDirection>('encode')
+const schemaDirection = ref<JsonSchemaDirection>('generate')
 const uuidCount = ref(5)
 const fromBase = ref(10)
 const toBase = ref(16)
@@ -86,13 +88,14 @@ const hasOutput = computed(() => processed.value)
  * amount of work that should not fire while you are still choosing.
  */
 const LIVE_TOOLS = new Set<DeveloperToolId>([
-  'base64', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'xml', 'html-entities', 'jwt', 'hash', 'timestamp', 'radix', 'regex', 'diff', 'datecalc',
+  'base64', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'xml', 'html-entities', 'jwt', 'hash', 'timestamp', 'radix', 'regex', 'diff', 'datecalc',
 ])
 const isLive = computed(() => LIVE_TOOLS.has(tool.value) || (tool.value === 'qrcode' && qrMode.value === 'generate'))
 const hasInput = computed(() => {
   if (tool.value === 'datecalc') return Boolean(dateStart.value)
   if (tool.value === 'diff') return Boolean(input.value.trim() || secondaryInput.value.trim())
   if (tool.value === 'regex') return Boolean(pattern.value && input.value)
+  if (tool.value === 'json-schema' && schemaDirection.value === 'validate') return Boolean(input.value.trim() && secondaryInput.value.trim())
   return Boolean(input.value.trim())
 })
 
@@ -106,19 +109,23 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
     case 'url':
     case 'json-yaml':
     case 'csv-json':
+    case 'json-schema':
     case 'html-entities':
       return {
         label: '转换方向',
-        options: tool.value === 'json-yaml'
+        options: tool.value === 'json-schema'
+          ? [{ id: 'generate', label: '生成 Schema' }, { id: 'validate', label: '校验 JSON' }]
+          : tool.value === 'json-yaml'
           ? [{ id: 'encode', label: 'JSON → YAML' }, { id: 'decode', label: 'YAML → JSON' }]
           : tool.value === 'csv-json'
             ? [{ id: 'encode', label: 'CSV → JSON' }, { id: 'decode', label: 'JSON → CSV' }]
             : tool.value === 'html-entities'
               ? [{ id: 'encode', label: '编码' }, { id: 'decode', label: '解码' }]
             : [{ id: 'encode', label: '编码' }, { id: 'decode', label: '解码' }],
-        value: tool.value === 'html-entities' ? entityDirection.value : direction.value,
+        value: tool.value === 'json-schema' ? schemaDirection.value : tool.value === 'html-entities' ? entityDirection.value : direction.value,
         set: (id) => {
-          if (tool.value === 'html-entities') entityDirection.value = id as HtmlEntityDirection
+          if (tool.value === 'json-schema') schemaDirection.value = id as JsonSchemaDirection
+          else if (tool.value === 'html-entities') entityDirection.value = id as HtmlEntityDirection
           else direction.value = id as 'encode' | 'decode'
         },
       }
@@ -161,6 +168,7 @@ const emptyResultHint = computed(() => {
     case 'json': return jsonMode.value === 'path' ? '用 $.users[*].name 这类表达式提取字段，结果会保持 JSON。' : '在左侧输入内容，结果会随输入即时更新。'
     case 'json-yaml': return direction.value === 'encode' ? '粘贴 JSON，结果会转换为可读 YAML。' : '粘贴 YAML，结果会转换为严格 JSON。'
     case 'csv-json': return direction.value === 'encode' ? '首行作为字段名，把 CSV 转成对象数组。' : '粘贴对象数组，把 JSON 转成可直接保存的 CSV。'
+    case 'json-schema': return schemaDirection.value === 'generate' ? '粘贴 JSON 样例，生成可编辑的 JSON Schema。' : '左侧放 JSON，下面放 Schema，结果会列出校验错误。'
     case 'xml': return '粘贴 XML，结果会在本地缩进并检查标签闭合。'
     case 'html-entities': return entityDirection.value === 'encode' ? '把 <、&、引号等字符转换为 HTML 实体。' : '还原常见命名实体和 &#数字; / &#x十六进制; 实体。'
     case 'hex': return direction.value === 'encode' ? '把 UTF-8 文本转成连续的十六进制字节。' : '粘贴 Hex 字节，可用空格或 0x 前缀，结果按 UTF-8 解码。'
@@ -215,6 +223,7 @@ async function run() {
     else if (tool.value === 'json') output.value = jsonMode.value === 'path' ? transformJsonPath(input.value, jsonPath.value) : transformJson(input.value, jsonMode.value === 'compact')
     else if (tool.value === 'json-yaml') output.value = transformJsonYaml(input.value, direction.value === 'encode' ? 'json-to-yaml' : 'yaml-to-json')
     else if (tool.value === 'csv-json') output.value = transformCsvJson(input.value, direction.value === 'encode' ? 'csv-to-json' : 'json-to-csv')
+    else if (tool.value === 'json-schema') output.value = transformJsonSchema(input.value, schemaDirection.value, secondaryInput.value)
     else if (tool.value === 'xml') output.value = formatXml(input.value)
     else if (tool.value === 'html-entities') output.value = transformHtmlEntities(input.value, entityDirection.value)
     else if (tool.value === 'jwt') output.value = JSON.stringify(decodeJwt(input.value), null, 2)
@@ -233,7 +242,7 @@ async function run() {
     } else if (dateMode.value === 'difference') dateDifference.value = calculateDateDifference(dateStart.value, dateEnd.value)
     else dateOffset.value = calculateDateOffset(dateStart.value, dateAmount.value, dateUnit.value)
     processed.value = true
-    message.value = tool.value === 'regex' ? `完成：找到 ${regexMatches.value.length} 个匹配。` : tool.value === 'diff' ? `完成：比较了 ${diffResult.value.length} 行结果。` : tool.value === 'qrcode' ? (qrMode.value === 'generate' ? '二维码已生成，可以下载 PNG 或复制原始内容。' : '二维码识别完成，可以复制结果。') : '处理完成，可以复制结果。'
+    message.value = tool.value === 'regex' ? `完成：找到 ${regexMatches.value.length} 个匹配。` : tool.value === 'diff' ? `完成：比较了 ${diffResult.value.length} 行结果。` : tool.value === 'json-schema' && schemaDirection.value === 'validate' ? 'JSON Schema 校验完成，可以复制报告。' : tool.value === 'qrcode' ? (qrMode.value === 'generate' ? '二维码已生成，可以下载 PNG 或复制原始内容。' : '二维码识别完成，可以复制结果。') : '处理完成，可以复制结果。'
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '处理失败，请检查输入。'
   } finally {
@@ -340,7 +349,7 @@ function closeResultMenuOnWindow() { closeResultMenu() }
 // short enough that the result feels attached to the input.
 let liveTimer: ReturnType<typeof setTimeout> | undefined
 watch(
-  [input, secondaryInput, pattern, flags, jsonCompact, jsonMode, jsonPath, direction, entityDirection, fromBase, toBase,
+  [input, secondaryInput, pattern, flags, jsonCompact, jsonMode, jsonPath, direction, entityDirection, schemaDirection, fromBase, toBase,
     dateStart, dateEnd, dateAmount, dateUnit, dateMode, qrSize, qrMode, tool],
   () => {
     clearTimeout(liveTimer)
@@ -423,8 +432,9 @@ onBeforeUnmount(() => {
             {{ tool === 'diff' ? '原始文本'
               : tool === 'timestamp' ? '时间戳或日期'
                 : tool === 'regex' ? '待匹配文本'
-                  : tool === 'jwt' ? 'JWT Token'
+              : tool === 'jwt' ? 'JWT Token'
               : tool === 'json' && jsonMode === 'path' ? 'JSON 文档'
+              : tool === 'json-schema' ? (schemaDirection === 'generate' ? 'JSON 样例' : '待校验 JSON')
               : tool === 'radix' ? '待转换整数'
                 : tool === 'json-yaml' ? (direction === 'encode' ? 'JSON 内容' : 'YAML 内容')
                   : tool === 'csv-json' ? (direction === 'encode' ? 'CSV 内容' : 'JSON 对象数组')
@@ -520,7 +530,7 @@ onBeforeUnmount(() => {
             class="code-area"
             :placeholder="tool === 'timestamp' ? '1723046400 或 2026-08-08T12:00:00+08:00'
               : tool === 'hex' ? '48656C6C6F 或 48 65 6C 6C 6F'
-                : tool === 'json' || (tool === 'json-yaml' && direction === 'encode') ? '粘贴 JSON 内容…'
+                : tool === 'json' || tool === 'json-schema' || (tool === 'json-yaml' && direction === 'encode') ? '粘贴 JSON 内容…'
                 : tool === 'json-yaml' ? '粘贴 YAML 内容…'
                   : tool === 'jwt' ? '粘贴 eyJ… 格式的 Token'
                     : tool === 'radix' ? '65535 或 FF_FF'
@@ -535,6 +545,11 @@ onBeforeUnmount(() => {
           <template v-if="tool === 'diff'">
             <header class="pane-head border-t border-b-0"><p class="pane-title">修改后文本</p></header>
             <textarea v-model="secondaryInput" name="developer-secondary-input" spellcheck="false" class="code-area" placeholder="粘贴修改后的内容…" />
+          </template>
+
+          <template v-else-if="tool === 'json-schema' && schemaDirection === 'validate'">
+            <header class="pane-head border-t border-b-0"><p class="pane-title">JSON Schema</p></header>
+            <textarea v-model="secondaryInput" name="json-schema-input" spellcheck="false" class="code-area" placeholder="粘贴 JSON Schema…" />
           </template>
 
           <p v-if="tool === 'jwt'" class="shrink-0 px-3 py-2 border-t border-line text-[11px] text-warn">
@@ -577,7 +592,7 @@ onBeforeUnmount(() => {
         </div>
 
         <textarea
-          v-else-if="hasOutput && ['base64', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'xml', 'html-entities', 'jwt', 'hash', 'uuid', 'radix'].includes(tool)"
+          v-else-if="hasOutput && ['base64', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'xml', 'html-entities', 'jwt', 'hash', 'uuid', 'radix'].includes(tool)"
           :value="output"
           readonly
           aria-label="处理结果"

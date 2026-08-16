@@ -49,6 +49,7 @@ export interface JwtResult {
 export type JsonYamlDirection = 'json-to-yaml' | 'yaml-to-json'
 export type CsvJsonDirection = 'csv-to-json' | 'json-to-csv'
 export type HtmlEntityDirection = 'encode' | 'decode'
+export type JsonSchemaDirection = 'generate' | 'validate'
 
 const STRUCTURED_TEXT_MAX_BYTES = 2 * 1024 * 1024
 
@@ -128,6 +129,165 @@ export function transformJson(value: string, compact = false) {
   } catch (reason) {
     const detail = reason instanceof Error ? reason.message : '语法错误'
     throw new Error(`JSON 解析失败：${detail}`)
+  }
+}
+
+type JsonSchemaObject = Record<string, unknown>
+
+const JSON_SCHEMA_MAX_DEPTH = 32
+const JSON_SCHEMA_MAX_NODES = 2_000
+const JSON_SCHEMA_MAX_ERRORS = 100
+
+function jsonSchemaPath(path: string, key: string | number) {
+  if (typeof key === 'number') return `${path}[${key}]`
+  return /^[A-Za-z_$][\w$-]*$/.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`
+}
+
+function schemaJsonEqual(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function mergeJsonSchemas(left: JsonSchemaObject, right: JsonSchemaObject): JsonSchemaObject {
+  if (schemaJsonEqual(left, right)) return left
+  const leftType = left.type
+  const rightType = right.type
+  if (leftType === 'object' && rightType === 'object') {
+    const leftProperties = (left.properties && typeof left.properties === 'object' ? left.properties : {}) as JsonSchemaObject
+    const rightProperties = (right.properties && typeof right.properties === 'object' ? right.properties : {}) as JsonSchemaObject
+    const keys = [...new Set([...Object.keys(leftProperties), ...Object.keys(rightProperties)])]
+    const properties: JsonSchemaObject = {}
+    for (const key of keys) {
+      if (key in leftProperties && key in rightProperties) properties[key] = mergeJsonSchemas(leftProperties[key] as JsonSchemaObject, rightProperties[key] as JsonSchemaObject)
+      else properties[key] = (leftProperties[key] ?? rightProperties[key]) as JsonSchemaObject
+    }
+    const leftRequired = new Set(Array.isArray(left.required) ? left.required.filter((item): item is string => typeof item === 'string') : [])
+    const rightRequired = new Set(Array.isArray(right.required) ? right.required.filter((item): item is string => typeof item === 'string') : [])
+    const required = [...leftRequired].filter((key) => rightRequired.has(key))
+    return {
+      type: 'object',
+      properties,
+      ...(required.length ? { required } : {}),
+    }
+  }
+  if (leftType === 'array' && rightType === 'array') {
+    const leftItems = left.items && typeof left.items === 'object' ? left.items as JsonSchemaObject : undefined
+    const rightItems = right.items && typeof right.items === 'object' ? right.items as JsonSchemaObject : undefined
+    return { type: 'array', ...(leftItems && rightItems ? { items: mergeJsonSchemas(leftItems, rightItems) } : leftItems || rightItems ? { items: leftItems ?? rightItems } : {}) }
+  }
+  const alternatives = [left, right]
+  return { anyOf: alternatives.filter((schema, index) => alternatives.findIndex((item) => schemaJsonEqual(item, schema)) === index) }
+}
+
+function inferJsonSchema(value: unknown, state: { nodes: number }, depth = 0): JsonSchemaObject {
+  if (depth > JSON_SCHEMA_MAX_DEPTH) throw new Error(`JSON 嵌套超过 ${JSON_SCHEMA_MAX_DEPTH} 层，无法安全生成 Schema。`)
+  state.nodes += 1
+  if (state.nodes > JSON_SCHEMA_MAX_NODES) throw new Error(`JSON 结构超过 ${JSON_SCHEMA_MAX_NODES} 个节点，请先缩小样例。`)
+  if (value === null) return { type: 'null' }
+  if (typeof value === 'string') return { type: 'string' }
+  if (typeof value === 'boolean') return { type: 'boolean' }
+  if (typeof value === 'number') return { type: Number.isInteger(value) ? 'integer' : 'number' }
+  if (Array.isArray(value)) {
+    const items = value.map((item) => inferJsonSchema(item, state, depth + 1))
+    const merged = items.reduce<JsonSchemaObject | undefined>((schema, item) => schema ? mergeJsonSchemas(schema, item) : item, undefined)
+    return { type: 'array', ...(merged ? { items: merged } : {}) }
+  }
+  if (typeof value === 'object') {
+    const object = value as Record<string, unknown>
+    const properties = Object.fromEntries(Object.entries(object).map(([key, child]) => [key, inferJsonSchema(child, state, depth + 1)]))
+    return { type: 'object', properties, ...(Object.keys(properties).length ? { required: Object.keys(properties) } : {}) }
+  }
+  return {}
+}
+
+function schemaTypeMatches(value: unknown, type: string) {
+  if (type === 'null') return value === null
+  if (type === 'object') return value !== null && typeof value === 'object' && !Array.isArray(value)
+  if (type === 'array') return Array.isArray(value)
+  if (type === 'integer') return typeof value === 'number' && Number.isInteger(value)
+  if (type === 'number') return typeof value === 'number' && Number.isFinite(value)
+  return typeof value === type
+}
+
+function validateJsonSchemaValue(value: unknown, schema: JsonSchemaObject, path: string, errors: Array<{ path: string; message: string; keyword?: string }>, depth = 0): boolean {
+  if (errors.length >= JSON_SCHEMA_MAX_ERRORS) return false
+  if (depth > JSON_SCHEMA_MAX_DEPTH) {
+    errors.push({ path, message: `嵌套超过 ${JSON_SCHEMA_MAX_DEPTH} 层`, keyword: 'depth' })
+    return false
+  }
+  let valid = true
+  const fail = (message: string, keyword?: string) => {
+    if (errors.length < JSON_SCHEMA_MAX_ERRORS) errors.push({ path, message, ...(keyword ? { keyword } : {}) })
+    valid = false
+  }
+  if ('const' in schema && !schemaJsonEqual(value, schema.const)) fail('必须等于 Schema 中的 const 值。', 'const')
+  if (Array.isArray(schema.enum) && !schema.enum.some((item) => schemaJsonEqual(item, value))) fail('不在允许的 enum 值中。', 'enum')
+
+  if (Array.isArray(schema.anyOf)) {
+    const matches = schema.anyOf.some((candidate) => candidate && typeof candidate === 'object' && validateJsonSchemaValue(value, candidate as JsonSchemaObject, path, [] , depth + 1))
+    if (!matches) fail('不满足 anyOf 中的任一条件。', 'anyOf')
+  }
+  if (Array.isArray(schema.oneOf)) {
+    const matches = schema.oneOf.filter((candidate) => candidate && typeof candidate === 'object' && validateJsonSchemaValue(value, candidate as JsonSchemaObject, path, [], depth + 1)).length
+    if (matches !== 1) fail(`必须恰好满足 oneOf 中的一个条件，实际满足 ${matches} 个。`, 'oneOf')
+  }
+  if (Array.isArray(schema.allOf)) {
+    for (const candidate of schema.allOf) if (candidate && typeof candidate === 'object') valid = validateJsonSchemaValue(value, candidate as JsonSchemaObject, path, errors, depth + 1) && valid
+  }
+
+  if (typeof schema.type === 'string' && !schemaTypeMatches(value, schema.type)) fail(`类型应为 ${schema.type}。`, 'type')
+  if (Array.isArray(schema.type) && (!schema.type.length || !schema.type.some((type): type is string => typeof type === 'string' && schemaTypeMatches(value, type)))) fail(`类型应为 ${schema.type.join(' 或 ')}。`, 'type')
+  if (typeof value === 'string') {
+    if (typeof schema.minLength === 'number' && value.length < schema.minLength) fail(`长度不能少于 ${schema.minLength}。`, 'minLength')
+    if (typeof schema.maxLength === 'number' && value.length > schema.maxLength) fail(`长度不能超过 ${schema.maxLength}。`, 'maxLength')
+    if (typeof schema.pattern === 'string') {
+      try { if (!new RegExp(schema.pattern).test(value)) fail('不匹配 Schema 的 pattern。', 'pattern') } catch { fail('Schema 的 pattern 不是有效正则。', 'pattern') }
+    }
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (typeof schema.minimum === 'number' && value < schema.minimum) fail(`不能小于 ${schema.minimum}。`, 'minimum')
+    if (typeof schema.maximum === 'number' && value > schema.maximum) fail(`不能大于 ${schema.maximum}。`, 'maximum')
+    if (schema.exclusiveMinimum === true && typeof schema.minimum === 'number' && value <= schema.minimum) fail(`必须大于 ${schema.minimum}。`, 'exclusiveMinimum')
+    if (schema.exclusiveMaximum === true && typeof schema.maximum === 'number' && value >= schema.maximum) fail(`必须小于 ${schema.maximum}。`, 'exclusiveMaximum')
+  }
+  if (Array.isArray(value)) {
+    if (typeof schema.minItems === 'number' && value.length < schema.minItems) fail(`项目数不能少于 ${schema.minItems}。`, 'minItems')
+    if (typeof schema.maxItems === 'number' && value.length > schema.maxItems) fail(`项目数不能超过 ${schema.maxItems}。`, 'maxItems')
+    if (schema.items && typeof schema.items === 'object' && !Array.isArray(schema.items)) value.forEach((item, index) => validateJsonSchemaValue(item, schema.items as JsonSchemaObject, jsonSchemaPath(path, index), errors, depth + 1))
+  }
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const object = value as Record<string, unknown>
+    const properties = schema.properties && typeof schema.properties === 'object' ? schema.properties as JsonSchemaObject : {}
+    if (Array.isArray(schema.required)) for (const key of schema.required) if (typeof key === 'string' && !(key in object)) fail(`缺少必填字段“${key}”。`, 'required')
+    for (const [key, child] of Object.entries(object)) {
+      const childSchema = properties[key]
+      if (key in properties && childSchema && typeof childSchema === 'object' && !Array.isArray(childSchema)) validateJsonSchemaValue(child, childSchema as JsonSchemaObject, jsonSchemaPath(path, key), errors, depth + 1)
+      else if (key in properties) fail(`字段“${key}”的 Schema 必须是对象。`, 'schema')
+      else if (schema.additionalProperties === false) fail(`不允许出现字段“${key}”。`, 'additionalProperties')
+    }
+  }
+  return valid && errors.length === 0
+}
+
+export function transformJsonSchema(value: string, direction: JsonSchemaDirection, schemaValue = '') {
+  if (!value.trim()) throw new Error(direction === 'generate' ? '请输入用于生成 Schema 的 JSON 样例。' : '请输入需要校验的 JSON 内容。')
+  assertStructuredTextSize(value)
+  try {
+    if (direction === 'generate') {
+      const sample = JSON.parse(value)
+      const generated = inferJsonSchema(sample, { nodes: 0 })
+      return JSON.stringify({ $schema: 'https://json-schema.org/draft/2020-12/schema', ...generated }, null, 2)
+    }
+    if (!schemaValue.trim()) throw new Error('请输入 JSON Schema。')
+    assertStructuredTextSize(schemaValue)
+    const document = JSON.parse(value)
+    const schema = JSON.parse(schemaValue) as unknown
+    if (!schema || typeof schema !== 'object' || Array.isArray(schema)) throw new Error('JSON Schema 必须是对象。')
+    const errors: Array<{ path: string; message: string; keyword?: string }> = []
+    validateJsonSchemaValue(document, schema as JsonSchemaObject, '$', errors)
+    return JSON.stringify({ valid: errors.length === 0, errorCount: errors.length, errors: errors.slice(0, JSON_SCHEMA_MAX_ERRORS) }, null, 2)
+  } catch (reason) {
+    const detail = reason instanceof Error ? reason.message : '语法错误'
+    throw new Error(`${direction === 'generate' ? 'JSON 样例' : 'JSON / Schema'} 解析失败：${detail}`)
   }
 }
 
