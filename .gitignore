@@ -28,3 +28,10 @@ benchmarks/generated/
 
 # Written by `vite.analyze.config.ts`, not source.
 chunk-analysis.json
+
+# One-off local Playwright probes; maintained regression drivers use visible
+# names such as `scripts/code-image-regression.mjs` and are committed.
+scripts/.canvasprobe.mjs
+scripts/.canvasshot.mjs
+scripts/.toolbarcheck.mjs
+scripts/.uxshot.mjs
