@@ -102,7 +102,7 @@ export const toolCatalog: ToolCatalogItem[] = [
   { id: 'utility-datecalc', title: '日期计算器', description: '计算日期间隔，或向前向后推算日期', group: '整理', icon: 'calendar', to: { path: '/developer-tools', query: { tool: 'datecalc' } }, keywords: ['日期', '天数', '倒计时', '间隔', '月末'] },
   { id: 'developer-base64', title: 'Base64 编解码', description: '支持中文与 Emoji 的文本转换', group: '开发', icon: 'code', to: { path: '/developer-tools', query: { tool: 'base64' } }, keywords: ['base64', '编码', '解码'] },
   { id: 'developer-url', title: 'URL 编解码', description: '处理查询参数和特殊字符', group: '开发', icon: 'link', to: { path: '/developer-tools', query: { tool: 'url' } }, keywords: ['url', 'encodeURIComponent', '百分号'] },
-  { id: 'developer-json', title: 'JSON 格式化与压缩', description: '检查语法并切换可读或紧凑输出', group: '开发', icon: 'json', to: { path: '/developer-tools', query: { tool: 'json' } }, keywords: ['json', 'format', 'minify', '校验'] },
+  { id: 'developer-json', title: 'JSON 格式化与压缩', description: '格式化/压缩/JSONPath', group: '开发', icon: 'json', to: { path: '/developer-tools', query: { tool: 'json' } }, keywords: ['json', 'jsonpath'] },
   { id: 'developer-jwt', title: 'JWT 查看器', description: '本地读取 Header、Payload 与过期时间', group: '开发', icon: 'shield', to: { path: '/developer-tools', query: { tool: 'jwt' } }, keywords: ['token', 'claims', 'header', 'payload'] },
   { id: 'developer-hash', title: 'SHA-256 文本哈希', description: '生成文本内容的十六进制指纹', group: '开发', icon: 'hash', to: { path: '/developer-tools', query: { tool: 'hash' } }, keywords: ['sha256', 'hash', '摘要', '校验'] },
   { id: 'developer-uuid', title: 'UUID 批量生成', description: '一次生成最多 100 个 UUID v4', group: '开发', icon: 'fingerprint', to: { path: '/developer-tools', query: { tool: 'uuid' } }, keywords: ['guid', 'random', '唯一标识'] },

@@ -110,6 +110,107 @@ export function transformJson(value: string, compact = false) {
   }
 }
 
+type JsonPathToken =
+  | { kind: 'property'; name: string }
+  | { kind: 'index'; index: number }
+  | { kind: 'wildcard' }
+  | { kind: 'recursive'; name: string }
+
+function parseJsonPath(value: string): JsonPathToken[] {
+  const expression = value.trim()
+  if (!expression.startsWith('$')) throw new Error('JSONPath 必须以 $ 开头。')
+  const tokens: JsonPathToken[] = []
+  let cursor = 1
+  while (cursor < expression.length) {
+    if (expression.startsWith('..', cursor)) {
+      cursor += 2
+      const match = /^[A-Za-z_$][\w$-]*/.exec(expression.slice(cursor))
+      if (!match) throw new Error('递归查询后需要字段名，例如 $..name。')
+      tokens.push({ kind: 'recursive', name: match[0] })
+      cursor += match[0].length
+      continue
+    }
+    if (expression[cursor] === '.') {
+      cursor += 1
+      const match = /^[A-Za-z_$][\w$-]*/.exec(expression.slice(cursor))
+      if (!match) throw new Error('点号后需要字段名，例如 $.user.name。')
+      tokens.push({ kind: 'property', name: match[0] })
+      cursor += match[0].length
+      continue
+    }
+    if (expression[cursor] === '[') {
+      const end = expression.indexOf(']', cursor + 1)
+      if (end < 0) throw new Error('JSONPath 缺少右方括号。')
+      const raw = expression.slice(cursor + 1, end).trim()
+      if (raw === '*') tokens.push({ kind: 'wildcard' })
+      else if (/^\d+$/.test(raw)) tokens.push({ kind: 'index', index: Number(raw) })
+      else {
+        const quoted = /^(?:'([^']+)'|"([^"]+)")$/.exec(raw)
+        if (!quoted) throw new Error('方括号仅支持数字、* 或带引号的字段名。')
+        tokens.push({ kind: 'property', name: quoted[1] ?? quoted[2] })
+      }
+      cursor = end + 1
+      continue
+    }
+    throw new Error(`无法解析 JSONPath 的“${expression[cursor]}”。`)
+  }
+  return tokens
+}
+
+function appendJsonPath(path: string, name: string) {
+  return /^[A-Za-z_$][\w$-]*$/.test(name) ? `${path}.${name}` : `${path}[${JSON.stringify(name)}]`
+}
+
+function collectRecursiveJsonPath(value: unknown, path: string, name: string, matches: { value: unknown; path: string }[], seen: Set<object>, depth = 0) {
+  if (depth > 64 || matches.length >= 1000 || value === null || typeof value !== 'object') return
+  if (seen.has(value)) return
+  seen.add(value)
+  for (const [key, child] of Object.entries(value)) {
+    const childPath = appendJsonPath(path, key)
+    if (key === name) matches.push({ value: child, path: childPath })
+    collectRecursiveJsonPath(child, childPath, name, matches, seen, depth + 1)
+    if (matches.length >= 1000) return
+  }
+}
+
+export function transformJsonPath(value: string, expression: string) {
+  if (!value.trim()) throw new Error('请输入 JSON 内容。')
+  if (!expression.trim()) throw new Error('请输入 JSONPath 查询，例如 $.users[0].name。')
+  assertStructuredTextSize(value)
+  let root: unknown
+  try {
+    root = JSON.parse(value)
+  } catch (reason) {
+    const detail = reason instanceof Error ? reason.message : '语法错误'
+    throw new Error(`JSON 解析失败：${detail}`)
+  }
+  const tokens = parseJsonPath(expression)
+  let matches = [{ value: root, path: '$' }]
+  for (const token of tokens) {
+    if (token.kind === 'recursive') {
+      const next: { value: unknown; path: string }[] = []
+      for (const match of matches) collectRecursiveJsonPath(match.value, match.path, token.name, next, new Set())
+      matches = next
+      continue
+    }
+    const next: { value: unknown; path: string }[] = []
+    for (const match of matches) {
+      if (match.value === null || typeof match.value !== 'object') continue
+      if (token.kind === 'property' && Object.prototype.hasOwnProperty.call(match.value, token.name)) {
+        next.push({ value: (match.value as Record<string, unknown>)[token.name], path: appendJsonPath(match.path, token.name) })
+      } else if (token.kind === 'index' && Array.isArray(match.value) && token.index < match.value.length) {
+        next.push({ value: match.value[token.index], path: `${match.path}[${token.index}]` })
+      } else if (token.kind === 'wildcard') {
+        Object.entries(match.value).forEach(([key, child]) => next.push({ value: child, path: appendJsonPath(match.path, key) }))
+      }
+      if (next.length >= 1000) break
+    }
+    matches = next.slice(0, 1000)
+  }
+  const result = matches.length === 1 ? matches[0].value : matches.map((match) => match.value)
+  return JSON.stringify(result, null, 2)
+}
+
 export function transformJsonYaml(value: string, direction: JsonYamlDirection) {
   if (!value.trim()) throw new Error('请输入 JSON 或 YAML 内容。')
   assertStructuredTextSize(value)

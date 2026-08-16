@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, generateUuids, sha256, testRegex, transformCsvJson, transformJson, transformJsonYaml, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
+import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, generateUuids, sha256, testRegex, transformCsvJson, transformJson, transformJsonPath, transformJsonYaml, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
 import { decodeQrImage, generateQrCode } from '@/lib/qr-tools'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import AppIcon from '@/components/AppIcon.vue'
@@ -38,6 +38,8 @@ const secondaryInput = ref('')
 const pattern = ref('')
 const flags = ref('gi')
 const jsonCompact = ref(false)
+const jsonMode = ref<'pretty' | 'compact' | 'path'>('pretty')
+const jsonPath = ref('$.users[*].name')
 const uuidCount = ref(5)
 const fromBase = ref(10)
 const toBase = ref(16)
@@ -112,9 +114,9 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
     case 'json':
       return {
         label: '输出样式',
-        options: [{ id: 'pretty', label: '格式化' }, { id: 'compact', label: '压缩' }],
-        value: jsonCompact.value ? 'compact' : 'pretty',
-        set: (id) => { jsonCompact.value = id === 'compact' },
+        options: [{ id: 'pretty', label: '格式化' }, { id: 'compact', label: '压缩' }, { id: 'path', label: 'JSONPath' }],
+        value: jsonMode.value,
+        set: (id) => { jsonMode.value = id as typeof jsonMode.value; jsonCompact.value = id === 'compact' },
       }
     case 'qrcode':
       return {
@@ -145,6 +147,7 @@ const emptyResultHint = computed(() => {
     case 'qrcode': return qrMode.value === 'generate' ? '在左侧输入网址或文字，二维码会即时生成。' : '选择一张含二维码的图片，然后点击识别。'
     case 'regex': return '先写正则表达式，再粘贴待匹配的文本。'
     case 'diff': return '左右两个输入框都填上内容，差异会逐行标出。'
+    case 'json': return jsonMode.value === 'path' ? '用 $.users[*].name 这类表达式提取字段，结果会保持 JSON。' : '在左侧输入内容，结果会随输入即时更新。'
     case 'json-yaml': return direction.value === 'encode' ? '粘贴 JSON，结果会转换为可读 YAML。' : '粘贴 YAML，结果会转换为严格 JSON。'
     case 'csv-json': return direction.value === 'encode' ? '首行作为字段名，把 CSV 转成对象数组。' : '粘贴对象数组，把 JSON 转成可直接保存的 CSV。'
     default: return '在左侧输入内容，结果会随输入即时更新。'
@@ -193,7 +196,7 @@ async function run() {
   try {
     if (tool.value === 'base64') output.value = direction.value === 'encode' ? encodeBase64(input.value) : decodeBase64(input.value)
     else if (tool.value === 'url') output.value = direction.value === 'encode' ? encodeUrl(input.value) : decodeUrl(input.value)
-    else if (tool.value === 'json') output.value = transformJson(input.value, jsonCompact.value)
+    else if (tool.value === 'json') output.value = jsonMode.value === 'path' ? transformJsonPath(input.value, jsonPath.value) : transformJson(input.value, jsonMode.value === 'compact')
     else if (tool.value === 'json-yaml') output.value = transformJsonYaml(input.value, direction.value === 'encode' ? 'json-to-yaml' : 'yaml-to-json')
     else if (tool.value === 'csv-json') output.value = transformCsvJson(input.value, direction.value === 'encode' ? 'csv-to-json' : 'json-to-csv')
     else if (tool.value === 'jwt') output.value = JSON.stringify(decodeJwt(input.value), null, 2)
@@ -319,7 +322,7 @@ function closeResultMenuOnWindow() { closeResultMenu() }
 // short enough that the result feels attached to the input.
 let liveTimer: ReturnType<typeof setTimeout> | undefined
 watch(
-  [input, secondaryInput, pattern, flags, jsonCompact, direction, fromBase, toBase,
+  [input, secondaryInput, pattern, flags, jsonCompact, jsonMode, jsonPath, direction, fromBase, toBase,
     dateStart, dateEnd, dateAmount, dateUnit, dateMode, qrSize, qrMode, tool],
   () => {
     clearTimeout(liveTimer)
@@ -403,6 +406,7 @@ onBeforeUnmount(() => {
               : tool === 'timestamp' ? '时间戳或日期'
                 : tool === 'regex' ? '待匹配文本'
                   : tool === 'jwt' ? 'JWT Token'
+              : tool === 'json' && jsonMode === 'path' ? 'JSON 文档'
               : tool === 'radix' ? '待转换整数'
                 : tool === 'json-yaml' ? (direction === 'encode' ? 'JSON 内容' : 'YAML 内容')
                   : tool === 'csv-json' ? (direction === 'encode' ? 'CSV 内容' : 'JSON 对象数组')
@@ -464,7 +468,13 @@ onBeforeUnmount(() => {
         <!-- Everything else is a text body, optionally preceded by its own
              fields. -->
         <template v-else>
-          <div v-if="tool === 'regex'" class="stack gap-3 p-3 border-b border-line">
+          <div v-if="tool === 'json' && jsonMode === 'path'" class="stack gap-3 p-3 border-b border-line">
+            <FieldRow label="JSONPath 查询" hint="支持 $.field、[0]、[*]、$..field">
+              <input v-model="jsonPath" name="json-path" spellcheck="false" class="field w-full font-mono" placeholder="$.users[*].name" />
+            </FieldRow>
+          </div>
+
+          <div v-else-if="tool === 'regex'" class="stack gap-3 p-3 border-b border-line">
             <FieldRow label="正则表达式">
               <div class="row gap-2">
                 <input v-model="pattern" name="regex-pattern" spellcheck="false" class="field flex-1 font-mono" placeholder="(Tool\w+)" />

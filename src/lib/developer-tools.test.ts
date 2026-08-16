@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, generateUuids, sha256, testRegex, transformCsvJson, transformJson, transformJsonYaml } from './developer-tools'
+import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, generateUuids, sha256, testRegex, transformCsvJson, transformJson, transformJsonPath, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -112,6 +112,22 @@ describe('structured data utilities', () => {
 
   it('rejects malformed JWT input', () => {
     expect(() => decodeJwt('not-a-token')).toThrow('三部分')
+  })
+})
+
+describe('JSONPath queries', () => {
+  const document = JSON.stringify({ users: [{ name: 'Ada', roles: ['admin'] }, { name: 'Lin', roles: ['editor'] }], nested: { name: 'Root' } })
+
+  it('selects nested properties, array indexes and wildcards', () => {
+    expect(transformJsonPath(document, '$.users[0].name')).toBe('"Ada"')
+    expect(JSON.parse(transformJsonPath(document, '$.users[*].name'))).toEqual(['Ada', 'Lin'])
+    expect(JSON.parse(transformJsonPath(document, '$["nested"].name'))).toBe('Root')
+  })
+
+  it('supports bounded recursive lookup and clear syntax errors', () => {
+    expect(JSON.parse(transformJsonPath(document, '$..name'))).toEqual(['Ada', 'Lin', 'Root'])
+    expect(() => transformJsonPath(document, 'users.name')).toThrow('必须以 $ 开头')
+    expect(() => transformJsonPath(document, '$.users[')).toThrow('缺少右方括号')
   })
 })
 
