@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { calculateCidr, calculateDateDifference, calculateDateOffset, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
+import { calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type CompressionFormat, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
 import { decodeQrImage, generateQrCode } from '@/lib/qr-tools'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import AppIcon from '@/components/AppIcon.vue'
@@ -9,7 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import FieldRow from '@/components/FieldRow.vue'
 import { useWorkbenchStore } from '@/stores/workbench'
 
-type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'base32' | 'base58' | 'hex' | 'url' | 'json' | 'json-yaml' | 'csv-json' | 'json-schema' | 'sql' | 'cidr' | 'color' | 'cron' | 'xml' | 'html-entities' | 'jwt' | 'hash' | 'uuid' | 'timestamp' | 'radix' | 'regex' | 'diff'
+type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'base32' | 'base58' | 'compress' | 'hex' | 'url' | 'json' | 'json-yaml' | 'csv-json' | 'json-schema' | 'sql' | 'cidr' | 'color' | 'cron' | 'xml' | 'html-entities' | 'jwt' | 'hash' | 'uuid' | 'timestamp' | 'radix' | 'regex' | 'diff'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,6 +20,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
   { id: 'base64', icon: 'code', title: 'Base64', description: 'Unicode 文本编码与解码' },
   { id: 'base32', icon: 'code', title: 'Base32', description: 'RFC 4648 文本编码与解码' },
   { id: 'base58', icon: 'binary', title: 'Base58', description: 'Bitcoin 字符表编码与解码' },
+  { id: 'compress', icon: 'archive', title: 'GZip / Deflate', description: '文本压缩与解压' },
   { id: 'hex', icon: 'binary', title: 'Hex', description: 'UTF-8 文本与十六进制互转' },
   { id: 'url', icon: 'link', title: 'URL 编解码', description: '处理查询参数与特殊字符' },
   { id: 'json', icon: 'json', title: 'JSON', description: '格式化、压缩与语法检查' },
@@ -43,6 +44,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
 
 const tool = ref<DeveloperToolId>('base64')
 const direction = ref<'encode' | 'decode'>('encode')
+const compressionFormat = ref<CompressionFormat>('gzip')
 const input = ref(store.consumeIntakeText())
 const secondaryInput = ref('')
 const pattern = ref('')
@@ -137,6 +139,13 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
           else direction.value = id as 'encode' | 'decode'
         },
       }
+    case 'compress':
+      return {
+        label: '压缩格式',
+        options: [{ id: 'gzip', label: 'GZip' }, { id: 'deflate', label: 'Deflate' }],
+        value: compressionFormat.value,
+        set: (id) => { compressionFormat.value = id as CompressionFormat; resetResult() },
+      }
     case 'json':
       return {
         label: '输出样式',
@@ -179,6 +188,7 @@ const emptyResultHint = computed(() => {
     case 'json-schema': return schemaDirection.value === 'generate' ? '粘贴 JSON 样例，生成可编辑的 JSON Schema。' : '左侧放 JSON，下面放 Schema，结果会列出校验错误。'
     case 'base32': return direction.value === 'encode' ? '把 UTF-8 文本转成 RFC 4648 Base32。' : '粘贴 Base32（可带或不带 = 补位）并还原 UTF-8 文本。'
     case 'base58': return direction.value === 'encode' ? '把 UTF-8 文本转成 Bitcoin Base58。' : '粘贴 Base58 字符串并还原 UTF-8 文本。'
+    case 'compress': return direction.value === 'encode' ? '把文本压缩为 Base64 载体；内容只在本机处理。' : '粘贴压缩数据的 Base64 载体，在本机解压为 UTF-8 文本。'
     case 'sql': return 'SQL 只会在本机做词法整理和缩进，不执行语句，也不会连接数据库。'
     case 'cidr': return '输入 IPv4 CIDR，例如 192.168.1.25/24，结果会列出网络、广播和主机范围。'
     case 'color': return '输入 #Hex、rgb()/rgba() 或 hsl()/hsla()，结果会统一输出三种常见格式。'
@@ -234,6 +244,7 @@ async function run() {
     if (tool.value === 'base64') output.value = direction.value === 'encode' ? encodeBase64(input.value) : decodeBase64(input.value)
     else if (tool.value === 'base32') output.value = direction.value === 'encode' ? encodeBase32(input.value) : decodeBase32(input.value)
     else if (tool.value === 'base58') output.value = direction.value === 'encode' ? encodeBase58(input.value) : decodeBase58(input.value)
+    else if (tool.value === 'compress') output.value = direction.value === 'encode' ? await compressText(input.value, compressionFormat.value) : await decompressText(input.value, compressionFormat.value)
     else if (tool.value === 'hex') output.value = direction.value === 'encode' ? encodeHex(input.value) : decodeHex(input.value)
     else if (tool.value === 'url') output.value = direction.value === 'encode' ? encodeUrl(input.value) : decodeUrl(input.value)
     else if (tool.value === 'json') output.value = jsonMode.value === 'path' ? transformJsonPath(input.value, jsonPath.value) : transformJson(input.value, jsonMode.value === 'compact')
@@ -369,7 +380,7 @@ function closeResultMenuOnWindow() { closeResultMenu() }
 // short enough that the result feels attached to the input.
 let liveTimer: ReturnType<typeof setTimeout> | undefined
 watch(
-  [input, secondaryInput, pattern, flags, jsonCompact, jsonMode, jsonPath, direction, entityDirection, schemaDirection, fromBase, toBase,
+  [input, secondaryInput, pattern, flags, jsonCompact, jsonMode, jsonPath, direction, entityDirection, schemaDirection, compressionFormat, fromBase, toBase,
     dateStart, dateEnd, dateAmount, dateUnit, dateMode, qrSize, qrMode, tool],
   () => {
     clearTimeout(liveTimer)
@@ -601,7 +612,7 @@ onBeforeUnmount(() => {
             <span v-if="isLive && hasOutput" class="chip h-5 px-1.5 text-[11px] bg-success-soft text-success">实时</span>
           </p>
           <span class="row gap-1 shrink-0">
-            <button v-if="(tool === 'base64' || tool === 'base32' || tool === 'base58' || tool === 'hex' || tool === 'url' || tool === 'html-entities') && hasOutput" class="btn-ghost btn-sm" @click="swapTransform">
+            <button v-if="(tool === 'base64' || tool === 'base32' || tool === 'base58' || tool === 'compress' || tool === 'hex' || tool === 'url' || tool === 'html-entities') && hasOutput" class="btn-ghost btn-sm" @click="swapTransform">
               交换并反向
             </button>
             <button v-if="resultClipboardText" class="btn-ghost btn-sm" @click="() => copyResult()">复制</button>
@@ -618,7 +629,7 @@ onBeforeUnmount(() => {
         </div>
 
         <textarea
-          v-else-if="hasOutput && ['base64', 'base32', 'base58', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'sql', 'cidr', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'uuid', 'radix'].includes(tool)"
+          v-else-if="hasOutput && ['base64', 'base32', 'base58', 'compress', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'sql', 'cidr', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'uuid', 'radix'].includes(tool)"
           :value="output"
           readonly
           aria-label="处理结果"

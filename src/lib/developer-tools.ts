@@ -89,6 +89,7 @@ export type JsonYamlDirection = 'json-to-yaml' | 'yaml-to-json'
 export type CsvJsonDirection = 'csv-to-json' | 'json-to-csv'
 export type HtmlEntityDirection = 'encode' | 'decode'
 export type JsonSchemaDirection = 'generate' | 'validate'
+export type CompressionFormat = 'gzip' | 'deflate'
 
 const STRUCTURED_TEXT_MAX_BYTES = 2 * 1024 * 1024
 
@@ -96,6 +97,69 @@ function assertStructuredTextSize(value: string) {
   if (new TextEncoder().encode(value).byteLength > STRUCTURED_TEXT_MAX_BYTES) {
     throw new Error('结构化文本超过 2 MB，请先拆分后再转换。')
   }
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = ''
+  for (let start = 0; start < bytes.length; start += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000))
+  }
+  return btoa(binary)
+}
+
+function base64ToBytes(value: string) {
+  const compact = value.replace(/\s+/g, '')
+  if (!compact) throw new Error('请输入需要解压的 Base64 内容。')
+  if (compact.length > 8 * 1024 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact) || compact.replace(/=+$/, '').length % 4 === 1) {
+    throw new Error('压缩数据不是有效的 Base64，或超过 8 MB 安全上限。')
+  }
+  try {
+    const binary = atob(compact.padEnd(Math.ceil(compact.length / 4) * 4, '='))
+    return Uint8Array.from(binary, character => character.charCodeAt(0))
+  } catch {
+    throw new Error('无法读取压缩数据的 Base64 编码。')
+  }
+}
+
+async function readStreamBytes(stream: ReadableStream<Uint8Array>, maxBytes: number) {
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const next = await reader.read()
+      if (next.done) break
+      total += next.value.byteLength
+      if (total > maxBytes) throw new Error('解压结果超过 8 MB 安全上限，请先拆分输入。')
+      chunks.push(next.value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const result = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    result.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return result
+}
+
+export async function compressText(value: string, format: CompressionFormat = 'gzip') {
+  assertStructuredTextSize(value)
+  if (typeof CompressionStream === 'undefined') throw new Error('当前 WebView 不支持 GZip / Deflate 压缩。')
+  const stream = new Blob([value]).stream().pipeThrough(new CompressionStream(format))
+  return bytesToBase64(await readStreamBytes(stream, 8 * 1024 * 1024))
+}
+
+export async function decompressText(value: string, format: CompressionFormat = 'gzip') {
+  const bytes = base64ToBytes(value)
+  if (typeof DecompressionStream === 'undefined') throw new Error('当前 WebView 不支持 GZip / Deflate 解压。')
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format))
+  const result = await readStreamBytes(stream, 8 * 1024 * 1024)
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(result)
+  assertStructuredTextSize(text)
+  return text
 }
 
 export function encodeBase64(value: string) {

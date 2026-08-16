@@ -103,6 +103,7 @@ export const toolCatalog: ToolCatalogItem[] = [
   { id: 'developer-base64', title: 'Base64 编解码', description: '支持中文与 Emoji 的文本转换', group: '开发', icon: 'code', to: { path: '/developer-tools', query: { tool: 'base64' } }, keywords: ['base64', '编码', '解码'] },
   { id: 'developer-base32', title: 'Base32 编解码', description: 'RFC 4648 文本编码与解码', group: '开发', icon: 'code', to: { path: '/developer-tools', query: { tool: 'base32' } }, keywords: ['base32', 'rfc4648', '编码', '解码'] },
   { id: 'developer-base58', title: 'Base58 编解码', description: 'Bitcoin 字符表文本编码与解码', group: '开发', icon: 'binary', to: { path: '/developer-tools', query: { tool: 'base58' } }, keywords: ['base58', 'bitcoin', '编码', '解码'] },
+  { id: 'developer-compress', title: 'GZip / Deflate', description: '把文本压缩为 Base64，或从 Base64 解压', group: '开发', icon: 'archive', to: { path: '/developer-tools', query: { tool: 'compress' } }, keywords: ['gzip', 'deflate', '压缩', '解压', 'base64'] },
   { id: 'developer-url', title: 'URL 编解码', description: '处理查询参数和特殊字符', group: '开发', icon: 'link', to: { path: '/developer-tools', query: { tool: 'url' } }, keywords: ['url', 'encodeURIComponent', '百分号'] },
   { id: 'developer-json', title: 'JSON 格式化与压缩', description: '格式化/压缩/JSONPath', group: '开发', icon: 'json', to: { path: '/developer-tools', query: { tool: 'json' } }, keywords: ['json', 'jsonpath'] },
   { id: 'developer-jwt', title: 'JWT 查看器', description: '本地读取 Header、Payload 与过期时间', group: '开发', icon: 'shield', to: { path: '/developer-tools', query: { tool: 'jwt' } }, keywords: ['token', 'claims', 'header', 'payload'] },

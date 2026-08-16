@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateCidr, calculateDateDifference, calculateDateOffset, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
+import { calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -43,6 +43,17 @@ describe('Base32 and Base58 transforms', () => {
     expect(decodeBase58(encodeBase58('\u0000A'))).toBe('\u0000A')
     expect(decodeBase58('1')).toBe('\u0000')
     expect(() => decodeBase58('0OIl')).toThrow('无效字符')
+  })
+})
+
+describe('local text compression', () => {
+  it('round-trips UTF-8 text through GZip and Deflate Base64', async () => {
+    const source = '压缩测试：ToolKnit '.repeat(20)
+    for (const format of ['gzip', 'deflate'] as const) {
+      const encoded = await compressText(source, format)
+      expect(encoded).not.toContain(source)
+      expect(await decompressText(encoded, format)).toBe(source)
+    }
   })
 })
 
