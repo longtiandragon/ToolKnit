@@ -1858,11 +1858,22 @@ watch(() => draft.value?.content ?? '', (content) => {
   if (content.length > EXPLICIT_MARKDOWN_PREVIEW_THRESHOLD) {
     // Rendering a multi-megabyte document into one DOM tree is expensive even
     // when parsing happens in a Worker. Keep the virtualized CodeMirror view
-    // responsive and make the costly reader view an explicit action.
-    if (fullLargePreviewRequested.value) fullLargePreviewRequested.value = false
-    previewRenderDurationMs.value = undefined
-    previewSource.value = `> ${deferredMarkdownPreviewMessage()}`
-    previewPending.value = false
+    // responsive and make the first costly reader view an explicit action.
+    // Once requested, keep it live with a longer settle delay: the reader can
+    // then reuse unchanged Worker blocks instead of rebuilding the whole DOM.
+    if (!fullLargePreviewRequested.value) {
+      previewRenderDurationMs.value = undefined
+      previewSource.value = `> ${deferredMarkdownPreviewMessage()}`
+      previewPending.value = false
+      return
+    }
+    const normalized = normalizedPreview(content)
+    previewPending.value = true
+    previewRenderProgress.value = undefined
+    previewTimer = window.setTimeout(() => {
+      if (previewSource.value === normalized) { previewPending.value = false; return }
+      previewSource.value = normalized
+    }, 720)
     return
   }
   const normalized = normalizedPreview(content)
@@ -4338,7 +4349,14 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <div v-if="mode === 'edit' || mode === 'split'" class="row gap-0.5 shrink-0 px-2 h-9 border-b border-line overflow-x-auto" role="toolbar" aria-label="Markdown 格式工具">
+        <!-- Wraps rather than scrolls. At 1240px — the width the desktop window
+             opens at — five of the seventeen controls were off the right edge
+             with nothing to say so, and the last one over the edge was
+             「右键编辑区查看更多」: the hint telling you where the rest of the
+             commands live was itself one of the hidden ones. A second row
+             costs 28px of editor height, and only when the window is too
+             narrow for one. -->
+        <div v-if="mode === 'edit' || mode === 'split'" class="row flex-wrap gap-0.5 shrink-0 px-2 py-1 min-h-9 border-b border-line" role="toolbar" aria-label="Markdown 格式工具">
           <button type="button" class="btn-tool" title="在当前文档中查找或替换 · Ctrl+F" aria-label="查找或替换，Ctrl+F" @mousedown.prevent @click.stop="openDocumentSearch()">
             <AppIcon name="search" :size="14" />查找
           </button>

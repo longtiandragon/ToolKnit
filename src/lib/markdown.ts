@@ -214,6 +214,12 @@ const incrementalBlockCache = new Map<string, string>()
 let incrementalBlockCacheBytes = 0
 let previewCacheBytes = 0
 
+export interface RenderedMarkdownBlock {
+  /** Exact source-derived cache key computed in the preview Worker. */
+  key: string
+  html: string
+}
+
 // JavaScript strings are UTF-16 sequences. Count their conservative in-memory
 // footprint rather than code units so these cache budgets stay meaningful for
 // Chinese-heavy notes as well as ASCII source code.
@@ -323,7 +329,7 @@ export function splitMarkdownPreviewBlocks(source: string) {
   return blocks.length > 1 ? blocks : undefined
 }
 
-export function renderMarkdownBlocksCached(source: string, deferCodeHighlight = false) {
+export function renderMarkdownBlockRecordsCached(source: string, deferCodeHighlight = false): RenderedMarkdownBlock[] | undefined {
   const blocks = splitMarkdownPreviewBlocks(source)
   if (!blocks) return undefined
   const mode = deferCodeHighlight ? 'deferred' : 'complete'
@@ -335,12 +341,17 @@ export function renderMarkdownBlocksCached(source: string, deferCodeHighlight = 
       // retained bytes, so stable sections survive nearby edits.
       incrementalBlockCache.delete(key)
       incrementalBlockCache.set(key, cached)
-      return cached
+      return { key, html: cached }
     }
     const html = deferCodeHighlight ? renderMarkdownDeferredCode(block) : renderMarkdown(block)
     cacheIncrementalBlock(key, html)
-    return html
+    return { key, html }
   })
+}
+
+/** Compatibility surface for full-document joins and existing benchmarks. */
+export function renderMarkdownBlocksCached(source: string, deferCodeHighlight = false) {
+  return renderMarkdownBlockRecordsCached(source, deferCodeHighlight)?.map((block) => block.html)
 }
 
 function renderMarkdownIncremental(source: string, deferCodeHighlight: boolean) {

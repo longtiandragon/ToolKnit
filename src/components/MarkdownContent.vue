@@ -11,7 +11,7 @@ import { scrollOffset, scrollProgress } from '@/lib/scroll-sync'
 import { markdownPreviewImageFilename, markdownPreviewImageMarkup } from '@/lib/markdown-image-import'
 import { markdownLinkMarkup } from '@/lib/markdown-link'
 import { reconcileRootHtml } from '@/lib/dom-html-reconcile'
-import { nextMarkdownPreviewBatch } from '@/lib/progressive-markdown-preview'
+import { nextMarkdownPreviewBatchRange, planMarkdownPreviewReconciliation } from '@/lib/progressive-markdown-preview'
 
 defineOptions({ inheritAttrs: false })
 
@@ -57,6 +57,12 @@ let elapsedForNextHtml = undefined as number | undefined
 let progressiveRenderFrame: number | undefined
 let progressiveRenderRevision = 0
 let progressiveOwnsDom = false
+let progressiveRenderInFlight = false
+// Keep only compact Worker source keys after a render. Retaining the previous
+// multi-megabyte HTML array would duplicate content that already lives in DOM.
+let progressiveRenderedBlockKeys: string[] = []
+type ProgressiveBlockRange = { start: Comment; end: Comment }
+let progressiveBlockRanges: ProgressiveBlockRange[] = []
 let scrollFrame: number | undefined
 let suppressScrollEvent = false
 let codeHighlightRequestId = 0
@@ -122,12 +128,12 @@ function finishRender(rendered: string) {
   const nextHtml = deferExternalMarkdownImages(rendered)
   if (html.value === nextHtml) {
     if (progressiveOwnsDom && root.value) {
-      progressiveOwnsDom = false
       const result = reconcileRootHtml(root.value, nextHtml, [])
       renderedChildSignatures = result.signatures
       root.value.dataset.previewReusedNodes = String(result.reused)
       root.value.dataset.previewReplacedNodes = String(result.replaced)
       delete root.value.dataset.previewProgressive
+      clearProgressiveState()
     }
     // Vue does not notify a ref watcher when the next value is identical. A
     // cache hit or Frontmatter-only edit still completed real Worker work, so
@@ -136,19 +142,52 @@ function finishRender(rendered: string) {
     settleRenderedDom(elapsedMs)
     return
   }
-  progressiveOwnsDom = false
+  clearProgressiveState()
   elapsedForNextHtml = elapsedMs
   html.value = nextHtml
+}
+
+function progressiveRangesValid(reader: HTMLElement) {
+  return progressiveRenderedBlockKeys.length === progressiveBlockRanges.length
+    && progressiveBlockRanges.every(({ start, end }) => start.parentNode === reader && end.parentNode === reader)
+}
+
+function clearProgressiveState() {
+  progressiveRenderedBlockKeys = []
+  progressiveBlockRanges = []
+  progressiveRenderInFlight = false
+  progressiveOwnsDom = false
+}
+
+function removeProgressiveRange(range: ProgressiveBlockRange) {
+  let node: ChildNode | null = range.start
+  while (node) {
+    const next: ChildNode | null = node.nextSibling
+    node.remove()
+    if (node === range.end) break
+    node = next
+  }
+}
+
+function insertProgressiveBlock(reader: HTMLElement, rendered: string, anchor: ChildNode | null) {
+  const start = document.createComment('markdown-block-start')
+  const end = document.createComment('markdown-block-end')
+  const template = document.createElement('template')
+  template.innerHTML = deferExternalMarkdownImages(rendered)
+  const fragment = document.createDocumentFragment()
+  fragment.append(start, template.content, end)
+  reader.insertBefore(fragment, anchor)
+  return { start, end } satisfies ProgressiveBlockRange
 }
 
 function cancelProgressiveRender() {
   progressiveRenderRevision += 1
   if (progressiveRenderFrame !== undefined) window.cancelAnimationFrame(progressiveRenderFrame)
   progressiveRenderFrame = undefined
-  progressiveOwnsDom = false
+  if (progressiveRenderInFlight) clearProgressiveState()
 }
 
-function finishProgressiveRender(blocks: readonly string[], workerElapsedMs: number) {
+function finishProgressiveRender(blocks: readonly string[], blockKeys: readonly string[], workerElapsedMs: number) {
   cancelProgressiveRender()
   const reader = root.value
   if (!reader || !blocks.length) {
@@ -158,36 +197,54 @@ function finishProgressiveRender(blocks: readonly string[], workerElapsedMs: num
   }
 
   const revision = progressiveRenderRevision
+  const rangesValid = blockKeys.length === blocks.length && progressiveRangesValid(reader)
+  const plan = planMarkdownPreviewReconciliation(progressiveRenderedBlockKeys, blockKeys, rangesValid)
   progressiveOwnsDom = true
+  progressiveRenderInFlight = true
   renderedChildSignatures = []
-  reader.replaceChildren()
+  if (plan.fullReplace) reader.replaceChildren()
+  else {
+    for (let oldIndex = plan.replaceStart; oldIndex < plan.previousReplaceEnd; oldIndex += 1) {
+      const range = progressiveBlockRanges[oldIndex]
+      if (range) removeProgressiveRange(range)
+    }
+  }
+  const nextRanges = new Array<ProgressiveBlockRange>(blocks.length)
+  for (let index = 0; index < plan.prefix; index += 1) nextRanges[index] = progressiveBlockRanges[index]!
+  for (let offset = 0; offset < plan.suffix; offset += 1) {
+    nextRanges[blocks.length - plan.suffix + offset] = progressiveBlockRanges[progressiveRenderedBlockKeys.length - plan.suffix + offset]!
+  }
+  const anchor = plan.suffix ? nextRanges[blocks.length - plan.suffix]?.start ?? null : null
   reader.dataset.previewProgressive = 'true'
-  reader.dataset.previewReusedNodes = '0'
-  reader.dataset.previewReplacedNodes = '0'
-  emit('renderProgress', 0, blocks.length)
-  let index = 0
+  reader.dataset.previewReusedNodes = String(plan.prefix + plan.suffix)
+  reader.dataset.previewReplacedNodes = String(plan.nextReplaceEnd - plan.replaceStart)
+  emit('renderProgress', plan.prefix, blocks.length)
+  let index = plan.replaceStart
+
+  const complete = () => {
+    progressiveRenderInFlight = false
+    progressiveRenderedBlockKeys = [...blockKeys]
+    progressiveBlockRanges = nextRanges
+    pending.value = false
+    emit('renderProgress', blocks.length, blocks.length)
+    settleRenderedDom(workerElapsedMs)
+  }
 
   const appendNextBatch = () => {
     progressiveRenderFrame = undefined
     if (revision !== progressiveRenderRevision || !root.value) return
-    const batch = nextMarkdownPreviewBatch(blocks, index)
+    if (index >= plan.nextReplaceEnd) { complete(); return }
+    const batch = nextMarkdownPreviewBatchRange(blocks, index, undefined, undefined, plan.nextReplaceEnd)
     if (!batch) {
-      pending.value = false
-      reader.dataset.previewReplacedNodes = String(reader.childNodes.length)
-      settleRenderedDom(workerElapsedMs)
+      complete()
       return
     }
-    const template = document.createElement('template')
-    template.innerHTML = deferExternalMarkdownImages(batch.html)
-    reader.append(template.content)
+    for (let blockIndex = batch.start; blockIndex < batch.end; blockIndex += 1) {
+      nextRanges[blockIndex] = insertProgressiveBlock(reader, blocks[blockIndex] ?? '', anchor)
+    }
     index = batch.end
     emit('renderProgress', index, blocks.length)
-    if (index >= blocks.length) {
-      pending.value = false
-      reader.dataset.previewReplacedNodes = String(reader.childNodes.length)
-      settleRenderedDom(workerElapsedMs)
-      return
-    }
+    if (index >= plan.nextReplaceEnd) { complete(); return }
     progressiveRenderFrame = window.requestAnimationFrame(appendNextBatch)
   }
 
@@ -957,7 +1014,7 @@ onMounted(() => {
   window.addEventListener('knitspace:close-context-menus', closeMarkdownMediaMenus)
   if (!props.worker || typeof Worker === 'undefined') return
   previewWorker = new Worker(new URL('../workers/markdown-preview.worker.ts', import.meta.url), { type: 'module' })
-  previewWorker.onmessage = ({ data }: MessageEvent<{ type: 'render' | 'highlight' | 'math'; id: number; html?: string; htmlBlocks?: string[]; error?: string }>) => {
+  previewWorker.onmessage = ({ data }: MessageEvent<{ type: 'render' | 'highlight' | 'math'; id: number; html?: string; htmlBlocks?: string[]; blockKeys?: string[]; error?: string }>) => {
     if (data.type === 'highlight') {
       const request = codeHighlightRequests.get(data.id)
       codeHighlightRequests.delete(data.id)
@@ -989,7 +1046,7 @@ onMounted(() => {
     }
     if (data.id !== latestRequestId) return
     if (data.htmlBlocks !== undefined) {
-      finishProgressiveRender(data.htmlBlocks, Math.max(0, Math.round(performance.now() - renderStartedAt)))
+      finishProgressiveRender(data.htmlBlocks, data.blockKeys ?? [], Math.max(0, Math.round(performance.now() - renderStartedAt)))
       return
     }
     if (data.html !== undefined) finishRender(data.html)

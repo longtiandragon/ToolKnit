@@ -7,11 +7,16 @@ const documents = readFileSync(new URL('../views/DocumentsView.vue', import.meta
 
 describe('large Markdown reader surface', () => {
   it('requests safe Worker sections and mounts them in cancellable animation-frame batches', () => {
-    expect(worker).toContain('renderMarkdownBlocksCached')
+    expect(worker).toContain('renderMarkdownBlockRecordsCached')
     expect(worker).toContain('htmlBlocks')
-    expect(component).toContain('nextMarkdownPreviewBatch')
+    expect(worker).toContain('blockKeys')
+    expect(component).toContain('nextMarkdownPreviewBatchRange')
     expect(component).toContain('window.requestAnimationFrame(appendNextBatch)')
     expect(component).toContain('cancelProgressiveRender()')
+    expect(component).toContain('planMarkdownPreviewReconciliation')
+    expect(component).toContain('progressiveBlockRanges')
+    expect(component).toContain('progressiveRenderedBlockKeys')
+    expect(documents).toContain('Once requested, keep it live with a longer settle delay')
   })
 
   it('exposes progress, cancellation and a keyboard-accessible desktop menu', () => {

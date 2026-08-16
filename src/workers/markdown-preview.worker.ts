@@ -1,12 +1,12 @@
 import { highlightCode } from '@/lib/code-highlight'
-import { renderMarkdownBlocksCached, renderMarkdownCached } from '@/lib/markdown'
+import { renderMarkdownBlockRecordsCached, renderMarkdownCached } from '@/lib/markdown'
 import katex from 'katex'
 
 type RenderRequest = { type: 'render'; id: number; source: string; progressive?: boolean }
 type HighlightRequest = { type: 'highlight'; id: number; source: string; language: string }
 type MathRequest = { type: 'math'; id: number; source: string; displayMode: boolean }
 type PreviewRequest = RenderRequest | HighlightRequest | MathRequest
-type RenderResponse = { type: 'render' | 'highlight' | 'math'; id: number; html?: string; htmlBlocks?: string[]; error?: string }
+type RenderResponse = { type: 'render' | 'highlight' | 'math'; id: number; html?: string; htmlBlocks?: string[]; blockKeys?: string[]; error?: string }
 
 // Markdown-it, KaTeX and syntax highlighting are all string transformations.
 // Keeping them in a dedicated worker means a long preview cannot block typing,
@@ -19,9 +19,14 @@ const workerScope = globalThis as unknown as {
 workerScope.onmessage = ({ data }) => {
   try {
     if (data.type === 'render' && data.progressive) {
-      const htmlBlocks = renderMarkdownBlocksCached(data.source, true)
-      if (htmlBlocks) {
-        workerScope.postMessage({ type: 'render', id: data.id, htmlBlocks })
+      const blocks = renderMarkdownBlockRecordsCached(data.source, true)
+      if (blocks) {
+        workerScope.postMessage({
+          type: 'render',
+          id: data.id,
+          htmlBlocks: blocks.map((block) => block.html),
+          blockKeys: blocks.map((block) => block.key),
+        })
         return
       }
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderMarkdown, renderMarkdownBlocksCached, renderMarkdownCached, renderMarkdownDeferredCode, splitMarkdownPreviewBlocks } from './markdown'
+import { renderMarkdown, renderMarkdownBlockRecordsCached, renderMarkdownBlocksCached, renderMarkdownCached, renderMarkdownDeferredCode, splitMarkdownPreviewBlocks } from './markdown'
 
 describe('renderMarkdown', () => {
   it('highlights a registered language', () => {
@@ -122,6 +122,19 @@ describe('renderMarkdown', () => {
     expect(renderMarkdownBlocksCached(source, true)?.join('')).toBe(renderMarkdownDeferredCode(source))
     expect(renderMarkdownCached(source, true)).toBe(renderMarkdownDeferredCode(source))
     expect(renderMarkdownCached(changed, true)).toContain('第 360 节（已更新）')
+  })
+
+  it('keeps stable Worker block keys and invalidates only an edited section', () => {
+    const sections = Array.from({ length: 6 }, (_, index) => `## 第 ${index + 1} 节\n\n${`内容 ${index}。`.repeat(2_000)}\n`)
+    const source = `# 分块 key\n\n${'前言。'.repeat(2_000)}\n${sections.join('\n')}`
+    const changed = source.replace('内容 3。', '内容 3 已修改。')
+    const before = renderMarkdownBlockRecordsCached(source, true)!
+    const after = renderMarkdownBlockRecordsCached(changed, true)!
+
+    expect(before.map((block) => block.html).join('')).toBe(renderMarkdownDeferredCode(source))
+    expect(after).toHaveLength(before.length)
+    expect(after.filter((block, index) => block.key !== before[index]?.key)).toHaveLength(1)
+    expect(after.filter((block, index) => block.html !== before[index]?.html)).toHaveLength(1)
   })
 
   it('merges a short document title into its first substantial preview section', () => {
