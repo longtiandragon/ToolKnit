@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { open, save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { isDesktop } from '@/lib/native'
-import { createDesktopZipArchive, extractDesktopZipArchive, listDesktopZipArchive, type DesktopArchiveListing, type DesktopArchiveOperationSummary } from '@/lib/archive-native'
+import { createDesktopTarArchive, createDesktopZipArchive, extractDesktopTarArchive, extractDesktopZipArchive, listDesktopTarArchive, listDesktopZipArchive, type DesktopArchiveListing, type DesktopArchiveOperationSummary } from '@/lib/archive-native'
 import { useUiStore } from '@/stores/ui'
 import AppIcon from '@/components/AppIcon.vue'
 import FileDropZone from '@/components/FileDropZone.vue'
@@ -10,9 +10,11 @@ import PageHeader from '@/components/PageHeader.vue'
 import ToolLayout from '@/components/ToolLayout.vue'
 
 type ArchiveMode = 'create' | 'inspect' | 'extract'
+type ArchiveFormat = 'zip' | 'tar' | 'tar.gz'
 const desktop = isDesktop()
 const ui = useUiStore()
 const mode = ref<ArchiveMode>('create')
+const format = ref<ArchiveFormat>('zip')
 const browserFiles = ref<File[]>([])
 const inputPaths = ref<string[]>([])
 const archivePath = ref('')
@@ -20,7 +22,7 @@ const extractDirectory = ref('')
 const listing = ref<DesktopArchiveListing>()
 const summary = ref<DesktopArchiveOperationSummary>()
 const busy = ref(false)
-const message = ref(desktop ? '选择文件或文件夹后，创建一个新的 ZIP；原件不会被修改。' : 'ZIP 工具需要桌面端文件路径权限，浏览器版暂不读取本机路径。')
+const message = ref(desktop ? '选择文件或文件夹后，创建一个新的归档；原件不会被修改。' : '归档工具需要桌面端文件路径权限，浏览器版暂不读取本机路径。')
 
 const tabs: { id: ArchiveMode; label: string; icon: string; description: string }[] = [
   { id: 'create', label: '创建 ZIP', icon: 'archive', description: '把文件和文件夹打包成一个新归档' },
@@ -41,6 +43,13 @@ function formatBytes(value: number) {
 function basename(path: string) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
 }
+
+function archiveKind(path: string) {
+  const lower = path.toLocaleLowerCase('en-US')
+  return lower.endsWith('.zip') ? 'zip' : lower.endsWith('.tar.gz') || lower.endsWith('.tgz') ? 'tar.gz' : 'tar'
+}
+
+const formatLabel = computed(() => format.value === 'zip' ? 'ZIP' : format.value === 'tar.gz' ? 'TAR.GZ' : 'TAR')
 
 function addInputPaths(paths: string[]) {
   inputPaths.value = [...new Set([...inputPaths.value, ...paths])]
@@ -67,7 +76,7 @@ async function chooseInputFolder() {
 
 async function chooseArchive() {
   if (!desktop || busy.value) return
-  const selected = await open({ title: '选择 ZIP 归档', multiple: false, filters: [{ name: 'ZIP 归档', extensions: ['zip'] }] })
+  const selected = await open({ title: '选择归档', multiple: false, filters: [{ name: 'ZIP、TAR、TAR.GZ', extensions: ['zip', 'tar', 'tgz', 'gz'] }] })
   if (typeof selected !== 'string') return
   archivePath.value = selected
   listing.value = undefined
@@ -91,17 +100,18 @@ function selectMode(next: ArchiveMode) {
 
 async function createArchive() {
   if (!desktop || !inputPaths.value.length || busy.value) return
-  const output = await saveDialog({ title: '保存 ZIP 归档', defaultPath: 'knitspace-archive.zip', filters: [{ name: 'ZIP 归档', extensions: ['zip'] }] })
+  const defaults = format.value === 'zip' ? { name: 'knitspace-archive.zip', extension: 'zip', label: 'ZIP 归档' } : format.value === 'tar.gz' ? { name: 'knitspace-archive.tar.gz', extension: 'tar.gz', label: 'TAR.GZ 归档' } : { name: 'knitspace-archive.tar', extension: 'tar', label: 'TAR 归档' }
+  const output = await saveDialog({ title: `保存 ${defaults.label}`, defaultPath: defaults.name, filters: [{ name: defaults.label, extensions: [defaults.extension] }] })
   if (!output) return
   busy.value = true
-  message.value = '正在读取输入并写入 ZIP；大文件会流式处理。'
+  message.value = `正在读取输入并写入 ${formatLabel.value}；大文件会流式处理。`
   try {
-    summary.value = await createDesktopZipArchive(inputPaths.value, output)
+    summary.value = format.value === 'zip' ? await createDesktopZipArchive(inputPaths.value, output) : await createDesktopTarArchive(inputPaths.value, output, format.value === 'tar.gz')
     message.value = `已创建 ${summary.value.archiveName}，原件保持不变。`
-    ui.toast('ZIP 归档已创建', summary.value.archiveName, 'success')
+    ui.toast(`${formatLabel.value} 归档已创建`, summary.value.archiveName, 'success')
   } catch (error) {
-    message.value = error instanceof Error ? error.message : 'ZIP 创建失败。'
-    ui.toast('ZIP 创建失败', message.value, 'error')
+    message.value = error instanceof Error ? error.message : `${formatLabel.value} 创建失败。`
+    ui.toast(`${formatLabel.value} 创建失败`, message.value, 'error')
   } finally {
     busy.value = false
   }
@@ -110,14 +120,15 @@ async function createArchive() {
 async function inspectArchive() {
   if (!desktop || !archivePath.value || busy.value) return
   busy.value = true
-  message.value = '正在读取 ZIP 目录，不会解压文件。'
+  const currentFormat = archiveKind(archivePath.value)
+  message.value = `正在读取 ${currentFormat.toUpperCase()} 目录，不会解压文件。`
   try {
-    listing.value = await listDesktopZipArchive(archivePath.value)
+    listing.value = currentFormat === 'zip' ? await listDesktopZipArchive(archivePath.value) : await listDesktopTarArchive(archivePath.value)
     message.value = `已检查 ${listing.value.archiveName}，归档内容没有写入磁盘。`
   } catch (error) {
     listing.value = undefined
-    message.value = error instanceof Error ? error.message : 'ZIP 检查失败。'
-    ui.toast('ZIP 检查失败', message.value, 'error')
+    message.value = error instanceof Error ? error.message : `${currentFormat.toUpperCase()} 检查失败。`
+    ui.toast(`${currentFormat.toUpperCase()} 检查失败`, message.value, 'error')
   } finally {
     busy.value = false
   }
@@ -126,14 +137,15 @@ async function inspectArchive() {
 async function extractArchive() {
   if (!desktop || !archivePath.value || !extractDirectory.value || busy.value) return
   busy.value = true
+  const currentFormat = archiveKind(archivePath.value)
   message.value = '正在安全解压；路径穿越和覆盖已有文件会被拒绝。'
   try {
-    summary.value = await extractDesktopZipArchive(archivePath.value, extractDirectory.value)
+    summary.value = currentFormat === 'zip' ? await extractDesktopZipArchive(archivePath.value, extractDirectory.value) : await extractDesktopTarArchive(archivePath.value, extractDirectory.value)
     message.value = `已解压 ${summary.value.fileCount} 个文件，原归档保持不变。`
-    ui.toast('ZIP 解压已完成', summary.value.outputPath, 'success')
+    ui.toast(`${currentFormat.toUpperCase()} 解压已完成`, summary.value.outputPath, 'success')
   } catch (error) {
-    message.value = error instanceof Error ? error.message : 'ZIP 解压失败。'
-    ui.toast('ZIP 解压失败', message.value, 'error')
+    message.value = error instanceof Error ? error.message : `${currentFormat.toUpperCase()} 解压失败。`
+    ui.toast(`${currentFormat.toUpperCase()} 解压失败`, message.value, 'error')
   } finally {
     busy.value = false
   }
@@ -146,9 +158,9 @@ const canRun = computed(() => desktop && !busy.value && (mode.value === 'create'
   <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
     <PageHeader
       title="压缩与归档"
-      subtitle="先预览、再执行；所有归档操作都在本机完成，不覆盖原始文件。"
+      subtitle="ZIP、TAR 与 TAR.GZ；先预览、再执行，原始文件不会被覆盖。"
       :stats="[
-        { label: '当前模式', value: tabs.find((tab) => tab.id === mode)?.label ?? 'ZIP', tone: 'accent' },
+        { label: '当前模式', value: tabs.find((tab) => tab.id === mode)?.label ?? formatLabel, tone: 'accent' },
         { label: '已选输入', value: selectedCount },
         { label: '归档条目', value: listing?.entries.length ?? 0 },
       ]"
@@ -178,12 +190,23 @@ const canRun = computed(() => desktop && !busy.value && (mode.value === 'create'
 
     <ToolLayout aside-width="narrow">
       <section v-if="mode === 'create'" class="stack gap-4">
+        <section class="panel p-4 stack gap-3">
+          <div class="row-between gap-3">
+            <div class="stack gap-1"><p class="eyebrow">归档格式</p><p class="text-[12px] text-fg-2">按兼容性或压缩需求选择输出容器。</p></div>
+            <select v-model="format" class="field w-32" aria-label="归档格式">
+              <option value="zip">ZIP</option>
+              <option value="tar">TAR</option>
+              <option value="tar.gz">TAR.GZ</option>
+            </select>
+          </div>
+          <p class="text-[11px] text-fg-3">ZIP 适合跨平台分享；TAR 保留 Unix 归档结构；TAR.GZ 在 TAR 基础上再压缩。</p>
+        </section>
         <FileDropZone
           v-model="browserFiles"
           :desktop-path-only="desktop"
           :max-files="1000"
           title="拖入要归档的文件"
-          :hint="desktop ? '支持文件路径；也可单独选择文件夹，原件保持只读' : '浏览器版暂不生成 ZIP，请使用桌面端'
+          :hint="desktop ? '支持文件路径；也可单独选择文件夹，原件保持只读' : '浏览器版暂不生成归档，请使用桌面端'
           "
           :disabled="busy || !desktop"
           @desktop-paths="addInputPaths"
@@ -208,9 +231,9 @@ const canRun = computed(() => desktop && !busy.value && (mode.value === 'create'
 
       <section v-else class="stack gap-4">
         <section class="panel p-4 stack gap-3">
-          <div class="row-between gap-2"><p class="eyebrow">ZIP 归档</p><button class="btn-default btn-sm" :disabled="busy || !desktop" @click="chooseArchive"><AppIcon name="folder-open" :size="14" />选择归档</button></div>
-          <p class="field min-h-9 row items-center text-[12px] text-fg-2 truncate" :title="archivePath">{{ archivePath || '尚未选择 ZIP 文件' }}</p>
-          <p class="text-[11px] text-fg-3">查看内容只读取目录；解压前会拒绝绝对路径、`..` 路径和已有目标文件。</p>
+          <div class="row-between gap-2"><p class="eyebrow">归档文件</p><button class="btn-default btn-sm" :disabled="busy || !desktop" @click="chooseArchive"><AppIcon name="folder-open" :size="14" />选择归档</button></div>
+          <p class="field min-h-9 row items-center text-[12px] text-fg-2 truncate" :title="archivePath">{{ archivePath || '尚未选择 ZIP、TAR 或 TAR.GZ 文件' }}</p>
+          <p class="text-[11px] text-fg-3">查看内容只读取目录；解压前会拒绝绝对路径、`..` 路径、链接条目和已有目标文件。</p>
         </section>
 
         <section v-if="mode === 'extract'" class="panel p-4 stack gap-3">
@@ -241,13 +264,13 @@ const canRun = computed(() => desktop && !busy.value && (mode.value === 'create'
         <section class="panel p-4 stack gap-3">
           <p class="eyebrow">执行</p>
           <button class="btn-primary btn-lg w-full" :disabled="!canRun" @click="mode === 'create' ? createArchive() : mode === 'inspect' ? inspectArchive() : extractArchive()">
-            {{ busy ? '正在处理…' : mode === 'create' ? '创建 ZIP' : mode === 'inspect' ? '查看归档内容' : '安全解压' }}
+            {{ busy ? '正在处理…' : mode === 'create' ? `创建 ${formatLabel}` : mode === 'inspect' ? '查看归档内容' : '安全解压' }}
           </button>
           <p class="text-[12px] text-fg-3 text-center leading-snug" aria-live="polite">{{ message }}</p>
         </section>
         <section class="panel p-4 stack gap-2">
           <p class="eyebrow">安全边界</p>
-          <p class="text-[11px] text-fg-3 leading-relaxed">单个归档最多 10,000 个条目，展开大小最多 2 GB。解压不覆盖已有文件，归档中的绝对路径和路径穿越会直接拒绝。</p>
+          <p class="text-[11px] text-fg-3 leading-relaxed">单个归档最多 10,000 个条目，展开大小最多 2 GB。解压不覆盖已有文件，归档中的绝对路径、路径穿越和链接条目会直接拒绝。</p>
         </section>
       </template>
     </ToolLayout>

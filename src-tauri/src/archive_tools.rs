@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use serde::Serialize;
 use std::{
     collections::HashSet,
@@ -6,6 +7,7 @@ use std::{
     io::{Read, Write},
     path::{Component, Path, PathBuf},
 };
+use tar::Builder as TarBuilder;
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
@@ -184,6 +186,162 @@ pub fn create_zip(input_paths: Vec<String>, output_path: String) -> Result<Archi
     })
 }
 
+fn append_tar_entries<W: Write>(writer: W, files: &[(PathBuf, String)]) -> Result<(W, usize, u64)> {
+    let mut builder = TarBuilder::new(writer);
+    let mut total = 0_u64;
+    for (path, name) in files {
+        let metadata = fs::metadata(path).with_context(|| format!("无法读取文件：{}", path.display()))?;
+        let next_total = total.checked_add(metadata.len()).context("归档总大小超出安全范围")?;
+        if next_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
+            bail!("归档展开大小超过 2 GB，已停止处理。")
+        }
+        builder.append_path_with_name(path, name)?;
+        total = next_total;
+    }
+    Ok((builder.into_inner()?, files.len(), total))
+}
+
+fn is_gzip_archive(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| {
+            let lower = value.to_ascii_lowercase();
+            lower.ends_with(".tar.gz") || lower.ends_with(".tgz")
+        })
+        .unwrap_or(false)
+}
+
+pub fn create_tar(input_paths: Vec<String>, output_path: String, gzip: bool) -> Result<ArchiveOperationSummary> {
+    let (output, _parent) = canonical_output(&output_path)?;
+    let files = collect_files(&input_paths, &output)?;
+    let file = File::create(&output).with_context(|| format!("无法创建归档：{}", output.display()))?;
+    let (file_count, total) = if gzip {
+        let encoder = GzEncoder::new(file, Compression::default());
+        let (encoder, count, total) = append_tar_entries(encoder, &files)?;
+        encoder.finish()?;
+        (count, total)
+    } else {
+        let (_file, count, total) = append_tar_entries(file, &files)?;
+        (count, total)
+    };
+    let archive_size = fs::metadata(&output)?.len();
+    Ok(ArchiveOperationSummary {
+        archive_name: output.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+        archive_size,
+        entry_count: file_count,
+        file_count,
+        directory_count: 0,
+        uncompressed_size: total,
+        output_path: output.to_string_lossy().into_owned(),
+    })
+}
+
+fn list_tar_reader<R: Read>(reader: R, archive_name: String, archive_size: u64) -> Result<ArchiveListing> {
+    let mut archive = tar::Archive::new(reader);
+    let mut entries = Vec::new();
+    let mut names = HashSet::new();
+    let mut uncompressed_size = 0_u64;
+    for entry_result in archive.entries()? {
+        let entry = entry_result?;
+        let entry_type = entry.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            bail!("TAR 只支持普通文件和目录，已拒绝链接或特殊条目。")
+        }
+        let name = safe_archive_name(entry.path()?.to_string_lossy().as_ref())?;
+        if !names.insert(name.clone()) {
+            bail!("归档包含重名条目，无法安全预览。")
+        }
+        let size = entry.header().size()?;
+        uncompressed_size = uncompressed_size.checked_add(size).context("归档展开大小超出安全范围")?;
+        if uncompressed_size > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
+            bail!("归档展开大小超过 2 GB，无法安全检查。")
+        }
+        entries.push(ArchiveEntry { name, compressed_size: 0, uncompressed_size: size, is_directory: entry_type.is_dir() });
+        if entries.len() > MAX_ARCHIVE_ENTRIES {
+            bail!("归档包含过多文件，无法安全检查。")
+        }
+    }
+    Ok(ArchiveListing { archive_name, archive_size, entries, uncompressed_size })
+}
+
+pub fn list_tar(archive_path: String) -> Result<ArchiveListing> {
+    let path = canonical_input(&archive_path)?;
+    if !path.is_file() {
+        bail!("归档路径不是文件：{}", path.display())
+    }
+    let archive_size = fs::metadata(&path)?.len();
+    let archive_name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let file = File::open(&path)?;
+    if is_gzip_archive(&path) {
+        list_tar_reader(GzDecoder::new(file), archive_name, archive_size)
+    } else {
+        list_tar_reader(file, archive_name, archive_size)
+    }
+}
+
+fn extract_tar_reader<R: Read>(reader: R, archive_path: &Path, output_root: &Path, archive_size: u64) -> Result<ArchiveOperationSummary> {
+    let mut archive = tar::Archive::new(reader);
+    let mut names = HashSet::new();
+    let mut total = 0_u64;
+    let mut file_count = 0_usize;
+    let mut directory_count = 0_usize;
+    for entry_result in archive.entries()? {
+        let mut entry = entry_result?;
+        let entry_type = entry.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            bail!("TAR 只支持普通文件和目录，已拒绝链接或特殊条目。")
+        }
+        let name = safe_archive_name(entry.path()?.to_string_lossy().as_ref())?;
+        if !names.insert(name.clone()) {
+            bail!("归档包含重名条目，无法安全解压：{name}")
+        }
+        let target = output_root.join(&name);
+        if !target.starts_with(output_root) {
+            bail!("归档条目越过了解压目录，已拒绝。")
+        }
+        if entry_type.is_dir() {
+            if target.exists() && !target.is_dir() {
+                bail!("解压目标已存在且不是文件夹：{}", target.display())
+            }
+            fs::create_dir_all(&target)?;
+            directory_count += 1;
+            continue;
+        }
+        let next_total = total.checked_add(entry.header().size()?).context("归档展开大小超出安全范围")?;
+        if next_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
+            bail!("归档展开大小超过 2 GB，已停止解压。")
+        }
+        if target.exists() {
+            bail!("解压目标已存在，为避免覆盖请换一个空目录：{}", target.display())
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = File::create(&target)?;
+        std::io::copy(&mut entry, &mut file)?;
+        total = next_total;
+        file_count += 1;
+    }
+    Ok(ArchiveOperationSummary { archive_name: archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned(), archive_size, entry_count: names.len(), file_count, directory_count, uncompressed_size: total, output_path: output_root.to_string_lossy().into_owned() })
+}
+
+pub fn extract_tar(archive_path: String, output_directory: String) -> Result<ArchiveOperationSummary> {
+    let archive_path = canonical_input(&archive_path)?;
+    if !archive_path.is_file() {
+        bail!("归档路径不是文件：{}", archive_path.display())
+    }
+    let output_root = PathBuf::from(&output_directory);
+    fs::create_dir_all(&output_root).with_context(|| format!("无法创建解压目录：{}", output_root.display()))?;
+    let output_root = fs::canonicalize(&output_root)?;
+    let archive_size = fs::metadata(&archive_path)?.len();
+    let file = File::open(&archive_path)?;
+    if is_gzip_archive(&archive_path) {
+        extract_tar_reader(GzDecoder::new(file), &archive_path, &output_root, archive_size)
+    } else {
+        extract_tar_reader(file, &archive_path, &output_root, archive_size)
+    }
+}
+
 pub fn list_zip(archive_path: String) -> Result<ArchiveListing> {
     let path = canonical_input(&archive_path)?;
     if !path.is_file() {
@@ -292,6 +450,27 @@ mod tests {
         assert_eq!(restored.file_count, 2);
         assert_eq!(fs::read_to_string(extracted.join("source/hello.txt"))?, "你好");
         assert!(extract_zip(output.to_string_lossy().into_owned(), extracted.to_string_lossy().into_owned()).is_err());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn creates_lists_and_extracts_a_tar_gz_without_overwriting() -> Result<()> {
+        let root = temp_root("tar-gz-roundtrip");
+        let source = root.join("source");
+        let output = root.join("bundle.tar.gz");
+        let extracted = root.join("extracted");
+        fs::create_dir_all(source.join("nested"))?;
+        fs::write(source.join("hello.txt"), "你好")?;
+        fs::write(source.join("nested/data.csv"), "a,b\n1,2")?;
+        let summary = create_tar(vec![source.to_string_lossy().into_owned()], output.to_string_lossy().into_owned(), true)?;
+        assert_eq!(summary.file_count, 2);
+        let listing = list_tar(output.to_string_lossy().into_owned())?;
+        assert_eq!(listing.entries.len(), 2);
+        let restored = extract_tar(output.to_string_lossy().into_owned(), extracted.to_string_lossy().into_owned())?;
+        assert_eq!(restored.file_count, 2);
+        assert_eq!(fs::read_to_string(extracted.join("source/hello.txt"))?, "你好");
+        assert!(extract_tar(output.to_string_lossy().into_owned(), extracted.to_string_lossy().into_owned()).is_err());
         fs::remove_dir_all(root)?;
         Ok(())
     }

@@ -34,6 +34,8 @@ uuid = { version = "1", features = ["v7", "serde"] }
 url = "2"
 walkdir = "2"
 zip = "2"
+tar = "0.4"
+flate2 = "1"
 arboard = "3.6"
 image = { version = "0.25", default-features = false, features = ["png", "bmp", "gif"] }
 mime_guess = "2"

@@ -695,6 +695,34 @@ async fn extract_zip_archive(
 }
 
 #[tauri::command]
+async fn create_tar_archive(
+    input_paths: Vec<String>,
+    output_path: String,
+    gzip: bool,
+) -> Result<archive_tools::ArchiveOperationSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || archive_tools::create_tar(input_paths, output_path, gzip).map_err(|error| error.to_string()))
+        .await
+        .map_err(|error| format!("TAR 创建任务失败：{error}"))?
+}
+
+#[tauri::command]
+async fn list_tar_archive(archive_path: String) -> Result<archive_tools::ArchiveListing, String> {
+    tauri::async_runtime::spawn_blocking(move || archive_tools::list_tar(archive_path).map_err(|error| error.to_string()))
+        .await
+        .map_err(|error| format!("TAR 检查任务失败：{error}"))?
+}
+
+#[tauri::command]
+async fn extract_tar_archive(
+    archive_path: String,
+    output_directory: String,
+) -> Result<archive_tools::ArchiveOperationSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || archive_tools::extract_tar(archive_path, output_directory).map_err(|error| error.to_string()))
+        .await
+        .map_err(|error| format!("TAR 解压任务失败：{error}"))?
+}
+
+#[tauri::command]
 fn save_default_source(app: tauri::AppHandle, source: VaultSource) -> Result<(), String> {
     let path = default_vault_path(&app)?;
     VaultService::open(path)
@@ -5678,6 +5706,9 @@ pub fn run() {
             create_zip_archive,
             list_zip_archive,
             extract_zip_archive,
+            create_tar_archive,
+            list_tar_archive,
+            extract_tar_archive,
             save_default_source,
             get_default_source,
             touch_default_source,
