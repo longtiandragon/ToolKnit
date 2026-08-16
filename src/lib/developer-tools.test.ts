@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonYaml } from './developer-tools'
+import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -20,6 +20,12 @@ describe('Base64 and URL transforms', () => {
 
   it('round-trips a URL component', () => {
     expect(decodeUrl(encodeUrl('https://example.com/搜索?q=工具 箱'))).toBe('https://example.com/搜索?q=工具 箱')
+  })
+
+  it('round-trips UTF-8 text as Hex and accepts a 0x prefix', () => {
+    expect(encodeHex('你好 👋')).toBe('E4BDA0E5A5BD20F09F918B')
+    expect(decodeHex(`0x${encodeHex('你好 👋')}`)).toBe('你好 👋')
+    expect(() => decodeHex('ABC')).toThrow('偶数')
   })
 })
 

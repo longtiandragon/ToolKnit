@@ -96,6 +96,26 @@ export function decodeBase64(value: string) {
   }
 }
 
+export function encodeHex(value: string) {
+  assertStructuredTextSize(value)
+  const bytes = new TextEncoder().encode(value)
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase()
+}
+
+export function decodeHex(value: string) {
+  const normalized = value.trim().replace(/^0x/i, '').replace(/\s+/g, '')
+  if (!normalized) throw new Error('请输入需要解码的 Hex 内容。')
+  if (!/^[\da-f]+$/i.test(normalized)) throw new Error('Hex 只能包含 0-9 和 A-F 字符，可使用空格分隔。')
+  if (normalized.length % 2 !== 0) throw new Error('Hex 字符数量必须是偶数，每两个字符代表一个字节。')
+  assertStructuredTextSize(normalized)
+  const bytes = Uint8Array.from({ length: normalized.length / 2 }, (_, index) => Number.parseInt(normalized.slice(index * 2, index * 2 + 2), 16))
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw new Error('Hex 已成功还原为字节，但内容不是有效的 UTF-8 文本。')
+  }
+}
+
 function decodeBase64Url(value: string) {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
   return decodeBase64(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '='))
