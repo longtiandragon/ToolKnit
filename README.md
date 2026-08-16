@@ -26,6 +26,7 @@ Knitspace 不试图复制所有软件，也不把每一个点子做成孤立页�
 
 公开 Core 与私人工具包的实际构建边界、示例清单和发布检查见 [PUBLIC_CORE.md](PUBLIC_CORE.md)。
 项目维护、设计、数据迁移、协作与验证规则见 [AGENTS.md](AGENTS.md)。
+工具箱已实现能力、明确未完成项和 Windows/公开发布验收路线见 [docs/TOOLBOX_STATUS.md](docs/TOOLBOX_STATUS.md)。
 
 ## 当前状态
 
