@@ -11,6 +11,7 @@ import { chooseOutputDirectory, exportOutput } from '@/lib/output'
 import { fixedRowVirtualWindow } from '@/lib/virtual-window'
 import {
   MAX_SUBTITLE_BYTES,
+  analyzeSubtitleQuality,
   formatSubtitleTimestamp,
   mergeSubtitleCues,
   parseSubtitle,
@@ -92,6 +93,8 @@ const filteredCueIndexes = computed(() => subtitleCueIndexes(cues.value, query.v
 const listWindow = computed(() => fixedRowVirtualWindow(filteredCueIndexes.value.length, scrollTop.value, listHeight.value, ROW_HEIGHT, 7))
 const renderedCueRows = computed(() => filteredCueIndexes.value.slice(listWindow.value.start, listWindow.value.end).map(index => ({ cue: cues.value[index], ordinal: index + 1 })))
 const activeCue = computed(() => cues.value.find(cue => cue.id === activeId.value))
+const qualityReport = computed(() => analyzeSubtitleQuality(cues.value))
+const qualityIssueCount = computed(() => qualityReport.value.overlapCount + qualityReport.value.cpsViolationCount + qualityReport.value.lineLengthViolationCount + qualityReport.value.shortDurationCount + qualityReport.value.duplicateCount)
 
 /* One right-hand slot with two possible occupants. Transcription used to be a
    collapsible card wedged above the timeline, so opening it pushed the
@@ -620,6 +623,32 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
         <span class="min-w-0 flex-1">{{ warnings.join(' ') }}</span>
         <button class="shrink-0 font-medium underline underline-offset-2" @click="warnings = []">知道了</button>
       </p>
+
+      <details v-if="cues.length" class="shrink-0 border-b border-line bg-surface-2 text-[11px]">
+        <summary class="row-between gap-3 px-3 py-2 cursor-pointer select-none list-none">
+          <span class="row gap-2 min-w-0">
+            <AppIcon name="shield" :size="14" class="shrink-0" :class="qualityIssueCount ? 'text-warn' : 'text-success'" />
+            <b class="font-medium text-fg">字幕质量检查</b>
+            <span class="text-fg-3">{{ qualityIssueCount ? `${qualityIssueCount} 项待检查` : '未发现明显问题' }}</span>
+          </span>
+          <span class="row gap-2 shrink-0 tabular-nums text-fg-3">
+            <span>峰值 {{ qualityReport.maxCps }} CPS</span>
+            <span>最长 {{ qualityReport.maxLineLength }} 字</span>
+          </span>
+        </summary>
+        <div class="grid grid-cols-2 gap-px mx-3 mb-2 rounded-sm overflow-hidden border border-line bg-line">
+          <span class="row-between gap-2 px-2 py-1.5 bg-surface"><span>重叠</span><b :class="qualityReport.overlapCount ? 'text-warn' : 'text-fg-3'">{{ qualityReport.overlapCount }}</b></span>
+          <span class="row-between gap-2 px-2 py-1.5 bg-surface"><span>超速 CPS</span><b :class="qualityReport.cpsViolationCount ? 'text-warn' : 'text-fg-3'">{{ qualityReport.cpsViolationCount }}</b></span>
+          <span class="row-between gap-2 px-2 py-1.5 bg-surface"><span>过长一行</span><b :class="qualityReport.lineLengthViolationCount ? 'text-warn' : 'text-fg-3'">{{ qualityReport.lineLengthViolationCount }}</b></span>
+          <span class="row-between gap-2 px-2 py-1.5 bg-surface"><span>过短时长</span><b :class="qualityReport.shortDurationCount ? 'text-warn' : 'text-fg-3'">{{ qualityReport.shortDurationCount }}</b></span>
+          <span class="row-between gap-2 px-2 py-1.5 bg-surface"><span>重复正文</span><b :class="qualityReport.duplicateCount ? 'text-warn' : 'text-fg-3'">{{ qualityReport.duplicateCount }}</b></span>
+          <span class="row-between gap-2 px-2 py-1.5 bg-surface text-fg-3">提示仅供校对参考，不会自动改写</span>
+        </div>
+        <ul v-if="qualityReport.issues.length" class="stack gap-1 px-3 pb-2 text-fg-2">
+          <li v-for="issue in qualityReport.issues.slice(0, 5)" :key="`${issue.cueId}-${issue.kind}`" class="row gap-1.5"><span class="w-1 h-1 shrink-0 rounded-full bg-warn" />{{ issue.message }}</li>
+          <li v-if="qualityReport.issues.length > 5" class="text-fg-3">还有 {{ qualityReport.issues.length - 5 }} 项，已省略列表展示。</li>
+        </ul>
+      </details>
 
       <div class="flex-1 min-h-0 grid" :class="workspaceColumns">
         <!-- Pasting is a mode, not a card stacked above the timeline: while

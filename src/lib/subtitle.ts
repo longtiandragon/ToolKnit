@@ -13,6 +13,27 @@ export interface ParsedSubtitle {
   warnings: string[]
 }
 
+export type SubtitleQualityIssueKind = 'overlap' | 'cps' | 'line-length' | 'short-duration' | 'duplicate'
+
+export interface SubtitleQualityIssue {
+  cueId: string
+  cueIndex: number
+  kind: SubtitleQualityIssueKind
+  message: string
+}
+
+export interface SubtitleQualityReport {
+  cueCount: number
+  overlapCount: number
+  cpsViolationCount: number
+  lineLengthViolationCount: number
+  shortDurationCount: number
+  duplicateCount: number
+  maxCps: number
+  maxLineLength: number
+  issues: SubtitleQualityIssue[]
+}
+
 export const MAX_SUBTITLE_BYTES = 5 * 1024 * 1024
 export const MAX_SUBTITLE_CUES = 20_000
 
@@ -76,6 +97,75 @@ export function parseSubtitle(source: string, filename = ''): ParsedSubtitle {
   const overlaps = cues.reduce((count, cue, index) => count + (index > 0 && cue.startMs < cues[index - 1].endMs ? 1 : 0), 0)
   if (overlaps) warnings.push(`检测到 ${overlaps} 处时间重叠，可在时间轴中逐条校对。`)
   return { format, cues, warnings }
+}
+
+/**
+ * Performs bounded, local subtitle QA without changing the source cues. The
+ * defaults are intentionally conservative: they flag items worth checking,
+ * but never rewrite timing or text on the user's behalf.
+ */
+export function analyzeSubtitleQuality(
+  cues: readonly SubtitleCue[],
+  options: { maxCps?: number; maxCharsPerLine?: number; minDurationMs?: number } = {},
+): SubtitleQualityReport {
+  const maxCps = options.maxCps ?? 20
+  const maxCharsPerLine = options.maxCharsPerLine ?? 42
+  const minDurationMs = options.minDurationMs ?? 700
+  const issues: SubtitleQualityIssue[] = []
+  let overlapCount = 0
+  let cpsViolationCount = 0
+  let lineLengthViolationCount = 0
+  let shortDurationCount = 0
+  let duplicateCount = 0
+  let maxCpsSeen = 0
+  let maxLineLength = 0
+  const seenText = new Set<string>()
+  const addIssue = (cue: SubtitleCue, cueIndex: number, kind: SubtitleQualityIssueKind, message: string) => {
+    if (issues.length < 200) issues.push({ cueId: cue.id, cueIndex, kind, message })
+  }
+
+  cues.forEach((cue, cueIndex) => {
+    const durationMs = Math.max(1, cue.endMs - cue.startMs)
+    const text = cue.text.trim()
+    const lineLength = Math.max(...text.split(/\r?\n/).map(line => Array.from(line.replace(/\s/g, '')).length), 0)
+    const cps = Array.from(text.replace(/\s/g, '')).length / (durationMs / 1000)
+    maxCpsSeen = Math.max(maxCpsSeen, cps)
+    maxLineLength = Math.max(maxLineLength, lineLength)
+    if (cueIndex > 0 && cue.startMs < cues[cueIndex - 1].endMs) {
+      overlapCount += 1
+      addIssue(cue, cueIndex, 'overlap', `第 ${cueIndex + 1} 条与上一条字幕重叠。`)
+    }
+    if (cps > maxCps) {
+      cpsViolationCount += 1
+      addIssue(cue, cueIndex, 'cps', `第 ${cueIndex + 1} 条阅读速度约 ${cps.toFixed(1)} CPS，超过 ${maxCps} CPS。`)
+    }
+    if (lineLength > maxCharsPerLine) {
+      lineLengthViolationCount += 1
+      addIssue(cue, cueIndex, 'line-length', `第 ${cueIndex + 1} 条最长一行 ${lineLength} 字，超过 ${maxCharsPerLine} 字。`)
+    }
+    if (durationMs < minDurationMs) {
+      shortDurationCount += 1
+      addIssue(cue, cueIndex, 'short-duration', `第 ${cueIndex + 1} 条只显示 ${durationMs} ms，低于 ${minDurationMs} ms。`)
+    }
+    const normalized = text.replace(/\s+/g, ' ')
+    if (normalized && seenText.has(normalized)) {
+      duplicateCount += 1
+      addIssue(cue, cueIndex, 'duplicate', `第 ${cueIndex + 1} 条字幕正文与之前重复。`)
+    }
+    if (normalized) seenText.add(normalized)
+  })
+
+  return {
+    cueCount: cues.length,
+    overlapCount,
+    cpsViolationCount,
+    lineLengthViolationCount,
+    shortDurationCount,
+    duplicateCount,
+    maxCps: Number(maxCpsSeen.toFixed(1)),
+    maxLineLength,
+    issues,
+  }
 }
 
 export function formatSubtitleTimestamp(milliseconds: number, format: SubtitleFormat = 'srt') {

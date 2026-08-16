@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { workspaceCommandCatalog } from './workspace-navigation'
+import { analyzeSubtitleQuality } from './subtitle'
 import { subtitleWorkflowActions, subtitleWorkflowId } from './subtitle-workflows'
 
 describe('subtitle workflows', () => {
@@ -21,5 +22,20 @@ describe('subtitle workflows', () => {
     expect(subtitleWorkflowId('delete')).toBeUndefined()
     expect(subtitleWorkflowId(['paste'])).toBeUndefined()
   })
-})
 
+  it('reports common subtitle QA issues without mutating cues', () => {
+    const cues = [
+      { id: 'a', startMs: 0, endMs: 400, text: '这是一条显示时间很短的字幕' },
+      { id: 'b', startMs: 300, endMs: 4_000, text: '这是一条显示时间很短的字幕' },
+      { id: 'c', startMs: 4_100, endMs: 7_000, text: '超'.repeat(50) },
+    ]
+    const report = analyzeSubtitleQuality(cues)
+    expect(report.cueCount).toBe(3)
+    expect(report.overlapCount).toBe(1)
+    expect(report.shortDurationCount).toBe(1)
+    expect(report.duplicateCount).toBe(1)
+    expect(report.lineLengthViolationCount).toBe(1)
+    expect(report.issues.map(issue => issue.kind)).toEqual(expect.arrayContaining(['overlap', 'short-duration', 'duplicate', 'line-length']))
+    expect(cues[0].startMs).toBe(0)
+  })
+})
