@@ -15,6 +15,8 @@ describe('media operation catalog', () => {
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'mute-video')!, audio)).toBe(false)
     expect(mediaOperationUnavailableReason(mediaOperations.find((item) => item.id === 'mute-video')!, audio)).toBe('当前文件没有视频轨')
     expect(firstAvailableMediaOperation(video)).toBe('transcode-mp4')
+    expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'lossless-clip')!, audio)).toBe(true)
+    expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'remux-mp4')!, audio)).toBe(false)
   })
 
   it('recognizes supported desktop drops and output MIME types', () => {
@@ -22,5 +24,7 @@ describe('media operation catalog', () => {
     expect(isSupportedMediaPath('F:\\Notes\\lecture.md')).toBe(false)
     expect(mediaOutputMime('speech.wav')).toBe('audio/wav')
     expect(mediaOutputMime('silent.mp4')).toBe('video/mp4')
+    expect(mediaOutputMime('clip-lossless.mkv')).toBe('video/x-matroska')
+    expect(mediaOutputMime('voice.flac')).toBe('audio/flac')
   })
 })

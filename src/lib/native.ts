@@ -1049,6 +1049,17 @@ export async function saveDesktopOutput(outputDirectory: string, filename: strin
 }
 
 export interface MediaEngineStatus { available: boolean; version?: string }
+export interface MediaTrackInfo {
+  index: number
+  kind: string
+  codec: string
+  language?: string
+  title?: string
+  channels?: number
+  sampleRate?: number
+  width?: number
+  height?: number
+}
 export interface MediaFileInfo {
   path: string
   name: string
@@ -1060,6 +1071,7 @@ export interface MediaFileInfo {
   width?: number
   height?: number
   bitRate?: number
+  tracks?: MediaTrackInfo[]
 }
 export interface MediaOutput { path: string; name: string; size: number; elapsedMs: number }
 export interface MediaTranscodeProgress { runId: string; progress: number; detail: string }
@@ -1075,7 +1087,7 @@ export async function inspectDesktopMedia(path: string) {
   if (!isDesktop()) throw new Error('媒体探测仅支持桌面模式。')
   return invoke<MediaFileInfo>('inspect_media_file', { path })
 }
-export async function transcodeDesktopMedia(request: { inputPath: string; outputDir: string; operation: 'extract-mp3' | 'transcode-m4a' | 'transcode-wav' | 'transcode-mp4' | 'mute-video' | 'trim-clip'; runId: string; startSeconds?: number; durationSeconds?: number }) {
+export async function transcodeDesktopMedia(request: { inputPath: string; outputDir: string; operation: 'extract-mp3' | 'transcode-m4a' | 'transcode-wav' | 'transcode-mp4' | 'mute-video' | 'trim-clip' | 'lossless-clip' | 'remux-mp4'; runId: string; startSeconds?: number; durationSeconds?: number }) {
   if (!isDesktop()) throw new Error('媒体转换仅支持桌面模式。')
   return invoke<MediaOutput>('transcode_media_file', { request })
 }

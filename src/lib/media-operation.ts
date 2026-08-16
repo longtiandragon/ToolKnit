@@ -7,6 +7,8 @@ export type MediaOperation =
   | 'transcode-mp4'
   | 'mute-video'
   | 'trim-clip'
+  | 'lossless-clip'
+  | 'remux-mp4'
 
 export interface MediaOperationDefinition {
   id: MediaOperation
@@ -24,6 +26,8 @@ export const mediaOperations: readonly MediaOperationDefinition[] = [
   { id: 'transcode-mp4', title: '转为 MP4', description: '统一为便于播放的 H.264', detail: 'AAC 音频 · 快速播放', extension: 'MP4', requiredTrack: 'video' },
   { id: 'mute-video', title: '生成静音视频', description: '移除音轨并保留画面', detail: '适合演示与无声素材', extension: '静音 MP4', requiredTrack: 'video' },
   { id: 'trim-clip', title: '截取一个片段', description: '按开始与结束时间生成新媒体', detail: '精确区间 · 原件保持完整', extension: '片段', requiredTrack: 'media' },
+  { id: 'lossless-clip', title: '无损截取片段', description: '不重新编码，快速裁出原始轨道', detail: '画质与音质不变 · 关键帧附近更准确', extension: '原容器', requiredTrack: 'media' },
+  { id: 'remux-mp4', title: '重新封装为 MP4', description: '只换容器，不重新编码视频和音频', detail: '适合播放器兼容性整理', extension: 'MP4', requiredTrack: 'video' },
 ]
 
 const mediaExtensions = new Set(['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus'])
@@ -56,8 +60,14 @@ export function isSupportedMediaPath(path: string) {
 
 export function mediaOutputMime(name: string) {
   const lower = name.toLocaleLowerCase('en-US')
-  if (lower.endsWith('.mp4')) return 'video/mp4'
+  if (lower.endsWith('.mp4') || lower.endsWith('.m4v')) return 'video/mp4'
+  if (lower.endsWith('.mov')) return 'video/quicktime'
+  if (lower.endsWith('.mkv')) return 'video/x-matroska'
+  if (lower.endsWith('.webm')) return 'video/webm'
+  if (lower.endsWith('.avi')) return 'video/x-msvideo'
   if (lower.endsWith('.mp3')) return 'audio/mpeg'
   if (lower.endsWith('.wav')) return 'audio/wav'
-  return 'audio/mp4'
+  if (lower.endsWith('.flac')) return 'audio/flac'
+  if (lower.endsWith('.ogg') || lower.endsWith('.opus')) return 'audio/ogg'
+  return lower.endsWith('.m4a') || lower.endsWith('.aac') ? 'audio/mp4' : 'application/octet-stream'
 }

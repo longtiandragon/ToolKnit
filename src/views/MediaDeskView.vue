@@ -62,7 +62,7 @@ const sourceSummary = computed(() => {
   return parts.filter(Boolean).join(' · ') || '已读取本地文件'
 })
 const outputDirectory = computed(() => qaPreview ? 'F:\\Knitspace\\Outputs' : store.settings.outputDirectory)
-const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !running.value && selectedOperationAvailable.value && (operation.value !== 'trim-clip' || Boolean(clipValidation.value.range)))
+const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !running.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)))
 const outputDirectoryLabel = computed(() => outputDirectory.value ? outputDirectory.value.split(/[\\/]/).filter(Boolean).at(-1) || outputDirectory.value : '尚未选择')
 
 function formatSize(value?: number) {
@@ -79,6 +79,15 @@ function formatDuration(value?: number) {
   const minutes = Math.floor((total % 3600) / 60)
   const seconds = total % 60
   return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function trackLabel(kind: string) {
+  return kind === 'video' ? '视频' : kind === 'audio' ? '音频' : kind === 'subtitle' ? '字幕' : kind
+}
+
+function trackDetail(track: NonNullable<MediaFileInfo['tracks']>[number]) {
+  const shape = track.kind === 'video' && track.width && track.height ? `${track.width}×${track.height}` : track.kind === 'audio' && track.channels ? `${track.channels} 声道` : ''
+  return [track.codec, shape, track.language, track.title].filter(Boolean).join(' · ')
 }
 
 async function refreshEngine() {
@@ -192,8 +201,8 @@ async function run() {
     return
   }
   const runId = newId()
-  const clipRange = operation.value === 'trim-clip' ? clipValidation.value.range : undefined
-  if (operation.value === 'trim-clip' && !clipRange) return
+  const clipRange = ['trim-clip', 'lossless-clip'].includes(operation.value) ? clipValidation.value.range : undefined
+  if (['trim-clip', 'lossless-clip'].includes(operation.value) && !clipRange) return
   activeRunId.value = runId
   running.value = true
   cancelling.value = false
@@ -406,6 +415,12 @@ onBeforeUnmount(() => {
               <span>{{ formatDuration(source.durationSeconds) }}</span>
               <span v-if="source.bitRate">{{ Math.round(source.bitRate / 1000) }} kbps</span>
             </footer>
+            <ul v-if="source.tracks?.length" class="stack gap-1 pt-2 border-t border-line">
+              <li v-for="track in source.tracks" :key="track.index" class="row gap-2 text-[11px] text-fg-3">
+                <span class="w-8 shrink-0 text-fg-2">{{ trackLabel(track.kind) }} {{ track.index + 1 }}</span>
+                <span class="min-w-0 truncate" :title="trackDetail(track)">{{ trackDetail(track) }}</span>
+              </li>
+            </ul>
           </article>
 
           <p v-if="inspecting" class="row gap-1.5 text-[11px] text-fg-3"><AppIcon name="clock" :size="13" />正在读取编码、时长和轨道…</p>
@@ -453,7 +468,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <section v-if="operation === 'trim-clip'" class="stack gap-2 p-3 rounded-md border border-accent bg-accent-soft" aria-label="媒体截取区间">
+          <section v-if="operation === 'trim-clip' || operation === 'lossless-clip'" class="stack gap-2 p-3 rounded-md border border-accent bg-accent-soft" aria-label="媒体截取区间">
             <header class="row-between gap-2">
               <b class="text-[12px] font-medium text-fg">截取区间</b>
               <small class="font-mono text-[11px] tabular-nums text-accent">{{ clipValidation.range ? `共 ${formatDuration(clipValidation.range.durationSeconds)}` : '等待有效时间' }}</small>
@@ -473,7 +488,7 @@ onBeforeUnmount(() => {
               <span class="absolute inset-y-0 min-w-1 rounded-full bg-accent-solid left-[var(--clip-start)] right-[calc(100%_-_var(--clip-end))]" />
             </figure>
             <p class="text-[11px] leading-relaxed" :class="clipValidation.error ? 'text-danger' : 'text-fg-3'" role="status">
-              {{ clipValidation.error || '支持秒数、mm:ss 或 hh:mm:ss；输出会重新编码以获得稳定片段。' }}
+              {{ clipValidation.error || (operation === 'lossless-clip' ? '支持秒数、mm:ss 或 hh:mm:ss；使用原始轨道复制，速度快且不损失画质。' : '支持秒数、mm:ss 或 hh:mm:ss；输出会重新编码以获得稳定片段。') }}
             </p>
           </section>
         </div>

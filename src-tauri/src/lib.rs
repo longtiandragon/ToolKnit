@@ -1661,6 +1661,20 @@ struct MediaEngineStatus {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct MediaTrackInfo {
+    index: u32,
+    kind: String,
+    codec: String,
+    language: Option<String>,
+    title: Option<String>,
+    channels: Option<u32>,
+    sample_rate: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct MediaFileInfo {
     path: String,
     name: String,
@@ -1672,6 +1686,7 @@ struct MediaFileInfo {
     width: Option<u32>,
     height: Option<u32>,
     bit_rate: Option<u64>,
+    tracks: Vec<MediaTrackInfo>,
 }
 
 #[derive(Deserialize)]
@@ -1947,7 +1962,7 @@ fn emit_media_progress(
 fn probe_media_file(path: PathBuf) -> Result<MediaFileInfo, String> {
     let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
     let output = Command::new("ffprobe")
-        .args(["-v", "error", "-show_entries", "format=duration,format_name,bit_rate,size:stream=codec_type,codec_name,width,height,bit_rate", "-of", "json"])
+        .args(["-v", "error", "-show_entries", "format=duration,format_name,bit_rate,size:stream=index,codec_type,codec_name,width,height,bit_rate,channels,sample_rate:stream_tags=language,title", "-of", "json"])
         .arg(&path)
         .output()
         .map_err(|error| format!("无法启动 FFprobe：{error}"))?;
@@ -1991,6 +2006,35 @@ fn probe_media_file(path: PathBuf) -> Result<MediaFileInfo, String> {
                 .or_else(|| item.as_u64())
         })
     };
+    let tracks = streams
+        .iter()
+        .filter_map(|stream| {
+            let kind = stream.get("codec_type")?.as_str()?.to_owned();
+            let codec = stream
+                .get("codec_name")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown")
+                .to_owned();
+            let tags = stream.get("tags");
+            Some(MediaTrackInfo {
+                index: parse_integer(stream.get("index"))?.try_into().ok()?,
+                kind,
+                codec,
+                language: tags
+                    .and_then(|value| value.get("language"))
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned),
+                title: tags
+                    .and_then(|value| value.get("title"))
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned),
+                channels: parse_integer(stream.get("channels")).and_then(|value| value.try_into().ok()),
+                sample_rate: parse_integer(stream.get("sample_rate")).and_then(|value| value.try_into().ok()),
+                width: parse_integer(stream.get("width")).and_then(|value| value.try_into().ok()),
+                height: parse_integer(stream.get("height")).and_then(|value| value.try_into().ok()),
+            })
+        })
+        .collect();
     Ok(MediaFileInfo {
         path: path.to_string_lossy().into_owned(),
         name: path
@@ -2021,6 +2065,7 @@ fn probe_media_file(path: PathBuf) -> Result<MediaFileInfo, String> {
             .and_then(|item| item.as_u64())
             .and_then(|item| u32::try_from(item).ok()),
         bit_rate: parse_integer(format.and_then(|item| item.get("bit_rate"))),
+        tracks,
     })
 }
 
@@ -2054,8 +2099,8 @@ async fn inspect_media_file(path: String) -> Result<MediaFileInfo, String> {
 fn required_media_track(operation: &str) -> Option<&'static str> {
     match operation {
         "extract-mp3" | "transcode-m4a" | "transcode-wav" => Some("audio"),
-        "transcode-mp4" | "mute-video" => Some("video"),
-        "trim-clip" => Some("media"),
+        "transcode-mp4" | "mute-video" | "remux-mp4" => Some("video"),
+        "trim-clip" | "lossless-clip" => Some("media"),
         _ => None,
     }
 }
@@ -2091,6 +2136,7 @@ fn transcode_media(
             .into());
         }
     }
+    let mut input_arguments = Vec::new();
     let (suffix, extension, arguments, progress_duration): (
         &str,
         String,
@@ -2181,7 +2227,7 @@ fn transcode_media(
             .collect(),
             source_duration,
         ),
-        "trim-clip" => {
+        "trim-clip" | "lossless-clip" => {
             let clip_info = media_info
                 .as_ref()
                 .ok_or("无法读取媒体轨道，不能安全截取。")?;
@@ -2196,47 +2242,32 @@ fn transcode_media(
             let start = format!("{start:.3}");
             let duration_label = format!("{duration:.3}");
             let has_video = clip_info.video_codec.is_some();
-            let arguments = if has_video {
+            let arguments = if request.operation == "lossless-clip" {
+                input_arguments = vec!["-ss".to_owned(), start.clone()];
                 vec![
-                    "-ss",
-                    &start,
                     "-t",
                     &duration_label,
                     "-map",
-                    "0:v:0",
-                    "-map",
-                    "0:a?",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "fast",
-                    "-crf",
-                    "23",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "160k",
-                    "-movflags",
-                    "+faststart",
+                    "0",
+                    "-c",
+                    "copy",
+                    "-avoid_negative_ts",
+                    "make_zero",
+                ]
+            } else if has_video {
+                vec![
+                    "-ss", &start, "-t", &duration_label, "-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
                 ]
             } else {
                 vec![
-                    "-ss",
-                    &start,
-                    "-t",
-                    &duration_label,
-                    "-map",
-                    "0:a:0",
-                    "-vn",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "192k",
+                    "-ss", &start, "-t", &duration_label, "-map", "0:a:0", "-vn", "-c:a", "aac", "-b:a", "192k",
                 ]
             };
             (
-                "clip",
-                if has_video {
+                if request.operation == "lossless-clip" { "clip-lossless" } else { "clip" },
+                if request.operation == "lossless-clip" {
+                    input.extension().and_then(|value| value.to_str()).unwrap_or("mkv").to_ascii_lowercase()
+                } else if has_video {
                     "mp4".into()
                 } else {
                     "m4a".into()
@@ -2245,6 +2276,15 @@ fn transcode_media(
                 Some(duration),
             )
         }
+        "remux-mp4" => (
+            "remux",
+            "mp4".into(),
+            ["-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            source_duration,
+        ),
         _ => return Err("不支持的媒体操作。".into()),
     };
     let output = next_media_output_path(&input, &output_dir, suffix, &extension);
@@ -2265,8 +2305,9 @@ fn transcode_media(
             "-progress",
             "pipe:1",
             "-nostats",
-            "-i",
         ])
+        .args(input_arguments)
+        .arg("-i")
         .arg(&input)
         .args(arguments)
         .arg("-n")
@@ -4540,6 +4581,8 @@ mod external_markdown_tests {
         assert_eq!(required_media_track("transcode-wav"), Some("audio"));
         assert_eq!(required_media_track("mute-video"), Some("video"));
         assert_eq!(required_media_track("trim-clip"), Some("media"));
+        assert_eq!(required_media_track("lossless-clip"), Some("media"));
+        assert_eq!(required_media_track("remux-mp4"), Some("video"));
         assert_eq!(required_media_track("unsupported"), None);
     }
 
