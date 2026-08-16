@@ -96,7 +96,7 @@ export const toolCatalog: ToolCatalogItem[] = [
   fileTool('transform', '提取链接与邮箱', '从长文本中汇总网址和邮箱地址', 'text', 'link', ['网址', 'url', 'email', '邮箱'], { mode: 'extract-contacts' }),
   fileTool('transform', '统计字数与段落', '本地统计字符、词语、段落和行数', 'text', 'number', ['字数', '字符', '段落', '统计'], { mode: 'statistics' }),
   fileTool('rename-report', '批量命名预览', '生成安全的重命名结果清单', 'organize', 'rename', ['rename', '编号']),
-  fileTool('dedupe-report', '文件去重检查', '通过 SHA-256 找出内容相同的文件', 'organize', 'duplicate', ['查找重复文件', '去重', 'hash', 'duplicate']),
+  { id: 'organize-dedupe-report', title: '文件去重扫描', description: '健康与磁盘整理', group: '整理', icon: 'search', to: { path: '/tools', query: { mode: 'file-health' } }, keywords: ['查重'] },
   { id: 'utility-qrcode', title: '二维码生成与识别', description: '把文字或网址生成二维码，也能读取图片', group: '表达', icon: 'qr-code', to: { path: '/developer-tools', query: { tool: 'qrcode' } }, keywords: ['二维码', 'QR', '扫码', '网址分享'] },
   { id: 'utility-datecalc', title: '日期计算器', description: '计算日期间隔，或向前向后推算日期', group: '整理', icon: 'calendar', to: { path: '/developer-tools', query: { tool: 'datecalc' } }, keywords: ['日期', '天数', '倒计时', '间隔', '月末'] },
   { id: 'developer-base64', title: 'Base64 编解码', description: '支持中文与 Emoji 的文本转换', group: '开发', icon: 'code', to: { path: '/developer-tools', query: { tool: 'base64' } }, keywords: ['base64', '编码', '解码'] },

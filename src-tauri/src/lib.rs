@@ -1,6 +1,7 @@
 #[cfg(not(feature = "public-core"))]
 mod private_tools;
 mod archive_tools;
+mod file_health;
 mod transcription;
 mod vault;
 mod windows_ocr;
@@ -3354,7 +3355,7 @@ fn duplicate_external_markdown_entry(
 }
 
 #[cfg(target_os = "windows")]
-fn recycle_external_workspace_path(path: &Path) -> Result<(), String> {
+pub(crate) fn recycle_external_workspace_path(path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::Shell::{
         SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT,
@@ -3403,7 +3404,7 @@ fn recycle_external_workspace_path(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn recycle_external_workspace_path(_path: &Path) -> Result<(), String> {
+pub(crate) fn recycle_external_workspace_path(_path: &Path) -> Result<(), String> {
     Err("当前平台尚未接入系统回收站".into())
 }
 
@@ -5760,6 +5761,8 @@ pub fn run() {
             windows_ocr::read_ocr_font,
             windows_ocr::recognize_image_text,
             windows_ocr::recognize_image_bytes,
+            file_health::scan_file_health,
+            file_health::recycle_file_health_paths,
             reveal_in_folder,
             check_github_update,
             take_pending_open_files,

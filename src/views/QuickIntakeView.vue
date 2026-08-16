@@ -137,7 +137,7 @@ const actions = computed<IntakeAction[]>(() => {
   if (kind.value === 'mixed' || kind.value === 'files') return [
     { id: 'library', title: '统一收进资料库', description: '保留来源并建立本地索引', icon: 'inbox', to: { path: '/library' }, primary: true },
     { id: 'rename', title: '批量命名预览', description: '执行前查看安全的新名称', icon: 'rename', to: { path: '/tools', query: { group: 'organize', operation: 'rename-report' } } },
-    { id: 'dedupe', title: '检查重复文件', description: '使用 SHA-256 生成去重报告', icon: 'duplicate', to: { path: '/tools', query: { group: 'organize', operation: 'dedupe-report' } } }
+    { id: 'dedupe', title: '检查文件健康', description: '查重、大文件与空项目', icon: 'duplicate', to: { path: '/tools', query: { mode: 'file-health' } } }
   ]
   return []
 })

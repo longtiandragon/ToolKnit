@@ -18,6 +18,7 @@ import ProgressTrack from '@/components/ProgressTrack.vue'
 import OutputList from '@/components/OutputList.vue'
 import ToolPipelineView from '@/components/ToolPipelineView.vue'
 import ArchiveView from '@/views/ArchiveView.vue'
+import FileHealthView from '@/views/FileHealthView.vue'
 
 type ToolGroup = 'pdf' | 'image' | 'text' | 'organize'
 type ToolOption = [id: string, label: string]
@@ -28,6 +29,7 @@ const route = useRoute()
 const router = useRouter()
 const pipelineMode = computed(() => route.query.mode === 'pipeline')
 const archiveMode = computed(() => route.query.mode === 'archive')
+const fileHealthMode = computed(() => route.query.mode === 'file-health')
 const group = ref<ToolGroup>('pdf')
 const operation = ref('merge')
 const files = ref<File[]>([])
@@ -719,6 +721,7 @@ onBeforeUnmount(() => {
 <template>
   <ToolPipelineView v-if="pipelineMode" />
   <ArchiveView v-else-if="archiveMode" />
+  <FileHealthView v-else-if="fileHealthMode" />
   <div v-else class="page-enter mx-auto w-full max-w-320 px-8 py-6">
     <PageHeader :title="activeOperationLabel" :subtitle="activeOperationNote">
       <template #actions>
