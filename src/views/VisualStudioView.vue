@@ -22,7 +22,7 @@ import { useUiStore } from '@/stores/ui'
 import type { FileReference } from '@/types'
 
 type LayoutKind = 'single' | 'pair' | 'grid'
-type ImageMode = 'compose' | 'stitch' | 'concat' | 'convert' | 'resize' | 'crop' | 'rotate'
+type ImageMode = 'compose' | 'stitch' | 'concat' | 'convert' | 'resize' | 'crop' | 'rotate' | 'metadata'
 type EncodableImageType = 'image/png' | 'image/jpeg' | 'image/webp'
 type SourceOutputType = EncodableImageType | 'image/gif'
 type CropHandle = 'create' | 'move' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw'
@@ -63,7 +63,7 @@ const AnnotationCanvas = defineAsyncComponent(() => import('@/components/Annotat
 const imageFiles = shallowRef<File[]>(store.consumeIntakeFiles().filter((file) => file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name)))
 const images = shallowRef<{ name: string; url: string; blank: boolean }[]>([])
 const activeImageIndex = ref(0)
-const activeMode = ref<ImageMode>(['stitch', 'concat', 'convert', 'resize', 'crop', 'rotate'].includes(String(route.query.tool)) ? route.query.tool as ImageMode : 'compose')
+const activeMode = ref<ImageMode>(['stitch', 'concat', 'convert', 'resize', 'crop', 'rotate', 'metadata'].includes(String(route.query.tool)) ? route.query.tool as ImageMode : 'compose')
 const layout = ref<LayoutKind>('single')
 const title = ref('')
 const watermark = ref('')
@@ -163,24 +163,25 @@ const quickTools = [
   { id: 'convert', title: '格式转换', description: 'PNG / JPG / WebP', icon: 'image' },
   { id: 'resize', title: '压缩缩放', description: '尺寸与质量', icon: 'resize' },
   { id: 'crop', title: '裁剪图片', description: '精确裁切区域', icon: 'crop' },
-  { id: 'rotate', title: '旋转图片', description: '批量调整方向', icon: 'rotate' }
+  { id: 'rotate', title: '旋转图片', description: '批量调整方向', icon: 'rotate' },
+  { id: 'metadata', title: '清除元数据', description: '去除 EXIF、GPS 等隐私信息', icon: 'shield' }
 ] as const
 /**
- * Six modes are two jobs, not one list: you are either making a picture (a
+ * Seven modes are two jobs, not one list: you are either making a picture (a
  * canvas you annotate, a scroll you stitch) or converting one you already
- * have. The old strip showed all six as equal cards with descriptions and
+ * have. The old strip showed all seven as equal cards with descriptions and
  * spent 90px of canvas height doing it, while saying nothing about the split.
  */
 const modeGroups = [
   { label: '创作', ids: ['compose', 'stitch', 'concat'] },
-  { label: '处理', ids: ['convert', 'resize', 'crop', 'rotate'] },
+  { label: '处理', ids: ['convert', 'resize', 'crop', 'rotate', 'metadata'] },
 ] as const
 const modeSections = computed(() => modeGroups.map((group) => ({
   label: group.label,
   tools: group.ids.map((id) => quickTools.find((tool) => tool.id === id)!),
 })))
 /* The annotation tools float over the canvas instead of taking a rail that
-   only exists in one of the six modes — the rail made the canvas jump
+   only exists in one of the seven modes — the rail made the canvas jump
    sideways every time you switched. */
 const annotationTools: { id: CanvasTool; label: string; icon: string; hint: string }[] = [
   { id: 'select', label: '选择', icon: 'pointer', hint: '选择、移动、缩放和旋转已有标注' },
@@ -233,10 +234,15 @@ const visibleAnnotationLayers = computed(() => annotations.value
   .reverse()
   .slice(0, layerVisibleLimit.value))
 const activeSourceOutputType = computed(() => activeMode.value === 'stitch' || activeMode.value === 'concat' ? 'image/png' : sourceOutputType(activeImageFile.value))
-const activeOutputType = computed(() => activeMode.value === 'stitch' || activeMode.value === 'concat' ? 'image/png' : imageFormat.value === 'source' ? activeSourceOutputType.value : imageFormat.value)
-const sourcePassThrough = computed(() => activeMode.value !== 'stitch' && imageFormat.value === 'source' && !activeSourceOutputType.value)
+const activeOutputType = computed(() => activeMode.value === 'stitch' || activeMode.value === 'concat'
+  ? 'image/png'
+  : imageFormat.value === 'source'
+    ? activeSourceOutputType.value ?? (activeMode.value === 'metadata' ? 'image/png' : null)
+    : imageFormat.value)
+const sourcePassThrough = computed(() => activeMode.value !== 'stitch' && activeMode.value !== 'metadata' && imageFormat.value === 'source' && !activeSourceOutputType.value)
 const formatLabel = computed(() => {
   if (imageFormat.value !== 'source') return outputTypeLabel(imageFormat.value)
+  if (activeMode.value === 'metadata' && !activeSourceOutputType.value) return 'PNG（源格式不支持，已转码）'
   return `源格式（${sourceExtensionLabel(activeImageFile.value)}）`
 })
 const qualityApplies = computed(() => {
@@ -313,12 +319,14 @@ const processSummary = computed(() => activeMode.value === 'stitch'
   ? `实时预览 · 输出 ${formatLabel.value}${qualityApplies.value ? ` · 质量 ${quality.value}%${compressionPassLabel.value}` : ' · 无损'}${processedSizeLabel.value ? ` · ${processedSizeLabel.value}` : ''}`
   : activeMode.value === 'resize'
     ? `最大宽度 ${maxWidth.value}px · ${qualityApplies.value ? `质量 ${quality.value}%${compressionPassLabel.value}` : 'PNG 无损'}${processedSizeLabel.value ? ` · ${processedSizeLabel.value}` : ''}`
+    : activeMode.value === 'metadata'
+      ? `清除 EXIF、GPS、XMP 等常见元数据 · 输出 ${formatLabel.value}${qualityApplies.value ? ` · 质量 ${quality.value}%` : ''}${processedSizeLabel.value ? ` · ${processedSizeLabel.value}` : ''}`
     : activeMode.value === 'crop'
       ? `裁剪 ${Math.round(cropWidth.value)}% × ${Math.round(cropHeight.value)}% · 起点 ${Math.round(cropLeft.value)}%, ${Math.round(cropTop.value)}%`
       : activeMode.value === 'rotate' ? rotation.value ? `已旋转 ${rotation.value}°` : '原始方向' : '拼图、标题与标注')
 
 /* ── Copy that has to say what this particular mode is doing ──────────────
-   Six modes share one canvas, so every label around it has to change with the
+   Seven modes share one canvas, so every label around it has to change with the
    mode. Written here rather than as nested ternaries in the markup: the
    sentences are the product, and they are easier to get right when they sit
    next to each other. */
@@ -330,6 +338,7 @@ const canvasHeading = computed(() => activeMode.value === 'compose'
   : activeMode.value === 'stitch' ? '滚动长图预览'
   : activeMode.value === 'concat' ? '拼成长图预览'
   : sourcePassThrough.value ? '源文件预览'
+  : activeMode.value === 'metadata' ? '清理元数据预览'
   : activeMode.value === 'crop' ? '在原图上框选' : '处理后预览')
 const outputTitle = computed(() => activeMode.value === 'stitch'
   ? `${images.value.length} 张连续截图`
@@ -343,12 +352,14 @@ const outputDetail = computed(() => activeMode.value === 'stitch'
   : activeMode.value === 'concat' ? '输出 PNG · 每张源图保持不变'
   : activeMode.value === 'compose' ? '输出 PNG · 源图与标注都不写回原件'
   : sourcePassThrough.value ? '动画与源文件字节保持不变'
+  : activeMode.value === 'metadata' ? `去除 EXIF、GPS、XMP 等常见元数据 · 输出 ${formatLabel.value} · 原文件保持不变`
   : activeMode.value === 'crop' ? `${cropPixelSummary.value} · 输出 ${formatLabel.value}`
   : `输出 ${formatLabel.value} · 原文件保持不变`)
 const sourceEmptyHint = computed(() => activeMode.value === 'stitch'
   ? `按截图顺序拖入 2–${STITCH_MAX_FILES} 张同宽截图，或用桌面采集逐屏抓取。`
   : activeMode.value === 'concat' ? `按想要的顺序拖入 2–${CONCAT_MAX_FILES} 张图片，上下或左右拼成一张长图；间距可为负数让后一张叠压前一张。`
   : activeMode.value === 'compose' ? '先选一块空白画布，或把要拼合、标注的图片拖进来。'
+  : activeMode.value === 'metadata' ? '支持 JPG、PNG、WebP、GIF；会重新编码图片以清除 EXIF、GPS、XMP 等常见元数据。'
   : `支持 JPG、PNG、WebP、GIF，一次最多 ${STITCH_MAX_FILES} 张一起处理。`)
 
 function formatProjectTime(value: string | number) {
@@ -364,7 +375,7 @@ watch(imageFiles, (selected) => {
 }, { immediate: true })
 
 watch(() => route.query.tool, (tool) => {
-  activeMode.value = ['stitch', 'concat', 'convert', 'resize', 'crop', 'rotate'].includes(String(tool)) ? tool as ImageMode : 'compose'
+  activeMode.value = ['stitch', 'concat', 'convert', 'resize', 'crop', 'rotate', 'metadata'].includes(String(tool)) ? tool as ImageMode : 'compose'
 })
 
 watch(() => route.query.project, (project) => {
@@ -978,7 +989,7 @@ watch([activeImageFile, activeMode, imageFormat, quality, compressionPasses, max
   const version = ++previewVersion
   previewAbortController?.abort()
   previewAbortController = undefined
-  const passThrough = imageFormat.value === 'source' && file instanceof File && !sourceOutputType(file)
+  const passThrough = activeMode.value !== 'metadata' && imageFormat.value === 'source' && file instanceof File && !sourceOutputType(file)
   if (previewRenderTimer !== undefined) window.clearTimeout(previewRenderTimer)
   previewRenderTimer = undefined
   if (!(file instanceof File) || activeMode.value === 'compose' || activeMode.value === 'crop' || passThrough) {
@@ -1938,7 +1949,7 @@ async function renderProcessedBlob(file: File, requestedOutputType?: SourceOutpu
     if (activeMode.value === 'convert' && quality.value === 100) return file
     return processAnimatedGif(file, {
       quality: quality.value,
-      mode: activeMode.value === 'compose' || activeMode.value === 'stitch' || activeMode.value === 'concat' ? 'convert' : activeMode.value,
+      mode: activeMode.value === 'compose' || activeMode.value === 'stitch' || activeMode.value === 'concat' || activeMode.value === 'metadata' ? 'convert' : activeMode.value,
       maxWidth: maxWidth.value,
       rotation: rotation.value,
       cropLeft: cropLeft.value,
@@ -2072,13 +2083,13 @@ async function exportCard() {
     } else {
       for (const file of imageFiles.value) {
         const sourceType = sourceOutputType(file)
-        if (imageFormat.value === 'source' && !sourceType) {
+        if (imageFormat.value === 'source' && !sourceType && activeMode.value !== 'metadata') {
           outputs.push(await exportOutput(store.settings.outputDirectory, file.name, file, file.type || 'application/octet-stream'))
           continue
         }
-        const outputType = imageFormat.value === 'source' ? sourceType! : imageFormat.value
+        const outputType = imageFormat.value === 'source' ? sourceType ?? 'image/png' : imageFormat.value
         const originalExtension = file.name.match(/\.([^.]+)$/)?.[1]?.toLowerCase()
-        const extension = imageFormat.value === 'source' && originalExtension
+        const extension = imageFormat.value === 'source' && sourceType && originalExtension
           ? originalExtension
           : outputType === 'image/jpeg' ? 'jpg' : outputType.split('/')[1]
         const stem = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff]+/g, '-') || 'image'
@@ -2110,11 +2121,11 @@ async function openLocation(path?: string) {
 
 <template>
   <!-- No `visual-studio` / `visual-studio-shell` / `visual-mode-strip` class
-       names. The legacy sheets pin this page to a six-card mode strip, a 62px
+       names. The legacy sheets pin this page to a seven-card mode strip, a 62px
        icon rail, a 610px minimum grid and a 230px properties column — that is
        the layout being replaced, not a skin on top of it. -->
   <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
-    <PageHeader title="图像画布" subtitle="一块画布，六种处理；原件只读，导出前的每一步都在本机完成">
+    <PageHeader title="图像画布" subtitle="一块画布，多种处理；原件只读，导出前的每一步都在本机完成">
       <template #actions>
         <button class="btn-default" :disabled="copying || exporting || !outputReady" @click="copyCard">
           <AppIcon name="clipboard" :size="15" />{{ copying ? '复制中…' : '复制预览' }}
@@ -2126,7 +2137,7 @@ async function openLocation(path?: string) {
     </PageHeader>
 
     <section class="flex-1 min-h-0 stack panel overflow-hidden">
-      <!-- Mode row: two named families instead of six equal cards. -->
+      <!-- Mode row: two named families instead of seven equal cards. -->
       <div class="row gap-5 shrink-0 h-12 px-3 border-b border-line">
         <nav v-for="section in modeSections" :key="section.label" class="row gap-1 shrink-0" :aria-label="`${section.label}模式`">
           <span class="mr-1 text-[11px] font-semibold text-fg-3">{{ section.label }}</span>
@@ -2841,7 +2852,11 @@ async function openLocation(path?: string) {
 
             <section class="stack gap-2.5 p-3 border-b border-line">
               <h3 class="text-[11px] font-semibold text-fg-3">这次会做什么</h3>
-              <div v-if="qualityApplies" class="stack gap-1.5 p-2.5 rounded-sm bg-surface-2">
+              <div v-if="activeMode === 'metadata'" class="stack gap-1.5 p-2.5 rounded-sm bg-surface-2">
+                <b class="text-[12px] font-medium text-fg">清除 EXIF、GPS、XMP 等常见元数据</b>
+                <span class="text-[11px] leading-relaxed text-fg-3">图片会重新编码为 {{ formatLabel }}；视觉尺寸保持不变，原文件和拍摄信息不会写回源图。GIF 会保留动画帧与播放时长。</span>
+              </div>
+              <div v-else-if="qualityApplies" class="stack gap-1.5 p-2.5 rounded-sm bg-surface-2">
                 <b class="text-[12px] font-medium text-fg">{{ activeOutputType === 'image/gif' ? `GIF 动画质量 ${quality}%` : compressionPasses === 1 ? '单次压缩' : `连续压缩 ${compressionPasses} 次` }}</b>
                 <span class="text-[11px] leading-relaxed text-fg-3">
                   {{ activeOutputType === 'image/gif'
@@ -2867,7 +2882,9 @@ async function openLocation(path?: string) {
                 <span class="text-[11px] leading-relaxed text-fg-3">用画布顶部的左转、右转按钮，可以连续点击。</span>
               </div>
               <p v-if="!sourcePassThrough" class="text-[11px] leading-relaxed text-fg-3">
-                {{ activeMode === 'crop'
+                {{ activeMode === 'metadata'
+                  ? '为了清理隐私信息会重新编码输出；请把导出的副本用于分享，原始照片仍保留在原位置。'
+                  : activeMode === 'crop'
                   ? '裁剪作用于画布选区；导出时按同一比例应用到全部图片。'
                   : activeMode === 'rotate'
                     ? '当前方向会实时预览；导出时应用到全部图片。'

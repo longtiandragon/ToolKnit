@@ -1,4 +1,4 @@
-export type RasterImageMode = 'compose' | 'convert' | 'resize' | 'crop' | 'rotate'
+export type RasterImageMode = 'compose' | 'convert' | 'resize' | 'crop' | 'rotate' | 'metadata'
 export type RasterOutputType = 'image/png' | 'image/jpeg' | 'image/webp'
 
 export interface RasterProcessOptions {

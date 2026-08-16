@@ -33,6 +33,20 @@ describe('raster image processing plan', () => {
     expect(createRasterProcessPlan(4000, 3000, { ...defaults, mode: 'rotate', rotation: 90 })).toMatchObject({ canvasWidth: 3000, canvasHeight: 4000, rotation: 90 })
   })
 
+  it('keeps the original pixels when clearing metadata', () => {
+    expect(createRasterProcessPlan(1600, 900, { ...defaults, mode: 'metadata' })).toMatchObject({
+      left: 0,
+      top: 0,
+      sourceWidth: 1600,
+      sourceHeight: 900,
+      targetWidth: 1600,
+      targetHeight: 900,
+      canvasWidth: 1600,
+      canvasHeight: 900,
+      rotation: 0,
+    })
+  })
+
   it('bounds repeated encoding by image area and keeps PNG single-pass', () => {
     expect(safeCompressionPassLimit(4000, 4000)).toBe(10)
     expect(createRasterProcessPlan(4000, 4000, { ...defaults, compressionPasses: 50 }).compressionPasses).toBe(10)

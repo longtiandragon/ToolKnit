@@ -80,6 +80,7 @@ export const toolCatalog: ToolCatalogItem[] = [
   imageTool('resize', '缩放压缩图片', '限制最大宽度、调整质量并实时预览', 'resize', ['压缩', '尺寸', 'resize']),
   imageTool('crop', '裁剪图片', '在图片工作室实时查看裁剪结果', 'crop', ['截图', 'crop']),
   imageTool('rotate', '旋转图片', '实时预览方向并批量导出', 'rotate', ['方向', 'rotate']),
+  imageTool('metadata', '元数据', 'EXIF', 'shield', []),
   { id: 'image-mosaic', title: '图片打码', description: '拖出区域，导出时渲染成真实马赛克', group: '图片', icon: 'mosaic', to: { path: '/visual', query: { annotation: 'mosaic' } }, keywords: ['打码', '马赛克', '遮挡', '隐私', 'pixelate'] },
   { id: 'image-doodle', title: '图片涂鸦', description: '自由画笔在图上涂色标记', group: '图片', icon: 'pen', to: { path: '/visual', query: { annotation: 'pen' } }, keywords: ['涂色', '涂鸦', '画笔', '画线', '标记', 'draw'] },
   { id: 'media-desk', title: '音视频转换', description: '桌面端调用本机 FFmpeg，转换或提取媒体并保留原件', group: '媒体', icon: 'play', to: { path: '/media' }, keywords: ['视频', '音频', 'mp3', 'mp4', 'm4a', 'ffmpeg', '提取音频'] },
