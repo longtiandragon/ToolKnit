@@ -205,7 +205,7 @@ async function runTask(taskId: string, request: PdfTaskRequest) {
     return
   }
 
-  if (request.operation === 'pdf-to-image') {
+  if (request.operation === 'pdf-to-image' || request.operation === 'ocr') {
     // Rendering runs inside this worker on an OffscreenCanvas. pdf.js usually
     // paints text through the browser's FontFace API, which only exists where
     // `document` does — so we ask it to rasterize fonts itself, the same path
@@ -215,7 +215,7 @@ async function runTask(taskId: string, request: PdfTaskRequest) {
     if (typeof OffscreenCanvas === 'undefined' || typeof OffscreenCanvas.prototype.convertToBlob !== 'function') {
       throw new Error('当前环境不支持离屏画布，无法把 PDF 渲染成图片。请使用 Knitspace 桌面版或新版 Chrome/Edge。')
     }
-    const format: PdfImageFormat = request.imageFormat === 'jpeg' || request.imageFormat === 'webp' ? request.imageFormat : 'png'
+    const format: PdfImageFormat = request.operation === 'ocr' ? 'png' : request.imageFormat === 'jpeg' || request.imageFormat === 'webp' ? request.imageFormat : 'png'
     const mime = format === 'png' ? 'image/png' : format === 'jpeg' ? 'image/jpeg' : 'image/webp'
     const scale = pdfImageScaleForDpi(request.imageDpi ?? 150)
     const quality = Math.max(0, Math.min(1, Math.round(request.imageQuality ?? 90) / 100))
@@ -254,7 +254,11 @@ async function runTask(taskId: string, request: PdfTaskRequest) {
           await publish(taskId, ++outputSequence, {
             name: pdfImageOutputName(file.name, index, document.numPages, format),
             data: await blob.arrayBuffer(),
-            mime
+            mime,
+            pageWidth: viewport.width / scale,
+            pageHeight: viewport.height / scale,
+            pageIndex: index,
+            pageCount: document.numPages,
           })
           page.cleanup()
           completed += 1

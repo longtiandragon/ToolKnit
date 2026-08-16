@@ -114,8 +114,47 @@ pub fn probe_windows_ocr() -> Result<OcrCapabilityPayload, String> {
 }
 
 #[cfg(windows)]
+#[tauri::command]
+pub fn read_ocr_font() -> Result<tauri::ipc::Response, String> {
+    const MAX_FONT_BYTES: u64 = 32 * 1024 * 1024;
+    let candidates = [
+        PathBuf::from(r"C:\Windows\Fonts\msyh.ttc"),
+        PathBuf::from(r"C:\Windows\Fonts\simsun.ttc"),
+        PathBuf::from(r"C:\Windows\Fonts\segoeui.ttf"),
+    ];
+    for path in candidates {
+        let Ok(metadata) = fs::metadata(&path) else {
+            continue;
+        };
+        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_FONT_BYTES {
+            continue;
+        }
+        let bytes = fs::read(&path).map_err(|error| format!("无法读取系统 OCR 字体：{error}"))?;
+        return Ok(tauri::ipc::Response::new(bytes));
+    }
+    Err("未找到可用于 OCR 文本层的 Windows 系统字体。".into())
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn read_ocr_font() -> Result<tauri::ipc::Response, String> {
+    Err("当前平台尚未接入 Windows OCR 字体。".into())
+}
+
+#[cfg(windows)]
+fn bounded_image_bytes(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    const MAX_OCR_INPUT_BYTES: usize = 50 * 1024 * 1024;
+    if bytes.is_empty() {
+        return Err("图片文件为空。".into());
+    }
+    if bytes.len() > MAX_OCR_INPUT_BYTES {
+        return Err("图片超过 50 MB 安全上限，请先在图片工作室缩小或压缩。".into());
+    }
+    Ok(bytes)
+}
+
+#[cfg(windows)]
 fn bounded_image_file(path: &str) -> Result<Vec<u8>, String> {
-    const MAX_OCR_INPUT_BYTES: u64 = 50 * 1024 * 1024;
     let requested = PathBuf::from(path);
     let canonical = requested
         .canonicalize()
@@ -125,13 +164,7 @@ fn bounded_image_file(path: &str) -> Result<Vec<u8>, String> {
     if !metadata.is_file() {
         return Err("请选择一个图片文件，而不是文件夹。".into());
     }
-    if metadata.len() == 0 {
-        return Err("图片文件为空。".into());
-    }
-    if metadata.len() > MAX_OCR_INPUT_BYTES {
-        return Err("图片超过 50 MB 安全上限，请先在图片工作室缩小或压缩。".into());
-    }
-    fs::read(canonical).map_err(|error| format!("无法读取待识别图片：{error}"))
+    bounded_image_bytes(fs::read(canonical).map_err(|error| format!("无法读取待识别图片：{error}"))?)
 }
 
 #[cfg(windows)]
@@ -150,9 +183,8 @@ fn scaled_dimensions(width: u32, height: u32, max_dimension: u32) -> Result<(u32
 }
 
 #[cfg(windows)]
-#[tauri::command]
-pub fn recognize_image_text(
-    path: String,
+fn recognize_image_bytes_inner(
+    bytes: Vec<u8>,
     language_tag: Option<String>,
 ) -> Result<OcrRecognitionPayload, String> {
     use windows::{
@@ -166,7 +198,6 @@ pub fn recognize_image_text(
         Storage::Streams::{DataWriter, InMemoryRandomAccessStream},
     };
 
-    let bytes = bounded_image_file(&path)?;
     let languages = available_languages()?;
     if languages.is_empty() {
         return Err(
@@ -277,11 +308,44 @@ pub fn recognize_image_text(
     })
 }
 
+#[cfg(windows)]
+#[tauri::command]
+pub fn recognize_image_text(
+    path: String,
+    language_tag: Option<String>,
+) -> Result<OcrRecognitionPayload, String> {
+    recognize_image_bytes_inner(bounded_image_file(&path)?, language_tag)
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub fn recognize_image_bytes(
+    request: tauri::ipc::Request<'_>,
+) -> Result<OcrRecognitionPayload, String> {
+    let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
+        return Err("OCR 图片传输格式无效。".into());
+    };
+    let language_tag = request
+        .headers()
+        .get("x-toolknit-language")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    recognize_image_bytes_inner(bounded_image_bytes(data.to_vec())?, language_tag)
+}
+
 #[cfg(not(windows))]
 #[tauri::command]
 pub fn recognize_image_text(
     _path: String,
     _language_tag: Option<String>,
+) -> Result<OcrRecognitionPayload, String> {
+    Err("当前平台尚未接入本机 OCR；请使用 Windows 10/11 桌面开发版。".into())
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn recognize_image_bytes(
+    _request: tauri::ipc::Request<'_>,
 ) -> Result<OcrRecognitionPayload, String> {
     Err("当前平台尚未接入本机 OCR；请使用 Windows 10/11 桌面开发版。".into())
 }

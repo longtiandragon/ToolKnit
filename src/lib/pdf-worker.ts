@@ -1,4 +1,4 @@
-export type PdfTaskOperation = 'merge' | 'split' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'text' | 'pdf-to-image' | 'compress' | 'redact'
+export type PdfTaskOperation = 'merge' | 'split' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'text' | 'pdf-to-image' | 'compress' | 'redact' | 'ocr'
 
 export interface PdfTaskInput { name: string; data: ArrayBuffer }
 
@@ -21,7 +21,15 @@ export interface PdfTaskRequest {
   redactTerms?: string
 }
 
-export interface PdfTaskOutput { name: string; data: ArrayBuffer; mime: 'application/pdf' | 'text/plain;charset=utf-8' | 'image/png' | 'image/jpeg' | 'image/webp' }
+export interface PdfTaskOutput {
+  name: string
+  data: ArrayBuffer
+  mime: 'application/pdf' | 'text/plain;charset=utf-8' | 'image/png' | 'image/jpeg' | 'image/webp'
+  pageWidth?: number
+  pageHeight?: number
+  pageIndex?: number
+  pageCount?: number
+}
 
 interface PendingTask {
   resolve: () => void

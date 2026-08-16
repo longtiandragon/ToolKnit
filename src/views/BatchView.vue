@@ -8,6 +8,7 @@ import type { PdfTaskOperation } from '@/lib/pdf-worker'
 import { buildRenamePreview, cleanOutputName, transformText, type TextTransformMode } from '@/lib/file-tools'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
 import { isDesktop } from '@/lib/native'
+import { readDesktopOcrFont, recognizeDesktopImageBytes } from '@/lib/ocr-native'
 import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import FileDropZone from '@/components/FileDropZone.vue'
@@ -82,7 +83,7 @@ const groups: [ToolGroup, string, string, string][] = [
 ]
 
 const operationMap: Record<ToolGroup, ToolOption[]> = {
-  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['redact', '永久脱敏'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本']],
+  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本']],
   image: [['convert', '转换图片'], ['resize', '缩放并压缩'], ['crop', '裁剪图片'], ['rotate', '旋转图片']],
   text: [['transform', '文本转换']],
   organize: [['rename-report', '命名预览'], ['dedupe-report', '哈希去重报告']]
@@ -106,6 +107,7 @@ const operationNotes: Record<string, string> = {
   'pdf-to-image': '把每一页渲染成图片,可选格式、分辨率与页码范围',
   compress: '重写 PDF 结构与对象流，尽量减小体积，不改变页面内容',
   redact: '按文本匹配覆盖并栅格化页面，输出后无法恢复原文字层',
+  ocr: '把扫描页面识别为本机文字，并生成可搜索的 PDF 副本',
   'extract-text': '导出 PDF 里已有的文字层,不做 OCR',
   convert: '在 PNG、JPG 与 WebP 之间转换',
   resize: '限制最大宽度并调整压缩质量',
@@ -126,16 +128,18 @@ const accept = computed(() => group.value === 'pdf' && operation.value !== 'imag
       : group.value === 'text'
         ? '.txt,.md,.json,.js,.ts,.py,.java,.csv,text/*,application/json'
         : '*/*')
-const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'watermark', 'page-number', 'rotate', 'split', 'text', 'pdf-to-image', 'compress', 'redact'].includes(operation.value))
+const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'watermark', 'page-number', 'rotate', 'split', 'text', 'pdf-to-image', 'compress', 'redact', 'ocr'].includes(operation.value))
 const usesOutputName = computed(() => group.value === 'text' || group.value === 'organize' || (group.value === 'pdf' && ['merge', 'images-to-pdf'].includes(operation.value)))
 const canRun = computed(() => !running.value
   && (files.value.length > 0 || (group.value === 'text' && textInput.value.trim().length > 0))
-  && !(group.value === 'pdf' && operation.value === 'redact' && !redactTerms.value.trim()))
+  && !(group.value === 'pdf' && operation.value === 'redact' && !redactTerms.value.trim())
+  && !(group.value === 'pdf' && operation.value === 'ocr' && !isDesktop()))
 const outputHint = computed(() => {
   if (!files.value.length && !(group.value === 'text' && textInput.value.trim())) return '等待输入内容'
   if (group.value === 'pdf' && operation.value === 'split') return `将把 ${files.value.length} 份 PDF 拆成独立页面`
   if (group.value === 'pdf' && operation.value === 'redact') return '匹配到的页面会变成不可搜索的图片，并永久覆盖敏感文字'
   if (group.value === 'pdf' && operation.value === 'compress') return '仅重写 PDF 结构；图片型 PDF 体积可能变化不大'
+  if (group.value === 'pdf' && operation.value === 'ocr') return isDesktop() ? '使用 Windows 本机 OCR，原文件不会上传；输出会保留页面图片并附加文字层' : 'OCR PDF 需要 Windows 桌面版与本机 OCR 语言包'
   if (group.value === 'organize') return '仅生成预览报告，不修改原文件'
   return `将为 ${Math.max(files.value.length, 1)} 个输入生成新输出`
 })
@@ -215,7 +219,7 @@ function setOperation(next: string) {
   outputName.value = defaultOutputNameFor(next)
   // Extract/reorder start with "1" because they describe one selection; a
   // page-to-image export means the whole document unless a range is given.
-  if (next === 'pdf-to-image') pageRange.value = ''
+  if (next === 'pdf-to-image' || next === 'ocr') pageRange.value = ''
   clearFiles()
   message.value = `已切换到「${operations.value.find((item) => item[0] === next)?.[1] ?? '新操作'}」，请重新选择输入。`
 }
@@ -334,7 +338,7 @@ watch(() => route.query, (query) => {
   operation.value = requestedOperation
   rotation.value = defaultRotationFor(requestedOperation)
   outputName.value = defaultOutputNameFor(requestedOperation)
-  if (requestedOperation === 'pdf-to-image') pageRange.value = ''
+  if (requestedOperation === 'pdf-to-image' || requestedOperation === 'ocr') pageRange.value = ''
   const supportedTextModes: TextTransformMode[] = ['json', 'trim', 'markdown', 'dedupe-lines', 'sort-lines', 'extract-contacts', 'statistics']
   if (typeof query.mode === 'string' && supportedTextModes.includes(query.mode as TextTransformMode)) textMode.value = query.mode as TextTransformMode
   activeRecipeId.value = undefined
@@ -466,6 +470,70 @@ async function runPdf(onProgress?: (progress: number, detail: string) => void, o
     ? { data: await makeWatermarkPng(watermarkTextValue, watermarkColor.value), opacity: watermarkOpacity.value }
     : undefined
   throwIfCancelled()
+
+  if (operation.value === 'ocr') {
+    if (!isDesktop()) throw new Error('OCR PDF 需要 Windows 桌面版。')
+    onProgress?.(12, '正在准备本机 OCR 与中文字体…')
+    const [{ PDFDocument, rgb }, fontkitModule] = await Promise.all([
+      import('pdf-lib'),
+      import('@pdf-lib/fontkit'),
+    ])
+    const fontBytes = new Uint8Array(await readDesktopOcrFont())
+    const output = await PDFDocument.create()
+    const fontkit = fontkitModule.default
+    output.registerFontkit({
+      create(data: Uint8Array) {
+        const created = fontkit.create(data) as ReturnType<typeof fontkit.create> & { fonts?: ReturnType<typeof fontkit.create>[] }
+        return created.fonts?.[0] ?? created
+      },
+    } as Parameters<typeof output.registerFontkit>[0])
+    const font = await output.embedFont(fontBytes)
+    let recognizedPages = 0
+    const { runPdfTask } = await import('@/lib/pdf-worker')
+    await runPdfTask({
+      operation: 'ocr',
+      files: inputs,
+      outputName: outputName.value,
+      pageRange: pageRange.value,
+      rotation: rotation.value,
+      pageNumberStart: pageNumberStart.value,
+      pageNumberPosition: pageNumberPosition.value,
+    }, {
+      onProgress,
+      onOutput: async (pageOutput) => {
+        throwIfCancelled()
+        if (pageOutput.mime !== 'image/png') throw new Error('OCR 页面渲染结果格式无效。')
+        const image = await output.embedPng(pageOutput.data)
+        const width = pageOutput.pageWidth ?? image.width
+        const height = pageOutput.pageHeight ?? image.height
+        const page = output.addPage([width, height])
+        page.drawImage(image, { x: 0, y: 0, width, height })
+        const recognition = await recognizeDesktopImageBytes(pageOutput.data)
+        const text = recognition.text.trim()
+        if (text) {
+          recognizedPages += 1
+          page.drawText(text.slice(0, 200_000), {
+            x: 1,
+            y: 1,
+            size: 1,
+            font,
+            color: rgb(1, 1, 1),
+            opacity: 0.01,
+            maxWidth: Math.max(1, width - 2),
+            lineHeight: 1.2,
+          })
+        }
+        onProgress?.(Math.min(96, 18 + (pageOutput.pageIndex ?? 0) / Math.max(1, pageOutput.pageCount ?? 1) * 70), `正在识别第 ${(pageOutput.pageIndex ?? 0) + 1}/${pageOutput.pageCount ?? '?'} 页…`)
+        throwIfCancelled()
+      },
+    })
+    onProgress?.(97, recognizedPages ? `已识别 ${recognizedPages} 页，正在写入可搜索文字层…` : '没有识别到文字，仍保留页面图片。')
+    const name = `${cleanOutputName(pdfs[0].name)}-ocr.pdf`
+    const saved = await save(name, bytes(await output.save({ useObjectStreams: true, addDefaultPage: false, objectsPerTick: 20 })), 'application/pdf')
+    onOutput?.(saved)
+    return [saved]
+  }
+
   onProgress?.(12, '正在交给后台 PDF 引擎处理…')
   const { runPdfTask } = await import('@/lib/pdf-worker')
   throwIfCancelled()
@@ -864,6 +932,10 @@ onBeforeUnmount(() => {
 
             <p v-if="operation === 'compress'" class="text-[12px] text-fg-3 leading-snug">
               这是无损结构优化：不会降低图片分辨率或删除文字。图片型 PDF 若仍很大，下一步可用图片质量工具重建。
+            </p>
+
+            <p v-if="operation === 'ocr'" class="text-[11px] text-fg-3 leading-relaxed">
+              页面会先在本机渲染，再交给 Windows 已安装的 OCR 语言包识别。生成的 PDF 仍以页面图片为底，并附加可搜索文字；没有语言包时不会上传或生成远程结果。
             </p>
 
             <template v-if="operation === 'pdf-to-image'">
