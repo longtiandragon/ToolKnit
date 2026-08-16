@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateCidr, calculateDateDifference, calculateDateOffset, convertColor, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
+import { calculateCidr, calculateDateDifference, calculateDateOffset, convertColor, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -217,6 +217,23 @@ describe('color converter', () => {
   it('rejects unsupported color syntax', () => {
     expect(() => convertColor('red')).toThrow('仅支持')
     expect(() => convertColor('rgb(1, 2)')).toThrow('三个通道')
+  })
+})
+
+describe('Cron explainer', () => {
+  it('expands lists, ranges, steps and named weekdays', () => {
+    const result = explainCron('*/15 9-17 * JAN,MAR MON-FRI')
+    expect(result.fields.minute.values).toEqual([0, 15, 30, 45])
+    expect(result.fields.hour.values).toEqual([9, 10, 11, 12, 13, 14, 15, 16, 17])
+    expect(result.fields.month.values).toEqual([1, 3])
+    expect(result.fields.dayOfWeek.values).toEqual([1, 2, 3, 4, 5])
+    expect(result.summary).toContain('每 15 分钟')
+  })
+
+  it('supports Sunday as 7 and rejects unsupported field counts', () => {
+    expect(explainCron('0 0 * * 7').fields.dayOfWeek.values).toEqual([0])
+    expect(() => explainCron('0 0 * *')).toThrow('五字段')
+    expect(() => explainCron('0 0 * * 8')).toThrow('0 到 6')
   })
 })
 

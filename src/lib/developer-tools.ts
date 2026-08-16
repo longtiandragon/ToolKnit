@@ -59,6 +59,24 @@ export interface ColorResult {
   cssHsl: string
 }
 
+export interface CronFieldResult {
+  expression: string
+  values: number[]
+  summary: string
+}
+
+export interface CronResult {
+  expression: string
+  fields: {
+    minute: CronFieldResult
+    hour: CronFieldResult
+    dayOfMonth: CronFieldResult
+    month: CronFieldResult
+    dayOfWeek: CronFieldResult
+  }
+  summary: string
+}
+
 export interface JwtResult {
   header: Record<string, unknown>
   payload: Record<string, unknown>
@@ -294,6 +312,77 @@ export function convertColor(value: string): ColorResult {
     cssRgb: alpha < 1 ? `rgba(${red}, ${green}, ${blue}, ${alpha})` : `rgb(${red}, ${green}, ${blue})`,
     cssHsl: alpha < 1 ? `hsla(${hslValue.h}, ${hslValue.s}%, ${hslValue.l}%, ${alpha})` : `hsl(${hslValue.h}, ${hslValue.s}%, ${hslValue.l}%)`,
   }
+}
+
+const CRON_MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 }
+const CRON_WEEKDAYS: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }
+
+function cronNumber(value: string, names: Record<string, number>, minimum: number, maximum: number) {
+  const numeric = names[value.toLowerCase()] ?? Number(value)
+  if (!Number.isInteger(numeric) || numeric < minimum || numeric > maximum) throw new Error(`Cron 值“${value}”需要在 ${minimum} 到 ${maximum} 之间。`)
+  return numeric
+}
+
+function parseCronField(expression: string, minimum: number, maximum: number, names: Record<string, number> = {}) {
+  const values = new Set<number>()
+  for (const rawPart of expression.split(',')) {
+    const part = rawPart.trim()
+    if (!part) throw new Error('Cron 字段不能包含空的列表项目。')
+    const [rangePart, stepPart, ...extra] = part.split('/')
+    if (extra.length) throw new Error(`Cron 字段“${part}”包含多个步长。`)
+    const step = stepPart === undefined ? 1 : Number(stepPart)
+    if (!Number.isInteger(step) || step < 1 || step > maximum - minimum + 1) throw new Error(`Cron 步长“${stepPart}”无效。`)
+    let start: number
+    let end: number
+    if (rangePart === '*') {
+      start = minimum
+      end = maximum
+    } else if (rangePart.includes('-')) {
+      const [startValue, endValue, ...rangeExtra] = rangePart.split('-')
+      if (rangeExtra.length || !startValue || !endValue) throw new Error(`Cron 范围“${rangePart}”无效。`)
+      start = cronNumber(startValue, names, minimum, maximum)
+      end = cronNumber(endValue, names, minimum, maximum)
+      if (end < start) throw new Error(`Cron 范围“${rangePart}”的结束值不能小于开始值。`)
+    } else {
+      start = cronNumber(rangePart, names, minimum, maximum)
+      end = start
+    }
+    for (let value = start; value <= end; value += step) values.add(value)
+  }
+  if (!values.size) throw new Error(`Cron 字段“${expression}”没有有效取值。`)
+  return [...values].sort((left, right) => left - right)
+}
+
+function cronSummary(label: string, expression: string, values: number[], minimum: number, maximum: number) {
+  if (expression === '*' || expression === `*/1`) return `每${label}`
+  const step = /^\*\/(\d+)$/.exec(expression)
+  if (step) return `每 ${step[1]} ${label}`
+  if (values.length === 1) return `${label}为 ${values[0]}`
+  if (values.length === maximum - minimum + 1) return `每${label}`
+  const preview = values.slice(0, 12).join('、')
+  return `${label}为 ${preview}${values.length > 12 ? ` 等 ${values.length} 个值` : ''}`
+}
+
+export function explainCron(value: string): CronResult {
+  if (!value.trim()) throw new Error('请输入五字段 Cron，例如 0 9 * * 1-5。')
+  assertStructuredTextSize(value)
+  const parts = value.trim().split(/\s+/)
+  if (parts.length !== 5) throw new Error('目前只支持标准五字段 Cron：分钟 小时 日 月 星期。')
+  const fields = {
+    minute: { expression: parts[0], values: parseCronField(parts[0], 0, 59), label: '分钟' },
+    hour: { expression: parts[1], values: parseCronField(parts[1], 0, 23), label: '小时' },
+    dayOfMonth: { expression: parts[2], values: parseCronField(parts[2], 1, 31), label: '每月第几天' },
+    month: { expression: parts[3], values: parseCronField(parts[3], 1, 12, CRON_MONTHS), label: '月份' },
+    dayOfWeek: { expression: parts[4], values: parseCronField(parts[4].replace(/\b7\b/g, '0'), 0, 6, CRON_WEEKDAYS), label: '星期' },
+  }
+  const resultFields = {
+    minute: { expression: fields.minute.expression, values: fields.minute.values, summary: cronSummary(fields.minute.label, fields.minute.expression, fields.minute.values, 0, 59) },
+    hour: { expression: fields.hour.expression, values: fields.hour.values, summary: cronSummary(fields.hour.label, fields.hour.expression, fields.hour.values, 0, 23) },
+    dayOfMonth: { expression: fields.dayOfMonth.expression, values: fields.dayOfMonth.values, summary: cronSummary(fields.dayOfMonth.label, fields.dayOfMonth.expression, fields.dayOfMonth.values, 1, 31) },
+    month: { expression: fields.month.expression, values: fields.month.values, summary: cronSummary(fields.month.label, fields.month.expression, fields.month.values, 1, 12) },
+    dayOfWeek: { expression: fields.dayOfWeek.expression, values: fields.dayOfWeek.values, summary: cronSummary(fields.dayOfWeek.label, fields.dayOfWeek.expression, fields.dayOfWeek.values, 0, 6) },
+  }
+  return { expression: parts.join(' '), fields: resultFields, summary: Object.values(resultFields).map((field) => field.summary).join('；') }
 }
 
 function decodeBase64Url(value: string) {
