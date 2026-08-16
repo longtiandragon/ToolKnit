@@ -57,6 +57,18 @@ export interface ToolPipelineProgress {
   definition: ToolDefinition
 }
 
+export interface AsyncTextPipelineOptions {
+  onProgress?: (progress: ToolPipelineProgress) => void
+  shouldCancel?: () => boolean
+}
+
+export class ToolPipelineCancelledError extends Error {
+  constructor() {
+    super('流水线已停止。')
+    this.name = 'ToolPipelineCancelledError'
+  }
+}
+
 export const TEXT_PIPELINE_MAX_INPUT_BYTES = 8 * 1024 * 1024
 export const TEXT_PIPELINE_MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 export const TOOL_PIPELINE_MAX_STEPS = 12
@@ -143,6 +155,34 @@ export function runTextPipeline(input: string, steps: readonly ToolPipelineStep[
     extension = result.extension
     results.push({ stepId: step.id, toolId: step.toolId, title: definition.title, content, extension })
   })
+  return { content, extension, steps: results }
+}
+
+/**
+ * Event-loop friendly counterpart for the desktop UI. The synchronous
+ * function remains available for small deterministic callers and tests, while
+ * this variant yields between steps so a Stop action can be handled before
+ * the next transformation starts.
+ */
+export async function runTextPipelineAsync(input: string, steps: readonly ToolPipelineStep[], options: AsyncTextPipelineOptions = {}): Promise<TextPipelineResult> {
+  if (typeof input !== 'string' || !input.trim()) throw new Error('请粘贴文本或选择一个文本文件。')
+  if (utf8Bytes(input) > TEXT_PIPELINE_MAX_INPUT_BYTES) throw new Error('输入文本超过 8 MB，流水线已停止。')
+  validatePipelineSteps(steps)
+  let content = input
+  let extension = 'txt'
+  const results: TextPipelineStepResult[] = []
+  for (const [index, step] of steps.entries()) {
+    if (options.shouldCancel?.()) throw new ToolPipelineCancelledError()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    if (options.shouldCancel?.()) throw new ToolPipelineCancelledError()
+    const definition = getToolDefinition(step.toolId)!
+    options.onProgress?.({ index, total: steps.length, step, definition })
+    const result = definition.runText!(content, step.parameters ?? {})
+    if (utf8Bytes(result.content) > TEXT_PIPELINE_MAX_OUTPUT_BYTES) throw new Error(`步骤“${definition.title}”的输出超过 16 MB，流水线已停止。`)
+    content = result.content
+    extension = result.extension
+    results.push({ stepId: step.id, toolId: step.toolId, title: definition.title, content, extension })
+  }
   return { content, extension, steps: results }
 }
 

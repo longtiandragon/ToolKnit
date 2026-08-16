@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createPipelineStep, getToolDefinition, runTextPipeline, suggestToolDefinitions, validatePipelineSteps } from './tool-platform'
+import { createPipelineStep, getToolDefinition, runTextPipeline, runTextPipelineAsync, suggestToolDefinitions, ToolPipelineCancelledError, validatePipelineSteps } from './tool-platform'
 
 describe('tool platform text pipelines', () => {
   it('exposes definitions for the current text tools', () => {
@@ -16,6 +16,14 @@ describe('tool platform text pipelines', () => {
     expect(result.extension).toBe('txt')
     expect(result.steps.map((step) => step.toolId)).toEqual(['text.dedupe-lines', 'text.sort-lines'])
     expect(progress).toEqual([0, 1])
+  })
+
+  it('yields between async steps so cancellation is cooperative', async () => {
+    let cancelled = false
+    await expect(runTextPipelineAsync('b\na\nb', [createPipelineStep('text.dedupe-lines', 0), createPipelineStep('text.sort-lines', 1)], {
+      shouldCancel: () => cancelled,
+      onProgress: ({ index }) => { if (index === 0) cancelled = true },
+    })).rejects.toBeInstanceOf(ToolPipelineCancelledError)
   })
 
   it('rejects unknown and oversized pipelines before writing output', () => {

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import type { FileReference, ToolPipelineRecipe, ToolPipelineStep } from '@/types'
 import { cleanOutputName } from '@/lib/file-tools'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
-import { createPipelineStep, getToolDefinition, listToolDefinitions, runTextPipeline, suggestToolDefinitions } from '@/lib/tool-platform'
+import { createPipelineStep, getToolDefinition, listToolDefinitions, runTextPipelineAsync, suggestToolDefinitions, ToolPipelineCancelledError, validatePipelineSteps } from '@/lib/tool-platform'
 import { isDesktop } from '@/lib/native'
 import { useUiStore } from '@/stores/ui'
 import { useWorkbenchStore } from '@/stores/workbench'
@@ -25,12 +25,17 @@ const steps = ref<ToolPipelineStep[]>([createPipelineStep('text.trim', 0)])
 const selectedTool = ref('text.json')
 const output = ref<FileReference[]>([])
 const running = ref(false)
+const cancelling = ref(false)
 const progress = ref(0)
 const message = ref('把几个熟悉的文本工具串起来，一次处理并保存为可复用配方。')
 const recipeTitle = ref('')
 const activeRecipeId = ref<string>()
 const recipeFormOpen = ref(false)
+const recipeFileInput = ref<HTMLInputElement>()
+let cancellationRequested = false
 let readToken = 0
+
+const PIPELINE_RECIPE_MAX_BYTES = 256 * 1024
 
 const definitions = listToolDefinitions()
 const suggestions = computed(() => suggestToolDefinitions(input.value))
@@ -100,6 +105,70 @@ function removeRecipe(recipe: ToolPipelineRecipe) {
   ui.toast('已删除流水线配方', recipe.title, 'success')
 }
 
+function normalizedRecipeSteps(raw: unknown) {
+  if (!Array.isArray(raw)) throw new Error('配方缺少步骤列表。')
+  if (raw.length > 12) throw new Error('配方最多支持 12 个步骤。')
+  const steps = raw.map((value, index) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`第 ${index + 1} 步格式不正确。`)
+    const candidate = value as { toolId?: unknown; parameters?: unknown }
+    if (typeof candidate.toolId !== 'string' || !getToolDefinition(candidate.toolId)) throw new Error(`第 ${index + 1} 步引用了未知工具。`)
+    let parameters: ToolPipelineStep['parameters'] | undefined
+    if (candidate.parameters !== undefined) {
+      if (!candidate.parameters || typeof candidate.parameters !== 'object' || Array.isArray(candidate.parameters)) throw new Error(`第 ${index + 1} 步的参数格式不正确。`)
+      const entries = Object.entries(candidate.parameters)
+      if (entries.length > 32) throw new Error(`第 ${index + 1} 步的参数过多。`)
+      const safeEntries = entries.map(([key, item]) => {
+        if (!key || key.length > 80 || !['string', 'number', 'boolean'].includes(typeof item)) throw new Error(`第 ${index + 1} 步包含不支持的参数。`)
+        return [key, item] as const
+      })
+      parameters = Object.fromEntries(safeEntries) as ToolPipelineStep['parameters']
+    }
+    return { ...createPipelineStep(candidate.toolId, index), ...(parameters ? { parameters } : {}) }
+  })
+  validatePipelineSteps(steps)
+  return steps
+}
+
+async function exportRecipe() {
+  try {
+    if (isDesktop() && !store.settings.outputDirectory) {
+      const directory = await chooseOutputDirectory()
+      if (!directory) return
+      store.updateSettings({ outputDirectory: directory })
+    }
+    const title = recipeTitle.value.trim() || steps.value.map((step) => stepDefinition(step)?.title ?? step.toolId).join(' → ') || '文本流水线'
+    const payload = JSON.stringify({ type: 'toolknit-pipeline', version: 1, title, steps: cloneSteps(steps.value) }, null, 2)
+    const saved = await exportOutput(store.settings.outputDirectory, `${cleanOutputName(title)}-pipeline.json`, payload, 'application/json;charset=utf-8')
+    ui.toast('流水线已导出', saved.name, 'success')
+  } catch (error) {
+    ui.toast('导出失败', error instanceof Error ? error.message : '无法导出流水线配方。', 'error')
+  }
+}
+
+async function importRecipeFile(event: Event) {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  target.value = ''
+  if (!file) return
+  try {
+    if (file.size > PIPELINE_RECIPE_MAX_BYTES) throw new Error('配方文件超过 256 KB。')
+    const parsed = JSON.parse(await file.text()) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('配方 JSON 不是对象。')
+    const payload = parsed as { title?: unknown; steps?: unknown; recipe?: { title?: unknown; steps?: unknown } }
+    const source = payload.recipe && typeof payload.recipe === 'object' ? payload.recipe : payload
+    const importedSteps = normalizedRecipeSteps(source.steps)
+    const title = typeof source.title === 'string' && source.title.trim() ? source.title.trim().slice(0, 120) : '导入的文本流水线'
+    const recipe = store.savePipelineRecipe({ title, version: 1, steps: importedSteps })
+    loadRecipe(recipe)
+    recipeFormOpen.value = true
+    message.value = `已导入配方“${recipe.title}”，输入内容后即可运行。`
+    ui.toast('流水线配方已导入', recipe.title, 'success')
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : '配方文件无法读取。'
+    ui.toast('导入失败', detail, 'error')
+  }
+}
+
 async function chooseInputFiles(next: File[]) {
   if (!next[0]) return
   const token = ++readToken
@@ -150,6 +219,8 @@ async function run() {
     }
     store.updateSettings({ outputDirectory: directory })
   }
+  cancellationRequested = false
+  cancelling.value = false
   running.value = true
   progress.value = 8
   output.value = []
@@ -166,11 +237,15 @@ async function run() {
   })
   store.updateJob(job.id, { status: 'running', progress: 8, detail: '正在校验流水线和输入内容…' })
   try {
-    const result = runTextPipeline(input.value, steps.value, ({ index, total, definition }) => {
+    const result = await runTextPipelineAsync(input.value, steps.value, {
+      shouldCancel: () => cancellationRequested,
+      onProgress: ({ index, total, definition }) => {
       progress.value = Math.max(progress.value, Math.round(12 + ((index + 1) / total) * 72))
       message.value = `正在执行第 ${index + 1}/${total} 步：${definition.title}`
       store.updateJob(job.id, { status: 'running', progress: progress.value, detail: message.value })
+      },
     })
+    if (cancellationRequested) throw new ToolPipelineCancelledError()
     progress.value = 92
     message.value = '正在导出流水线结果…'
     const base = cleanOutputName(files.value[0]?.name || 'knitspace')
@@ -182,18 +257,37 @@ async function run() {
     message.value = `任务完成：已生成 ${saved.name}。`
     ui.toast('流水线已完成', saved.name, 'success', '查看历史', () => location.hash = '#/history')
   } catch (error) {
+    if (error instanceof ToolPipelineCancelledError || cancellationRequested) {
+      store.updateJob(job.id, { status: 'cancelled', progress: progress.value, errorCode: 'TOOL_CANCELLED', detail: '流水线已停止；没有写出不完整结果。' })
+      message.value = '流水线已停止；原始输入和已有输出均未覆盖。'
+      ui.toast('流水线已停止', '没有写出不完整结果。', 'warning')
+      return
+    }
     const detail = error instanceof Error ? error.message : '流水线执行失败。'
     store.updateJob(job.id, { status: 'failed', progress: 100, errorCode: 'TOOL_PIPELINE_FAILED', detail })
     message.value = detail
     ui.toast('流水线失败', detail, 'error')
   } finally {
     running.value = false
+    cancelling.value = false
+    cancellationRequested = false
   }
+}
+
+function cancelRun() {
+  if (!running.value || cancelling.value) return
+  cancelling.value = true
+  cancellationRequested = true
+  message.value = '正在停止；当前步骤完成后不会再开始下一步。'
 }
 
 function removeOutput(item: FileReference) {
   output.value = output.value.filter((entry) => entry !== item)
 }
+
+onBeforeUnmount(() => {
+  cancellationRequested = true
+})
 </script>
 
 <template>
@@ -236,6 +330,8 @@ function removeOutput(item: FileReference) {
         :value="progress"
         :detail="message"
         :done="output.map((item) => item.name)"
+        :stopping="cancelling"
+        @cancel="cancelRun"
       />
 
       <section v-if="!running" class="panel overflow-hidden stack flex-1 min-h-64">
@@ -323,6 +419,11 @@ function removeOutput(item: FileReference) {
             <button class="btn-default btn-sm w-full" :disabled="running" @click="saveCurrentRecipe">保存配方</button>
             <p class="text-[11px] text-fg-3 leading-snug">只保存工具和参数，不保存文件内容、路径或输出。</p>
           </template>
+          <div class="row gap-2 border-t border-line pt-3">
+            <button class="btn-default btn-sm flex-1" :disabled="running" @click="recipeFileInput?.click()">导入 JSON</button>
+            <button class="btn-default btn-sm flex-1" :disabled="running" @click="exportRecipe">导出 JSON</button>
+            <input ref="recipeFileInput" class="hidden" type="file" accept="application/json,.json" @change="importRecipeFile" />
+          </div>
           <div v-if="store.pipelineRecipes.length" class="stack gap-1 border-t border-line pt-3">
             <p class="text-[11px] text-fg-3">已保存</p>
             <div v-for="recipe in store.pipelineRecipes.slice(0, 6)" :key="recipe.id" class="row gap-2">
