@@ -16,6 +16,7 @@ import FieldRow from '@/components/FieldRow.vue'
 import ProgressTrack from '@/components/ProgressTrack.vue'
 import OutputList from '@/components/OutputList.vue'
 import ToolPipelineView from '@/components/ToolPipelineView.vue'
+import ArchiveView from '@/views/ArchiveView.vue'
 
 type ToolGroup = 'pdf' | 'image' | 'text' | 'organize'
 type ToolOption = [id: string, label: string]
@@ -25,6 +26,7 @@ const ui = useUiStore()
 const route = useRoute()
 const router = useRouter()
 const pipelineMode = computed(() => route.query.mode === 'pipeline')
+const archiveMode = computed(() => route.query.mode === 'archive')
 const group = ref<ToolGroup>('pdf')
 const operation = ref('merge')
 const files = ref<File[]>([])
@@ -291,7 +293,7 @@ async function pickOutputDirectory() {
 }
 
 watch(() => route.query, (query) => {
-  if (query.mode === 'pipeline') return
+  if (query.mode === 'pipeline' || query.mode === 'archive') return
   if (query.group === 'image') {
     router.replace({ path: '/visual', query: { tool: typeof query.operation === 'string' ? query.operation : 'convert' } })
     return
@@ -639,6 +641,7 @@ onBeforeUnmount(() => {
 
 <template>
   <ToolPipelineView v-if="pipelineMode" />
+  <ArchiveView v-else-if="archiveMode" />
   <div v-else class="page-enter mx-auto w-full max-w-320 px-8 py-6">
     <PageHeader :title="activeOperationLabel" :subtitle="activeOperationNote">
       <template #actions>

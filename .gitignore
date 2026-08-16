@@ -24,6 +24,7 @@ engines/
 models/
 coverage/
 benchmarks/generated/
+tmp-screenshots/
 *.log
 
 # Written by `vite.analyze.config.ts`, not source.

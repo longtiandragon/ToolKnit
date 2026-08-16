@@ -1,5 +1,6 @@
 #[cfg(not(feature = "public-core"))]
 mod private_tools;
+mod archive_tools;
 mod transcription;
 mod vault;
 mod windows_ocr;
@@ -663,6 +664,33 @@ async fn inspect_default_vault_backup(
     })
     .await
     .map_err(|error| format!("完整归档检查任务失败：{error}"))?
+}
+
+#[tauri::command]
+async fn create_zip_archive(
+    input_paths: Vec<String>,
+    output_path: String,
+) -> Result<archive_tools::ArchiveOperationSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || archive_tools::create_zip(input_paths, output_path).map_err(|error| error.to_string()))
+        .await
+        .map_err(|error| format!("ZIP 创建任务失败：{error}"))?
+}
+
+#[tauri::command]
+async fn list_zip_archive(archive_path: String) -> Result<archive_tools::ArchiveListing, String> {
+    tauri::async_runtime::spawn_blocking(move || archive_tools::list_zip(archive_path).map_err(|error| error.to_string()))
+        .await
+        .map_err(|error| format!("ZIP 检查任务失败：{error}"))?
+}
+
+#[tauri::command]
+async fn extract_zip_archive(
+    archive_path: String,
+    output_directory: String,
+) -> Result<archive_tools::ArchiveOperationSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || archive_tools::extract_zip(archive_path, output_directory).map_err(|error| error.to_string()))
+        .await
+        .map_err(|error| format!("ZIP 解压任务失败：{error}"))?
 }
 
 #[tauri::command]
@@ -5603,6 +5631,9 @@ pub fn run() {
             create_default_vault_backup,
             inspect_default_vault_backup,
             restore_default_vault_backup,
+            create_zip_archive,
+            list_zip_archive,
+            extract_zip_archive,
             save_default_source,
             get_default_source,
             touch_default_source,
