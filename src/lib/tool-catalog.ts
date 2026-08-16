@@ -101,6 +101,8 @@ export const toolCatalog: ToolCatalogItem[] = [
   { id: 'utility-qrcode', title: '二维码生成与识别', description: '把文字或网址生成二维码，也能读取图片', group: '表达', icon: 'qr-code', to: { path: '/developer-tools', query: { tool: 'qrcode' } }, keywords: ['二维码', 'QR', '扫码', '网址分享'] },
   { id: 'utility-datecalc', title: '日期计算器', description: '计算日期间隔，或向前向后推算日期', group: '整理', icon: 'calendar', to: { path: '/developer-tools', query: { tool: 'datecalc' } }, keywords: ['日期', '天数', '倒计时', '间隔', '月末'] },
   { id: 'developer-base64', title: 'Base64 编解码', description: '支持中文与 Emoji 的文本转换', group: '开发', icon: 'code', to: { path: '/developer-tools', query: { tool: 'base64' } }, keywords: ['base64', '编码', '解码'] },
+  { id: 'developer-base32', title: 'Base32 编解码', description: 'RFC 4648 文本编码与解码', group: '开发', icon: 'code', to: { path: '/developer-tools', query: { tool: 'base32' } }, keywords: ['base32', 'rfc4648', '编码', '解码'] },
+  { id: 'developer-base58', title: 'Base58 编解码', description: 'Bitcoin 字符表文本编码与解码', group: '开发', icon: 'binary', to: { path: '/developer-tools', query: { tool: 'base58' } }, keywords: ['base58', 'bitcoin', '编码', '解码'] },
   { id: 'developer-url', title: 'URL 编解码', description: '处理查询参数和特殊字符', group: '开发', icon: 'link', to: { path: '/developer-tools', query: { tool: 'url' } }, keywords: ['url', 'encodeURIComponent', '百分号'] },
   { id: 'developer-json', title: 'JSON 格式化与压缩', description: '格式化/压缩/JSONPath', group: '开发', icon: 'json', to: { path: '/developer-tools', query: { tool: 'json' } }, keywords: ['json', 'jsonpath'] },
   { id: 'developer-jwt', title: 'JWT 查看器', description: '本地读取 Header、Payload 与过期时间', group: '开发', icon: 'shield', to: { path: '/developer-tools', query: { tool: 'jwt' } }, keywords: ['token', 'claims', 'header', 'payload'] },

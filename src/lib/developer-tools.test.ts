@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateCidr, calculateDateDifference, calculateDateOffset, convertColor, convertNumberBase, convertTimestamp, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
+import { calculateCidr, calculateDateDifference, calculateDateOffset, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -26,6 +26,23 @@ describe('Base64 and URL transforms', () => {
     expect(encodeHex('你好 👋')).toBe('E4BDA0E5A5BD20F09F918B')
     expect(decodeHex(`0x${encodeHex('你好 👋')}`)).toBe('你好 👋')
     expect(() => decodeHex('ABC')).toThrow('偶数')
+  })
+})
+
+describe('Base32 and Base58 transforms', () => {
+  it('round-trips UTF-8 text with RFC 4648 Base32', () => {
+    const encoded = encodeBase32('你好，ToolKnit 👋')
+    expect(encoded).toBe('4S62BZNFXXX3ZDCUN5XWYS3ONF2CB4E7SGFQ====')
+    expect(decodeBase32(encoded)).toBe('你好，ToolKnit 👋')
+    expect(decodeBase32(encoded.replace(/=/g, '').toLowerCase())).toBe('你好，ToolKnit 👋')
+  })
+
+  it('round-trips UTF-8 text with Bitcoin Base58 and rejects lookalikes', () => {
+    const encoded = encodeBase58('你好，ToolKnit 👋')
+    expect(decodeBase58(encoded)).toBe('你好，ToolKnit 👋')
+    expect(decodeBase58(encodeBase58('\u0000A'))).toBe('\u0000A')
+    expect(decodeBase58('1')).toBe('\u0000')
+    expect(() => decodeBase58('0OIl')).toThrow('无效字符')
   })
 })
 

@@ -136,6 +136,106 @@ export function decodeBase64(value: string) {
   }
 }
 
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+
+function decodeUtf8(bytes: Uint8Array, label: string) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw new Error(`${label} 已成功还原为字节，但内容不是有效的 UTF-8 文本。`)
+  }
+}
+
+export function encodeBase32(value: string) {
+  assertStructuredTextSize(value)
+  const bytes = new TextEncoder().encode(value)
+  let buffer = 0
+  let bits = 0
+  let output = ''
+  for (const byte of bytes) {
+    buffer = (buffer << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      bits -= 5
+      output += BASE32_ALPHABET[(buffer >> bits) & 31]
+    }
+  }
+  if (bits) output += BASE32_ALPHABET[(buffer << (5 - bits)) & 31]
+  return output.padEnd(Math.ceil(output.length / 8) * 8, '=')
+}
+
+export function decodeBase32(value: string) {
+  const compact = value.replace(/\s+/g, '').toUpperCase()
+  if (!compact) throw new Error('请输入需要解码的 Base32 内容。')
+  if (!/^[A-Z2-7]*={0,6}$/.test(compact)) throw new Error('Base32 只能包含 A-Z、2-7 和末尾补位符 =。')
+  assertStructuredTextSize(compact)
+  const content = compact.replace(/=+$/, '')
+  if ([1, 3, 6].includes(content.length % 8)) throw new Error('Base32 长度无效，请检查内容是否缺失。')
+  const bytes: number[] = []
+  let buffer = 0
+  let bits = 0
+  for (const character of content) {
+    buffer = (buffer << 5) | BASE32_ALPHABET.indexOf(character)
+    bits += 5
+    if (bits >= 8) {
+      bits -= 8
+      bytes.push((buffer >> bits) & 255)
+    }
+  }
+  return decodeUtf8(Uint8Array.from(bytes), 'Base32')
+}
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+export function encodeBase58(value: string) {
+  assertStructuredTextSize(value)
+  const bytes = new TextEncoder().encode(value)
+  if (!bytes.length) return ''
+  const digits = [0]
+  for (const byte of bytes) {
+    let carry = byte
+    for (let index = 0; index < digits.length; index += 1) {
+      const next = digits[index] * 256 + carry
+      digits[index] = next % 58
+      carry = Math.floor(next / 58)
+    }
+    while (carry) {
+      digits.push(carry % 58)
+      carry = Math.floor(carry / 58)
+    }
+  }
+  let leadingZeroes = 0
+  while (leadingZeroes < bytes.length && bytes[leadingZeroes] === 0) leadingZeroes += 1
+  return '1'.repeat(leadingZeroes) + digits.reverse().map(digit => BASE58_ALPHABET[digit]).join('').replace(/^1+/, '')
+}
+
+export function decodeBase58(value: string) {
+  const compact = value.replace(/\s+/g, '')
+  if (!compact) throw new Error('请输入需要解码的 Base58 内容。')
+  assertStructuredTextSize(compact)
+  const digits = [0]
+  for (const character of compact) {
+    const digit = BASE58_ALPHABET.indexOf(character)
+    if (digit < 0) throw new Error('Base58 包含无效字符；不使用 0、O、I 和 l。')
+    let carry = digit
+    for (let index = 0; index < digits.length; index += 1) {
+      const next = digits[index] * 58 + carry
+      digits[index] = next % 256
+      carry = Math.floor(next / 256)
+    }
+    while (carry) {
+      digits.push(carry % 256)
+      carry = Math.floor(carry / 256)
+    }
+  }
+  let leadingOnes = 0
+  while (leadingOnes < compact.length && compact[leadingOnes] === '1') leadingOnes += 1
+  const payload = digits.length === 1 && digits[0] === 0 ? [] : digits.reverse()
+  const bytes = new Uint8Array(leadingOnes + payload.length)
+  bytes.set(payload, leadingOnes)
+  return decodeUtf8(bytes, 'Base58')
+}
+
 export function encodeHex(value: string) {
   assertStructuredTextSize(value)
   const bytes = new TextEncoder().encode(value)
