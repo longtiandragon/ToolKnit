@@ -48,6 +48,7 @@ export interface JwtResult {
 
 export type JsonYamlDirection = 'json-to-yaml' | 'yaml-to-json'
 export type CsvJsonDirection = 'csv-to-json' | 'json-to-csv'
+export type HtmlEntityDirection = 'encode' | 'decode'
 
 const STRUCTURED_TEXT_MAX_BYTES = 2 * 1024 * 1024
 
@@ -108,6 +109,145 @@ export function transformJson(value: string, compact = false) {
     const detail = reason instanceof Error ? reason.message : '语法错误'
     throw new Error(`JSON 解析失败：${detail}`)
   }
+}
+
+const HTML_ENTITY_ENCODE_MAP: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+}
+
+const HTML_ENTITY_DECODE_MAP: Record<string, string> = {
+  amp: '&',
+  apos: "'",
+  gt: '>',
+  lt: '<',
+  nbsp: '\u00a0',
+  quot: '"',
+  copy: '\u00a9',
+  reg: '\u00ae',
+  hellip: '\u2026',
+  ndash: '\u2013',
+  mdash: '\u2014',
+}
+
+export function transformHtmlEntities(value: string, direction: HtmlEntityDirection) {
+  if (!value.trim()) throw new Error('请输入需要转换的文本。')
+  assertStructuredTextSize(value)
+  if (direction === 'encode') return value.replace(/[&<>"']/g, (character) => HTML_ENTITY_ENCODE_MAP[character])
+  return value.replace(/&(?:#(x[\da-f]+|\d+)|([a-z][a-z\d]+));/gi, (entity, numeric: string | undefined, named: string | undefined) => {
+    if (named) return HTML_ENTITY_DECODE_MAP[named.toLowerCase()] ?? entity
+    const value = numeric?.toLowerCase().startsWith('x') ? Number.parseInt(numeric.slice(1), 16) : Number.parseInt(numeric ?? '', 10)
+    if (!Number.isInteger(value) || value < 0 || value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)) return entity
+    try { return String.fromCodePoint(value) } catch { return entity }
+  })
+}
+
+type XmlToken = { kind: 'tag' | 'text' | 'comment' | 'cdata'; value: string }
+
+function scanXmlTokens(value: string) {
+  const tokens: XmlToken[] = []
+  let cursor = 0
+  let textStart = 0
+  const pushText = (end: number) => {
+    if (end > textStart) tokens.push({ kind: 'text', value: value.slice(textStart, end) })
+  }
+  while (cursor < value.length) {
+    if (value[cursor] !== '<') { cursor += 1; continue }
+    pushText(cursor)
+    if (value.startsWith('<!--', cursor)) {
+      const end = value.indexOf('-->', cursor + 4)
+      if (end < 0) throw new Error('XML 注释缺少结束标记。')
+      tokens.push({ kind: 'comment', value: value.slice(cursor, end + 3) })
+      cursor = end + 3
+      textStart = cursor
+      continue
+    }
+    if (value.startsWith('<![CDATA[', cursor)) {
+      const end = value.indexOf(']]>', cursor + 9)
+      if (end < 0) throw new Error('XML CDATA 缺少结束标记。')
+      tokens.push({ kind: 'cdata', value: value.slice(cursor, end + 3) })
+      cursor = end + 3
+      textStart = cursor
+      continue
+    }
+    let end = cursor + 1
+    let quote = ''
+    while (end < value.length) {
+      const character = value[end]
+      if (quote) {
+        if (character === quote) quote = ''
+      } else if (character === '"' || character === "'") {
+        quote = character
+      } else if (character === '>') {
+        break
+      }
+      end += 1
+    }
+    if (end >= value.length) throw new Error('XML 标签缺少右尖括号。')
+    tokens.push({ kind: 'tag', value: value.slice(cursor, end + 1).trim() })
+    cursor = end + 1
+    textStart = cursor
+  }
+  pushText(value.length)
+  return tokens
+}
+
+export function formatXml(value: string) {
+  if (!value.trim()) throw new Error('请输入 XML 内容。')
+  assertStructuredTextSize(value)
+  const tokens = scanXmlTokens(value.replace(/^\uFEFF/, '').trim())
+  const lines: string[] = []
+  const stack: string[] = []
+  let rootSeen = false
+  let rootClosed = false
+  const indent = (depth: number) => '  '.repeat(depth)
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (token.kind === 'text') {
+      const text = token.value.replace(/\s+/g, ' ').trim()
+      if (!text) continue
+      if (!stack.length) throw new Error('XML 根元素外不能出现文本内容。')
+      lines.push(`${indent(stack.length)}${text}`)
+      continue
+    }
+    if (token.kind === 'comment' || token.kind === 'cdata') {
+      lines.push(`${indent(stack.length)}${token.value}`)
+      continue
+    }
+    const closing = /^<\s*\/\s*([A-Za-z_][\w:.-]*)\s*>$/.exec(token.value)
+    if (closing) {
+      const expected = stack.pop()
+      if (!expected || expected !== closing[1]) throw new Error(`XML 标签未正确闭合：期望 </${expected ?? 'root'}>，得到 </${closing[1]}>。`)
+      lines.push(`${indent(stack.length)}</${closing[1]}>`)
+      if (!stack.length) rootClosed = true
+      continue
+    }
+    if (/^<\?/.test(token.value) || /^<!DOCTYPE\b/i.test(token.value)) {
+      if (stack.length) throw new Error('XML 声明或 DOCTYPE 不能嵌套在元素中。')
+      lines.push(token.value)
+      continue
+    }
+    const opening = /^<\s*([A-Za-z_][\w:.-]*)(?:\s|\/?>)/.exec(token.value)
+    if (!opening) throw new Error(`无法识别 XML 标签：${token.value}`)
+    const name = opening[1]
+    const selfClosing = /\/\s*>$/.test(token.value)
+    if (!stack.length) {
+      if (rootSeen && rootClosed) throw new Error('XML 只能有一个根元素。')
+      rootSeen = true
+    }
+    lines.push(`${indent(stack.length)}${token.value}`)
+    if (!selfClosing) {
+      stack.push(name)
+      rootClosed = false
+    } else if (!stack.length) {
+      rootClosed = true
+    }
+  }
+  if (!rootSeen || stack.length) throw new Error(`XML 标签未闭合：${stack.length ? `缺少 </${stack.at(-1)}>。` : '缺少根元素。'}`)
+  return lines.join('\n')
 }
 
 type JsonPathToken =

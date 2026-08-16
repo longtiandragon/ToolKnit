@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, generateUuids, sha256, testRegex, transformCsvJson, transformJson, transformJsonPath, transformJsonYaml } from './developer-tools'
+import { calculateDateDifference, calculateDateOffset, convertNumberBase, convertTimestamp, decodeBase64, decodeJwt, decodeUrl, diffLines, encodeBase64, encodeUrl, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -112,6 +112,17 @@ describe('structured data utilities', () => {
 
   it('rejects malformed JWT input', () => {
     expect(() => decodeJwt('not-a-token')).toThrow('三部分')
+  })
+
+  it('formats XML without executing external entities', () => {
+    expect(formatXml('<?xml version="1.0"?><root><item id="1"> hello </item><!-- note --></root>')).toBe('<?xml version="1.0"?>\n<root>\n  <item id="1">\n    hello\n  </item>\n  <!-- note -->\n</root>')
+    expect(() => formatXml('<root><item></root>')).toThrow('未正确闭合')
+    expect(() => formatXml('<root/><second/>')).toThrow('只能有一个根元素')
+  })
+
+  it('encodes and decodes common and numeric HTML entities', () => {
+    expect(transformHtmlEntities('<p title="A&B">Tom & Jerry</p>', 'encode')).toBe('&lt;p title=&quot;A&amp;B&quot;&gt;Tom &amp; Jerry&lt;/p&gt;')
+    expect(transformHtmlEntities('&lt;A&gt; &#x1F44B; &copy; &unknown;', 'decode')).toBe('<A> 👋 © &unknown;')
   })
 })
 
