@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { ActivityRecord, AiProfile, ClipboardItem, ContentFavorite, ContentFavoriteKind, ContentRecent, EntityRelation, FavoriteTool, FileReference, Job, QuestionReviewFacet, QuestionType, ReviewRating, ReviewState, Source, SourceAnchor, StudyDocument, ToolRecipe, ToolUsage, VocabularyEntry, VocabularyReviewFacet, WorkbenchSettings } from '@/types'
+import type { ActivityRecord, AiProfile, ClipboardItem, ContentFavorite, ContentFavoriteKind, ContentRecent, EntityRelation, FavoriteTool, FileReference, Job, QuestionReviewFacet, QuestionType, ReviewRating, ReviewState, Source, SourceAnchor, StudyDocument, ToolPipelineRecipe, ToolRecipe, ToolUsage, VocabularyEntry, VocabularyReviewFacet, WorkbenchSettings } from '@/types'
 import { newId } from '@/lib/id'
 import { questionTemplate } from '@/lib/question-template'
 import { createWorkspaceBackup, defaultWorkbenchSettings, parsePersistedWorkspace, parseWorkspaceBackup, type WorkspaceSnapshot } from '@/lib/workspace-backup'
@@ -71,7 +71,7 @@ function load(): PersistedWorkspace {
       if (restored) return restored
     }
   } catch { /* reset corrupt browser fallback data */ }
-  return { sources: [], documents: [seedQuestion()], jobs: [], aiProfiles: [], activeVaultName: '我的 KnitspaceVault', recipes: [], favorites: [], contentFavorites: [], contentRecents: [], toolUsages: [], activities: [], settings: { ...defaultWorkbenchSettings } }
+  return { sources: [], documents: [seedQuestion()], jobs: [], aiProfiles: [], activeVaultName: '我的 KnitspaceVault', recipes: [], pipelineRecipes: [], favorites: [], contentFavorites: [], contentRecents: [], toolUsages: [], activities: [], settings: { ...defaultWorkbenchSettings } }
 }
 
 function loadClipboard() {
@@ -111,6 +111,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   const activeVaultName = ref(initial.activeVaultName)
   const codeDraft = ref(loadCodeDraft(initial.codeDraft))
   const recipes = ref<ToolRecipe[]>(initial.recipes)
+  const pipelineRecipes = ref<ToolPipelineRecipe[]>(initial.pipelineRecipes ?? [])
   const favorites = ref<FavoriteTool[]>(initial.favorites ?? [])
   const contentFavorites = ref<ContentFavorite[]>(initial.contentFavorites ?? [])
   const contentFavoriteKeys = computed(() => new Set(contentFavorites.value.map(contentFavoriteKey)))
@@ -170,7 +171,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       // Source previews can be multi-megabyte data URLs. The desktop Vault
       // owns them; Pinia holds only the in-memory list and selected detail.
       sources: sources.value, documents: documents.value, vocabulary: vocabulary.value, relations: relations.value, jobs: jobs.value,
-      aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value, recipes: recipes.value,
+      aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value, recipes: recipes.value, pipelineRecipes: pipelineRecipes.value,
       favorites: favorites.value, contentFavorites: contentFavorites.value, contentRecents: contentRecents.value, toolUsages: toolUsages.value,
       // Activities are an in-memory page cache on desktop. Their durable copy
       // belongs to the events table, alongside focus sessions and anniversaries.
@@ -726,12 +727,12 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       : activities.value
     const backupJobs = desktopJobsActive.value ? await listDesktopProcessingJobs(500) : jobs.value
     const backupVocabulary = desktopVaultActive.value ? await exportDesktopVocabulary() : vocabulary.value
-    return createWorkspaceBackup({ sources: sources.value, documents: backupDocuments, vocabulary: backupVocabulary, relations: relations.value, jobs: backupJobs, aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value, codeDraft: codeDraft.value, recipes: recipes.value, favorites: favorites.value, contentFavorites: contentFavorites.value, contentRecents: contentRecents.value, toolUsages: toolUsages.value, activities: backupActivities, settings: settings.value })
+    return createWorkspaceBackup({ sources: sources.value, documents: backupDocuments, vocabulary: backupVocabulary, relations: relations.value, jobs: backupJobs, aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value, codeDraft: codeDraft.value, recipes: recipes.value, pipelineRecipes: pipelineRecipes.value, favorites: favorites.value, contentFavorites: contentFavorites.value, contentRecents: contentRecents.value, toolUsages: toolUsages.value, activities: backupActivities, settings: settings.value })
   }
 
   async function restoreBrowserBackup(serialized: string) {
     const backup = parseWorkspaceBackup(serialized)
-    sources.value = backup.sources; documents.value = backup.documents.map(cloneStudyDocument); loadedDesktopDocumentIds.clear(); documents.value.forEach((document) => loadedDesktopDocumentIds.add(document.id)); vocabulary.value = (backup.vocabulary ?? []).map(cloneVocabularyEntry); loadedDesktopVocabularyIds.clear(); vocabulary.value.forEach((entry) => loadedDesktopVocabularyIds.add(entry.id)); relations.value = (backup.relations ?? []).map((relation) => ({ ...relation })); jobs.value = boundedJobHistory(backup.jobs); aiProfiles.value = backup.aiProfiles; recipes.value = backup.recipes; favorites.value = backup.favorites ?? []; contentFavorites.value = backup.contentFavorites ?? []; contentRecents.value = backup.contentRecents ?? []; toolUsages.value = backup.toolUsages ?? []; activities.value = backup.activities ?? []; settings.value = { ...defaultWorkbenchSettings, ...backup.settings }; activeVaultName.value = backup.activeVaultName; codeDraft.value = backup.codeDraft; persistCodeDraft(); persist()
+    sources.value = backup.sources; documents.value = backup.documents.map(cloneStudyDocument); loadedDesktopDocumentIds.clear(); documents.value.forEach((document) => loadedDesktopDocumentIds.add(document.id)); vocabulary.value = (backup.vocabulary ?? []).map(cloneVocabularyEntry); loadedDesktopVocabularyIds.clear(); vocabulary.value.forEach((entry) => loadedDesktopVocabularyIds.add(entry.id)); relations.value = (backup.relations ?? []).map((relation) => ({ ...relation })); jobs.value = boundedJobHistory(backup.jobs); aiProfiles.value = backup.aiProfiles; recipes.value = backup.recipes; pipelineRecipes.value = backup.pipelineRecipes ?? []; favorites.value = backup.favorites ?? []; contentFavorites.value = backup.contentFavorites ?? []; contentRecents.value = backup.contentRecents ?? []; toolUsages.value = backup.toolUsages ?? []; activities.value = backup.activities ?? []; settings.value = { ...defaultWorkbenchSettings, ...backup.settings }; activeVaultName.value = backup.activeVaultName; codeDraft.value = backup.codeDraft; persistCodeDraft(); persist()
     jobsHasMore.value = false
     jobHistoryCursor = jobs.value.at(-1)
     activitiesHasMore.value = false
@@ -1416,6 +1417,37 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     persist()
   }
 
+  function savePipelineRecipe(input: Omit<ToolPipelineRecipe, 'id' | 'createdAt' | 'updatedAt' | 'lastRunAt'> & { id?: string }) {
+    const timestamp = now()
+    const existing = input.id ? pipelineRecipes.value.find((recipe) => recipe.id === input.id) : undefined
+    const recipe: ToolPipelineRecipe = {
+      ...input,
+      id: existing?.id ?? input.id ?? newId(),
+      version: 1,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+    }
+    if (existing) {
+      const index = pipelineRecipes.value.findIndex((item) => item.id === recipe.id)
+      pipelineRecipes.value[index] = recipe
+    } else pipelineRecipes.value.unshift(recipe)
+    persist()
+    return recipe
+  }
+
+  function removePipelineRecipe(id: string) {
+    pipelineRecipes.value = pipelineRecipes.value.filter((recipe) => recipe.id !== id)
+    persist()
+  }
+
+  function touchPipelineRecipe(id: string) {
+    const recipe = pipelineRecipes.value.find((item) => item.id === id)
+    if (!recipe) return
+    recipe.lastRunAt = now()
+    recipe.updatedAt = now()
+    persist()
+  }
+
   function saveAiProfile(profile: AiProfile) {
     const index = aiProfiles.value.findIndex((item) => item.id === profile.id)
     if (index < 0) aiProfiles.value.push(profile); else aiProfiles.value[index] = profile
@@ -1460,7 +1492,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   }
 
   return {
-    sources, documents, vocabulary, relations, jobs, jobsHasMore, jobsLoadingMore, aiProfiles, activeVaultName, codeDraft, recipes, favorites, contentFavorites, contentRecents, toolUsages, activities, activitiesHasMore, activitiesLoadingMore, settings, clipboardItems, intakeFiles, intakeText, dueDocuments, dueQuestionCards, dueVocabularyCards, questionCount, weakTags, vaultReady, vaultHydrating, vaultError, vaultBootstrapStage, vaultRoot, vaultMarkdownIssues, desktopVaultActive, desktopReviewSummary,
-    addSource, importDesktopSource, touchSource, updateSourceTags, loadSourceDetail, loadSourceCrop, loadDocument, loadVocabulary, searchVocabularyEntries, refreshDesktopReviewSummary, reconcileVaultMarkdown, createQuestion, createNote, insertDocument, createVocabularyEntry, saveVocabularyEntry, importVocabularyEntries, importQuestionDocuments, deleteVocabularyEntry, createRelation, deleteRelation, saveDocument, writeManagedVaultMarkdown, deleteDocument, gradeDocument, restoreQuestionReview, gradeVocabularySense, restoreVocabularySenseReview, attachCrop, addJob, updateJob, removeJob, removeJobs, loadMoreJobs, loadMoreActivities, addActivity, recordToolUsage, toggleFavorite, reorderFavorites, isContentFavorite, toggleContentFavorite, isContentRecent, touchContentRecent, removeFromContentRecents, clearContentRecents, forgetContentPointers, updateSettings, addClipboardItem, resolveClipboardItem, removeClipboardItem, clearClipboard, toggleClipboardPin, pruneClipboard, saveRecipe, removeRecipe, touchRecipe, saveAiProfile, removeAiProfile, prepareCodeImage, prepareCodeDraft, stageIntake, consumeIntakeFiles, consumeIntakeText, persist, exportBrowserBackup, restoreBrowserBackup, hydrateVault, searchDocuments, findDocumentBacklinks
+    sources, documents, vocabulary, relations, jobs, jobsHasMore, jobsLoadingMore, aiProfiles, activeVaultName, codeDraft, recipes, pipelineRecipes, favorites, contentFavorites, contentRecents, toolUsages, activities, activitiesHasMore, activitiesLoadingMore, settings, clipboardItems, intakeFiles, intakeText, dueDocuments, dueQuestionCards, dueVocabularyCards, questionCount, weakTags, vaultReady, vaultHydrating, vaultError, vaultBootstrapStage, vaultRoot, vaultMarkdownIssues, desktopVaultActive, desktopReviewSummary,
+    addSource, importDesktopSource, touchSource, updateSourceTags, loadSourceDetail, loadSourceCrop, loadDocument, loadVocabulary, searchVocabularyEntries, refreshDesktopReviewSummary, reconcileVaultMarkdown, createQuestion, createNote, insertDocument, createVocabularyEntry, saveVocabularyEntry, importVocabularyEntries, importQuestionDocuments, deleteVocabularyEntry, createRelation, deleteRelation, saveDocument, writeManagedVaultMarkdown, deleteDocument, gradeDocument, restoreQuestionReview, gradeVocabularySense, restoreVocabularySenseReview, attachCrop, addJob, updateJob, removeJob, removeJobs, loadMoreJobs, loadMoreActivities, addActivity, recordToolUsage, toggleFavorite, reorderFavorites, isContentFavorite, toggleContentFavorite, isContentRecent, touchContentRecent, removeFromContentRecents, clearContentRecents, forgetContentPointers, updateSettings, addClipboardItem, resolveClipboardItem, removeClipboardItem, clearClipboard, toggleClipboardPin, pruneClipboard, saveRecipe, removeRecipe, touchRecipe, savePipelineRecipe, removePipelineRecipe, touchPipelineRecipe, saveAiProfile, removeAiProfile, prepareCodeImage, prepareCodeDraft, stageIntake, consumeIntakeFiles, consumeIntakeText, persist, exportBrowserBackup, restoreBrowserBackup, hydrateVault, searchDocuments, findDocumentBacklinks
   }
 })

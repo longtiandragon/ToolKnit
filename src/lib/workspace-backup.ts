@@ -1,4 +1,4 @@
-import type { ActivityRecord, AiProfile, ContentFavorite, ContentRecent, EntityRelation, FavoriteTool, Job, Source, StudyDocument, ToolRecipe, ToolUsage, VocabularyEntry, WorkbenchSettings } from '@/types'
+import type { ActivityRecord, AiProfile, ContentFavorite, ContentRecent, EntityRelation, FavoriteTool, Job, Source, StudyDocument, ToolPipelineRecipe, ToolRecipe, ToolUsage, VocabularyEntry, WorkbenchSettings } from '@/types'
 import { cloneStudyDocument } from '@/lib/study-document'
 import { cloneVocabularyEntry } from '@/lib/vocabulary'
 
@@ -12,6 +12,7 @@ export interface WorkspaceSnapshot {
   activeVaultName: string
   codeDraft?: { content: string; name: string }
   recipes: ToolRecipe[]
+  pipelineRecipes?: ToolPipelineRecipe[]
   favorites?: FavoriteTool[]
   contentFavorites?: ContentFavorite[]
   contentRecents?: ContentRecent[]
@@ -152,6 +153,11 @@ function validRecipe(value: Record<string, unknown>) {
   return hasStrings(value, ['id', 'title', 'group', 'operation', 'createdAt']) && isRecord(value.parameters)
 }
 
+function validPipeline(value: Record<string, unknown>) {
+  if (!hasStrings(value, ['id', 'title', 'createdAt', 'updatedAt']) || value.version !== 1 || !Array.isArray(value.steps)) return false
+  return value.steps.length > 0 && value.steps.length <= 12 && value.steps.every((step) => isRecord(step) && hasStrings(step, ['id', 'toolId']) && (step.parameters === undefined || isRecord(step.parameters)))
+}
+
 export const defaultWorkbenchSettings: WorkbenchSettings = {
   outputDirectory: '', markdownWorkspaceDirectory: '', codeImageAuthor: 'author', privateToolsManifestPath: '',
   transcriptionExecutablePath: '', transcriptionModelPath: '', transcriptionLanguage: 'auto', clipboardEnabled: false, clipboardPaused: false,
@@ -217,6 +223,7 @@ export function normalizeWorkspace(value: unknown): WorkspaceSnapshot | undefine
   if (value.jobs !== undefined && !validArray(value.jobs, validJob)) return undefined
   if (value.aiProfiles !== undefined && !validArray(value.aiProfiles, validProfile)) return undefined
   if (value.recipes !== undefined && !validArray(value.recipes, validRecipe)) return undefined
+  if (value.pipelineRecipes !== undefined && !validArray(value.pipelineRecipes, validPipeline)) return undefined
   if (value.activeVaultName !== undefined && typeof value.activeVaultName !== 'string') return undefined
   if (value.codeDraft !== undefined && (!isRecord(value.codeDraft) || !hasStrings(value.codeDraft, ['content', 'name']))) return undefined
   return {
@@ -229,6 +236,7 @@ export function normalizeWorkspace(value: unknown): WorkspaceSnapshot | undefine
     activeVaultName: normalizeActiveVaultName(value.activeVaultName),
     codeDraft: value.codeDraft as WorkspaceSnapshot['codeDraft'],
     recipes: (value.recipes ?? []) as unknown as ToolRecipe[],
+    pipelineRecipes: (value.pipelineRecipes ?? []) as unknown as ToolPipelineRecipe[],
     favorites: normalizeFavorites(value.favorites),
     contentFavorites: normalizeContentFavorites(value.contentFavorites),
     contentRecents: normalizeContentRecents(value.contentRecents),

@@ -301,6 +301,24 @@ export interface ToolRecipe {
   lastRunAt?: string
 }
 
+/** A reusable ordered set of tools. The step shape intentionally contains
+ * only serializable parameters and never owns file paths or file contents. */
+export interface ToolPipelineStep {
+  id: string
+  toolId: string
+  parameters?: Record<string, string | number | boolean>
+}
+
+export interface ToolPipelineRecipe {
+  id: string
+  title: string
+  version: 1
+  steps: ToolPipelineStep[]
+  createdAt: string
+  updatedAt: string
+  lastRunAt?: string
+}
+
 export interface AiProfile {
   id: string
   label: string

@@ -11,6 +11,7 @@ const snapshot: WorkspaceSnapshot = {
   activeVaultName: '测试资料库',
   codeDraft: { content: 'const ok = true', name: 'demo.ts' },
   recipes: [],
+  pipelineRecipes: [{ id: 'pipeline-1', title: '名单清理', version: 1, steps: [{ id: 'step-1', toolId: 'text.trim' }, { id: 'step-2', toolId: 'text.sort-lines' }], createdAt: '2026-08-08', updatedAt: '2026-08-08' }],
   contentFavorites: [{ itemId: 'doc-1', itemKind: 'note', addedAt: '2026-08-08T00:00:00Z' }],
   contentRecents: [{ itemId: 'word-1', itemKind: 'word', openedAt: '2026-08-08T01:00:00Z' }],
 }
@@ -32,13 +33,14 @@ describe('workspace persistence validation', () => {
 })
 
 describe('workspace backups', () => {
-  it('round-trips schema v7 including vocabulary, relations, favorites, and recents', () => {
+  it('round-trips schema v7 including vocabulary, relations, pipelines, favorites, and recents', () => {
     const restored = parseWorkspaceBackup(createWorkspaceBackup(snapshot, '2026-08-08T00:00:00.000Z'))
     expect(restored.codeDraft).toEqual(snapshot.codeDraft)
     expect(restored.documents).toHaveLength(1)
     expect(restored.vocabulary?.[0]).toMatchObject({ lemma: 'run', forms: { past: 'ran' } })
     expect(restored.vocabulary?.[0].senses[0].review?.due).toBe('2026-08-09')
     expect(restored.relations).toEqual(snapshot.relations)
+    expect(restored.pipelineRecipes).toEqual(snapshot.pipelineRecipes)
     expect(restored.contentFavorites).toEqual(snapshot.contentFavorites)
     expect(restored.contentRecents).toEqual(snapshot.contentRecents)
   })
