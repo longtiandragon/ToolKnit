@@ -48,9 +48,45 @@ export interface FileHealthReport {
   largestDirectories: FileHealthDirectory[]
 }
 
+export type DirectoryCompareStatus = 'same' | 'added' | 'removed' | 'changed' | 'unverified'
+
+export interface DirectoryCompareItem {
+  relativePath: string
+  name: string
+  status: DirectoryCompareStatus
+  leftSize?: number
+  rightSize?: number
+  leftHash?: string
+  rightHash?: string
+  detail: string
+}
+
+export interface DirectoryCompareReport {
+  leftRoot: string
+  rightRoot: string
+  scannedLeftFiles: number
+  scannedRightFiles: number
+  totalLeftBytes: number
+  totalRightBytes: number
+  hashedBytes: number
+  sameCount: number
+  addedCount: number
+  removedCount: number
+  changedCount: number
+  unverifiedCount: number
+  truncated: boolean
+  warnings: string[]
+  items: DirectoryCompareItem[]
+}
+
 export async function scanDesktopFileHealth(root: string, largeFileBytes?: number) {
   if (!isDesktop()) throw new Error('文件健康扫描需要桌面端文件权限。')
   return invoke<FileHealthReport>('scan_file_health', { root, largeFileBytes })
+}
+
+export async function compareDesktopDirectories(leftRoot: string, rightRoot: string) {
+  if (!isDesktop()) throw new Error('目录对比需要桌面端文件权限。')
+  return invoke<DirectoryCompareReport>('compare_directories', { leftRoot, rightRoot })
 }
 
 export async function recycleDesktopFileHealthPaths(root: string, paths: string[]) {

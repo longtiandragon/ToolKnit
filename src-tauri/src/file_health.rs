@@ -13,6 +13,7 @@ pub const MAX_SCAN_ENTRIES: usize = 50_000;
 pub const MAX_SCAN_FILES: usize = 40_000;
 pub const MAX_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub const DEFAULT_LARGE_FILE_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_COMPARE_ITEMS: usize = 20_000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,8 +76,49 @@ pub struct FileHealthReport {
     pub largest_directories: Vec<FileHealthDirectory>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryCompareItem {
+    pub relative_path: String,
+    pub name: String,
+    pub status: String,
+    pub left_size: Option<u64>,
+    pub right_size: Option<u64>,
+    pub left_hash: Option<String>,
+    pub right_hash: Option<String>,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryCompareReport {
+    pub left_root: String,
+    pub right_root: String,
+    pub scanned_left_files: usize,
+    pub scanned_right_files: usize,
+    pub total_left_bytes: u64,
+    pub total_right_bytes: u64,
+    pub hashed_bytes: u64,
+    pub same_count: usize,
+    pub added_count: usize,
+    pub removed_count: usize,
+    pub changed_count: usize,
+    pub unverified_count: usize,
+    pub truncated: bool,
+    pub warnings: Vec<String>,
+    pub items: Vec<DirectoryCompareItem>,
+}
+
 #[derive(Debug)]
 struct FileRecord {
+    path: PathBuf,
+    relative_path: String,
+    name: String,
+    size: u64,
+}
+
+#[derive(Debug)]
+struct CompareRecord {
     path: PathBuf,
     relative_path: String,
     name: String,
@@ -107,6 +149,207 @@ fn file_name(path: &Path) -> String {
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_owned()
+}
+
+fn compare_key(relative_path: &str) -> String {
+    #[cfg(windows)]
+    {
+        relative_path.to_ascii_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        relative_path.to_owned()
+    }
+}
+
+fn collect_compare_records(
+    root: &Path,
+) -> Result<(
+    HashMap<String, CompareRecord>,
+    usize,
+    u64,
+    bool,
+    Vec<String>,
+)> {
+    let mut records = HashMap::new();
+    let mut scanned_entries = 0_usize;
+    let mut total_bytes = 0_u64;
+    let mut truncated = false;
+    let mut warnings = Vec::new();
+    for entry in WalkDir::new(root).follow_links(false).into_iter() {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                warnings.push(format!("部分路径无法读取：{error}"));
+                continue;
+            }
+        };
+        scanned_entries += 1;
+        if scanned_entries > MAX_SCAN_ENTRIES || records.len() >= MAX_SCAN_FILES {
+            truncated = true;
+            warnings.push(format!(
+                "目录对比已达到上限（最多 {MAX_SCAN_ENTRIES} 个条目、{MAX_SCAN_FILES} 个文件）。"
+            ));
+            break;
+        }
+        let path = entry.path().to_path_buf();
+        if entry.file_type().is_symlink() || !entry.file_type().is_file() {
+            if entry.file_type().is_symlink() {
+                warnings.push(format!("已跳过符号链接：{}", relative_label(root, &path)));
+            }
+            continue;
+        }
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                warnings.push(format!("无法读取 {}：{error}", relative_label(root, &path)));
+                continue;
+            }
+        };
+        let relative_path = relative_label(root, &path);
+        let size = metadata.len();
+        total_bytes = total_bytes.saturating_add(size);
+        records.insert(
+            compare_key(&relative_path),
+            CompareRecord {
+                path,
+                relative_path,
+                name: file_name(entry.path()),
+                size,
+            },
+        );
+    }
+    Ok((records, scanned_entries, total_bytes, truncated, warnings))
+}
+
+fn compare_folders(left_root: &Path, right_root: &Path) -> Result<DirectoryCompareReport> {
+    let (left, left_entries, total_left_bytes, left_truncated, mut warnings) =
+        collect_compare_records(left_root)?;
+    let (right, right_entries, total_right_bytes, right_truncated, right_warnings) =
+        collect_compare_records(right_root)?;
+    warnings.extend(right_warnings);
+    let mut keys = left.keys().chain(right.keys()).cloned().collect::<Vec<_>>();
+    keys.sort();
+    keys.dedup();
+
+    let mut hashed_bytes = 0_u64;
+    let mut same_count = 0_usize;
+    let mut added_count = 0_usize;
+    let mut removed_count = 0_usize;
+    let mut changed_count = 0_usize;
+    let mut unverified_count = 0_usize;
+    let mut items = Vec::with_capacity(keys.len().min(MAX_COMPARE_ITEMS));
+    let mut truncated = left_truncated || right_truncated;
+
+    for key in keys {
+        let left_record = left.get(&key);
+        let right_record = right.get(&key);
+        let record = left_record
+            .or(right_record)
+            .expect("compare key has a record");
+        let mut item = DirectoryCompareItem {
+            relative_path: record.relative_path.clone(),
+            name: record.name.clone(),
+            status: String::new(),
+            left_size: left_record.map(|value| value.size),
+            right_size: right_record.map(|value| value.size),
+            left_hash: None,
+            right_hash: None,
+            detail: String::new(),
+        };
+        match (left_record, right_record) {
+            (None, Some(value)) => {
+                added_count += 1;
+                item.status = "added".into();
+                item.detail = format!("右侧新增 · {}", value.size);
+            }
+            (Some(value), None) => {
+                removed_count += 1;
+                item.status = "removed".into();
+                item.detail = format!("右侧缺少 · {}", value.size);
+            }
+            (Some(left_value), Some(right_value)) if left_value.size != right_value.size => {
+                changed_count += 1;
+                item.status = "changed".into();
+                item.detail = format!("大小变化：{} → {}", left_value.size, right_value.size);
+            }
+            (Some(left_value), Some(_right_value)) if left_value.size == 0 => {
+                same_count += 1;
+                item.status = "same".into();
+                item.detail = "两侧均为空文件。".into();
+            }
+            (Some(left_value), Some(right_value)) => {
+                let required = left_value.size.saturating_add(right_value.size);
+                if hashed_bytes.saturating_add(required) > MAX_HASH_BYTES {
+                    unverified_count += 1;
+                    truncated = true;
+                    item.status = "unverified".into();
+                    item.detail = format!(
+                        "内容相同大小，但未计算哈希（已达到 {} 字节上限）。",
+                        MAX_HASH_BYTES
+                    );
+                } else {
+                    let left_hash = sha256_file(&left_value.path);
+                    let right_hash = sha256_file(&right_value.path);
+                    hashed_bytes = hashed_bytes.saturating_add(required);
+                    match (left_hash, right_hash) {
+                        (Ok(left_hash), Ok(right_hash)) if left_hash == right_hash => {
+                            same_count += 1;
+                            item.status = "same".into();
+                            item.detail = "两侧内容完全相同。".into();
+                            item.left_hash = Some(left_hash);
+                            item.right_hash = Some(right_hash);
+                        }
+                        (Ok(left_hash), Ok(right_hash)) => {
+                            changed_count += 1;
+                            item.status = "changed".into();
+                            item.detail = "文件大小相同，但内容不同。".into();
+                            item.left_hash = Some(left_hash);
+                            item.right_hash = Some(right_hash);
+                        }
+                        (left_result, right_result) => {
+                            unverified_count += 1;
+                            item.status = "unverified".into();
+                            item.detail = "无法读取一侧文件并完成内容校验。".into();
+                            if let Ok(hash) = left_result {
+                                item.left_hash = Some(hash);
+                            }
+                            if let Ok(hash) = right_result {
+                                item.right_hash = Some(hash);
+                            }
+                            warnings.push(format!("无法完成内容校验：{}", item.relative_path));
+                        }
+                    }
+                }
+            }
+            _ => unreachable!("matched records must have a status"),
+        }
+        if items.len() < MAX_COMPARE_ITEMS {
+            items.push(item);
+        } else if !truncated {
+            truncated = true;
+            warnings.push(format!("对比结果已收起，最多展示 {MAX_COMPARE_ITEMS} 项。"));
+        }
+    }
+    items.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+
+    Ok(DirectoryCompareReport {
+        left_root: left_root.to_string_lossy().into_owned(),
+        right_root: right_root.to_string_lossy().into_owned(),
+        scanned_left_files: left.len().min(left_entries),
+        scanned_right_files: right.len().min(right_entries),
+        total_left_bytes,
+        total_right_bytes,
+        hashed_bytes,
+        same_count,
+        added_count,
+        removed_count,
+        changed_count,
+        unverified_count,
+        truncated,
+        warnings,
+        items,
+    })
 }
 
 fn path_payload(record: &FileRecord) -> FileHealthPath {
@@ -443,6 +686,19 @@ pub fn scan_file_health(
 }
 
 #[tauri::command]
+pub fn compare_directories(
+    left_root: String,
+    right_root: String,
+) -> Result<DirectoryCompareReport, String> {
+    let left_root = canonical_directory(&left_root).map_err(|error| error.to_string())?;
+    let right_root = canonical_directory(&right_root).map_err(|error| error.to_string())?;
+    if left_root == right_root {
+        return Err("请选择两个不同的文件夹进行对比。".into());
+    }
+    compare_folders(&left_root, &right_root).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn recycle_file_health_paths(root: String, paths: Vec<String>) -> Result<usize, String> {
     let root = canonical_directory(&root).map_err(|error| error.to_string())?;
     if paths.is_empty() {
@@ -503,6 +759,29 @@ mod tests {
         assert_eq!(report.empty_directories.len(), 1);
         assert_eq!(report.extension_mismatches.len(), 1);
         fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn compares_added_removed_changed_and_same_files() -> Result<()> {
+        let left_root = temp_root("compare-left");
+        let right_root = temp_root("compare-right");
+        fs::create_dir_all(&left_root)?;
+        fs::create_dir_all(&right_root)?;
+        fs::write(left_root.join("same.txt"), b"same")?;
+        fs::write(right_root.join("same.txt"), b"same")?;
+        fs::write(left_root.join("removed.txt"), b"left")?;
+        fs::write(right_root.join("added.txt"), b"right")?;
+        fs::write(left_root.join("changed.txt"), b"old")?;
+        fs::write(right_root.join("changed.txt"), b"new")?;
+        let report = compare_folders(&left_root, &right_root)?;
+        assert_eq!(report.same_count, 1);
+        assert_eq!(report.added_count, 1);
+        assert_eq!(report.removed_count, 1);
+        assert_eq!(report.changed_count, 1);
+        assert_eq!(report.unverified_count, 0);
+        fs::remove_dir_all(left_root)?;
+        fs::remove_dir_all(right_root)?;
         Ok(())
     }
 }

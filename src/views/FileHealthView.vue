@@ -7,22 +7,28 @@ import ToolLayout from '@/components/ToolLayout.vue'
 import FieldRow from '@/components/FieldRow.vue'
 import { isDesktop } from '@/lib/native'
 import { exportOutput } from '@/lib/output'
-import { recycleDesktopFileHealthPaths, scanDesktopFileHealth, type FileHealthDuplicateGroup, type FileHealthFinding, type FileHealthPath, type FileHealthReport } from '@/lib/file-health-native'
+import { compareDesktopDirectories, recycleDesktopFileHealthPaths, scanDesktopFileHealth, type DirectoryCompareReport, type DirectoryCompareStatus, type FileHealthDuplicateGroup, type FileHealthFinding, type FileHealthPath, type FileHealthReport } from '@/lib/file-health-native'
 import { useUiStore } from '@/stores/ui'
 import { useWorkbenchStore } from '@/stores/workbench'
 
 type Filter = 'all' | 'duplicate' | 'large-file' | 'empty-file' | 'empty-directory' | 'extension-mismatch'
 type DisplayItem = FileHealthPath & { id: string; kind: Filter; detail: string; suggestedKeep?: boolean }
+type ViewMode = 'health' | 'compare'
+type CompareFilter = 'all' | DirectoryCompareStatus
 
 const desktop = isDesktop()
 const ui = useUiStore()
 const store = useWorkbenchStore()
+const viewMode = ref<ViewMode>('health')
 const root = ref('')
 const report = ref<FileHealthReport>()
+const compareRoot = ref('')
+const compareReport = ref<DirectoryCompareReport>()
 const busy = ref(false)
 const message = ref(desktop ? '选择一个文件夹，先扫描再决定如何处理。' : '文件夹扫描需要桌面端权限。')
 const threshold = ref(512 * 1024 * 1024)
 const filter = ref<Filter>('all')
+const compareFilter = ref<CompareFilter>('all')
 const selectedPaths = ref<string[]>([])
 
 const filters: { id: Filter; label: string; count: (value: FileHealthReport) => number }[] = [
@@ -37,6 +43,22 @@ const filters: { id: Filter; label: string; count: (value: FileHealthReport) => 
 const totalProblemCount = computed(() => report.value ? filters[0].count(report.value) : 0)
 const selectedCount = computed(() => selectedPaths.value.length)
 const duplicateBytes = computed(() => report.value?.duplicateGroups.reduce((sum, group) => sum + group.size * Math.max(0, group.files.length - 1), 0) ?? 0)
+const compareFilters: { id: CompareFilter; label: string; count: (value: DirectoryCompareReport) => number }[] = [
+  { id: 'all', label: '全部', count: value => value.sameCount + value.addedCount + value.removedCount + value.changedCount + value.unverifiedCount },
+  { id: 'changed', label: '已修改', count: value => value.changedCount },
+  { id: 'added', label: '右侧新增', count: value => value.addedCount },
+  { id: 'removed', label: '右侧缺少', count: value => value.removedCount },
+  { id: 'same', label: '相同', count: value => value.sameCount },
+  { id: 'unverified', label: '未校验', count: value => value.unverifiedCount },
+]
+const compareItems = computed(() => {
+  if (!compareReport.value) return []
+  return compareFilter.value === 'all'
+    ? compareReport.value.items
+    : compareReport.value.items.filter(item => item.status === compareFilter.value)
+})
+const compareDifferenceCount = computed(() => (compareReport.value?.addedCount ?? 0) + (compareReport.value?.removedCount ?? 0) + (compareReport.value?.changedCount ?? 0) + (compareReport.value?.unverifiedCount ?? 0))
+const compareWarnings = computed(() => compareReport.value?.warnings ?? [])
 
 function formatBytes(value: number) {
   if (value < 1024) return `${value} B`
@@ -84,8 +106,23 @@ async function chooseRoot() {
   if (typeof selected !== 'string') return
   root.value = selected
   report.value = undefined
+  compareReport.value = undefined
   selectedPaths.value = []
   message.value = `已选择“${basename(selected)}”，点击扫描后才会读取目录内容。`
+}
+
+async function chooseCompareRoot(side: 'left' | 'right') {
+  if (!desktop || busy.value) return
+  const selected = await open({ title: side === 'left' ? '选择左侧文件夹' : '选择右侧文件夹', directory: true, multiple: false })
+  if (typeof selected !== 'string') return
+  if (side === 'left') {
+    root.value = selected
+    compareReport.value = undefined
+  } else {
+    compareRoot.value = selected
+    compareReport.value = undefined
+  }
+  message.value = `已选择“${basename(selected)}”，点击对比后才会读取目录内容。`
 }
 
 async function scan() {
@@ -100,6 +137,24 @@ async function scan() {
     report.value = undefined
     message.value = error instanceof Error ? error.message : '文件夹扫描失败。'
     ui.toast('文件夹扫描失败', message.value, 'error')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function compare() {
+  if (!desktop || !root.value || !compareRoot.value || busy.value) return
+  busy.value = true
+  message.value = '正在读取两侧目录并校验相同大小文件…'
+  try {
+    compareReport.value = await compareDesktopDirectories(root.value, compareRoot.value)
+    message.value = compareReport.value.truncated
+      ? '对比完成，但已触及安全上限；未校验项目请人工复核。'
+      : `对比完成：发现 ${compareDifferenceCount.value} 个差异项目。`
+  } catch (error) {
+    compareReport.value = undefined
+    message.value = error instanceof Error ? error.message : '目录对比失败。'
+    ui.toast('目录对比失败', message.value, 'error')
   } finally {
     busy.value = false
   }
@@ -154,6 +209,17 @@ async function exportReport() {
   }
 }
 
+async function exportCompareReport() {
+  if (!compareReport.value || busy.value) return
+  const name = `knitspace-directory-compare-${new Date().toISOString().slice(0, 10)}.json`
+  try {
+    const output = await exportOutput(store.settings.outputDirectory, name, JSON.stringify(compareReport.value, null, 2), 'application/json;charset=utf-8')
+    ui.toast('目录对比报告已导出', output.path || output.name, 'success')
+  } catch (error) {
+    ui.toast('导出对比报告失败', error instanceof Error ? error.message : '无法写出 JSON 报告。', 'error')
+  }
+}
+
 function directoryLabel(path: string) {
   return path || '根目录'
 }
@@ -162,12 +228,16 @@ function directoryLabel(path: string) {
 <template>
   <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
     <PageHeader
-      title="文件健康扫描"
-      subtitle="参考 Czkawka 的高频检查：先扫描、分组和预览，再把选中的文件移入回收站。"
-      :stats="[
+      :title="viewMode === 'health' ? '文件健康扫描' : '目录对比'"
+      :subtitle="viewMode === 'health' ? '参考 Czkawka 的高频检查：先扫描、分组和预览，再把选中的文件移入回收站。' : '只读比较两个文件夹的文件内容，不同步、不覆盖，也不会修改原文件。'"
+      :stats="viewMode === 'health' ? [
         { label: '扫描文件', value: report?.scannedFiles ?? 0 },
         { label: '问题项目', value: totalProblemCount, tone: totalProblemCount ? 'warn' : 'accent' },
         { label: '重复可回收', value: formatBytes(duplicateBytes) },
+      ] : [
+        { label: '对比文件', value: compareReport ? compareReport.items.length : 0 },
+        { label: '差异项目', value: compareDifferenceCount, tone: compareDifferenceCount ? 'warn' : 'accent' },
+        { label: '相同文件', value: compareReport?.sameCount ?? 0 },
       ]"
     >
       <template #actions>
@@ -177,14 +247,28 @@ function directoryLabel(path: string) {
       </template>
       <template #lead>
         <div class="row gap-2 flex-wrap">
-          <button class="btn-default btn-sm" :disabled="busy || !desktop" @click="chooseRoot"><AppIcon name="folder" :size="14" />选择文件夹</button>
-          <span class="text-[11px] text-fg-3 truncate max-w-96" :title="root">{{ root ? `当前：${root}` : '尚未选择目录' }}</span>
+          <div class="row gap-1 p-0.5 rounded-sm bg-surface-2" role="tablist" aria-label="文件工具模式">
+            <button class="h-7 px-2.5 rounded-sm text-[11px]" :class="viewMode === 'health' ? 'bg-surface text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2'" role="tab" :aria-selected="viewMode === 'health'" @click="viewMode = 'health'">健康扫描</button>
+            <button class="h-7 px-2.5 rounded-sm text-[11px]" :class="viewMode === 'compare' ? 'bg-surface text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2'" role="tab" :aria-selected="viewMode === 'compare'" @click="viewMode = 'compare'">目录对比</button>
+          </div>
+          <template v-if="viewMode === 'health'">
+            <button class="btn-default btn-sm" :disabled="busy || !desktop" @click="chooseRoot"><AppIcon name="folder" :size="14" />选择文件夹</button>
+            <span class="text-[11px] text-fg-3 truncate max-w-96" :title="root">{{ root ? `当前：${root}` : '尚未选择目录' }}</span>
+          </template>
+          <template v-else>
+            <button class="btn-default btn-sm" :disabled="busy || !desktop" @click="chooseCompareRoot('left')"><AppIcon name="folder" :size="14" />左侧文件夹</button>
+            <span class="text-[11px] text-fg-3 truncate max-w-48" :title="root">{{ root ? basename(root) : '未选择' }}</span>
+            <span class="text-fg-3">→</span>
+            <button class="btn-default btn-sm" :disabled="busy || !desktop" @click="chooseCompareRoot('right')"><AppIcon name="folder" :size="14" />右侧文件夹</button>
+            <span class="text-[11px] text-fg-3 truncate max-w-48" :title="compareRoot">{{ compareRoot ? basename(compareRoot) : '未选择' }}</span>
+          </template>
         </div>
       </template>
     </PageHeader>
 
     <ToolLayout aside-width="narrow">
-      <section v-if="!report" class="panel min-h-96 p-8 stack items-center justify-center gap-4 text-center">
+      <template v-if="viewMode === 'health'">
+        <section v-if="!report" class="panel min-h-96 p-8 stack items-center justify-center gap-4 text-center">
         <span class="center w-14 h-14 rounded-xl bg-accent-soft text-accent"><AppIcon name="search" :size="28" /></span>
         <div class="stack gap-1.5 max-w-xl">
           <h2 class="text-[16px] font-semibold text-fg">扫描前不修改任何文件</h2>
@@ -192,9 +276,9 @@ function directoryLabel(path: string) {
         </div>
         <button class="btn-primary" :disabled="!desktop || !root || busy" @click="scan"><AppIcon name="search" :size="15" />{{ busy ? '正在扫描…' : '开始扫描' }}</button>
         <p class="text-[11px] text-fg-3" aria-live="polite">{{ message }}</p>
-      </section>
+        </section>
 
-      <template v-else>
+        <template v-else>
         <section class="panel p-3 stack gap-3">
           <div class="row-between gap-3">
             <div class="stack gap-0.5 min-w-0"><p class="eyebrow">扫描结果</p><p class="text-[12px] text-fg-2 truncate" :title="report.root">{{ report.root }}</p></div>
@@ -228,9 +312,47 @@ function directoryLabel(path: string) {
             <li v-for="directory in report.largestDirectories" :key="directory.path" class="row gap-2 px-2 py-1.5 rounded-sm hover:bg-surface-2"><AppIcon name="folder" :size="14" class="text-fg-3 shrink-0" /><span class="min-w-0 flex-1 truncate text-[12px] text-fg-2" :title="directory.path">{{ directoryLabel(directory.relativePath) }}</span><span class="text-[11px] text-fg-3 tabular-nums">{{ formatBytes(directory.size) }} · {{ directory.fileCount }} 文件</span></li>
           </ul>
         </section>
+        </template>
+      </template>
+
+      <template v-else>
+        <section v-if="!compareReport" class="panel min-h-96 p-8 stack items-center justify-center gap-4 text-center">
+          <span class="center w-14 h-14 rounded-xl bg-accent-soft text-accent"><AppIcon name="diff" :size="28" /></span>
+          <div class="stack gap-1.5 max-w-xl">
+            <h2 class="text-[16px] font-semibold text-fg">对比前不修改任何文件</h2>
+            <p class="text-[12px] text-fg-3 leading-relaxed">相同大小的文件会计算 SHA-256，新增、缺少和内容变化会分组显示。读取数量和哈希总量都有安全上限，超出部分会标记为未校验。</p>
+          </div>
+          <button class="btn-primary" :disabled="!desktop || !root || !compareRoot || busy" @click="compare"><AppIcon name="diff" :size="15" />{{ busy ? '正在对比…' : '开始对比' }}</button>
+          <p class="text-[11px] text-fg-3" aria-live="polite">{{ message }}</p>
+        </section>
+
+        <template v-else>
+          <section class="panel p-3 stack gap-3">
+            <div class="row-between gap-3">
+              <div class="stack gap-0.5 min-w-0"><p class="eyebrow">对比结果</p><p class="text-[12px] text-fg-2 truncate" :title="`${compareReport.leftRoot} → ${compareReport.rightRoot}`">{{ basename(compareReport.leftRoot) }} → {{ basename(compareReport.rightRoot) }}</p></div>
+              <div class="row gap-1.5 shrink-0"><button class="btn-default btn-sm" :disabled="busy" @click="exportCompareReport"><AppIcon name="download" :size="14" />导出报告</button><button class="btn-default btn-sm" :disabled="busy" @click="compare"><AppIcon name="refresh" :size="14" />重新对比</button></div>
+            </div>
+            <div class="row gap-1.5 flex-wrap" role="tablist" aria-label="对比结果类型">
+              <button v-for="item in compareFilters" :key="item.id" class="h-7 px-2.5 rounded-full text-[11px] transition-colors" :class="compareFilter === item.id ? 'bg-accent-solid text-accent-fg font-medium' : 'text-fg-2 hover:bg-surface-2'" :aria-selected="compareFilter === item.id" role="tab" @click="compareFilter = item.id">{{ item.label }} <span class="tabular-nums opacity-70">{{ compareReport ? item.count(compareReport) : 0 }}</span></button>
+            </div>
+          </section>
+
+          <section v-if="compareItems.length" class="panel overflow-hidden">
+            <header class="row-between gap-3 px-3 h-11 border-b border-line"><div class="row gap-2"><AppIcon name="diff" :size="15" class="text-accent" /><strong class="text-[13px] font-medium text-fg">{{ compareFilters.find(item => item.id === compareFilter)?.label }}</strong><span class="text-[11px] text-fg-3">{{ compareItems.length }} 项</span></div><span class="text-[11px] text-fg-3">只读</span></header>
+            <ul class="stack gap-0.5 p-1.5 max-h-128 overflow-y-auto">
+              <li v-for="item in compareItems" :key="`${item.status}:${item.relativePath}`" class="row gap-2 px-2.5 py-2 rounded-sm hover:bg-surface-2">
+                <AppIcon :name="item.status === 'same' ? 'check' : item.status === 'changed' ? 'refresh' : item.status === 'unverified' ? 'warning' : 'file-text'" :size="15" :class="item.status === 'same' ? 'text-success' : item.status === 'unverified' ? 'text-warn' : 'text-accent'" class="shrink-0" />
+                <span class="stack gap-0.5 min-w-0 flex-1"><strong class="text-[12px] font-medium text-fg truncate" :title="item.relativePath">{{ item.relativePath || item.name }}</strong><small class="text-[11px] text-fg-3 truncate">{{ item.detail }}</small></span>
+                <span class="text-[11px] text-fg-3 tabular-nums shrink-0">{{ item.leftSize === item.rightSize ? formatBytes(item.leftSize ?? 0) : `${formatBytes(item.leftSize ?? 0)} → ${formatBytes(item.rightSize ?? 0)}` }}</span>
+              </li>
+            </ul>
+          </section>
+          <section v-else class="panel p-8 stack items-center gap-2 text-center"><AppIcon name="check" :size="22" class="text-success" /><p class="text-[13px] font-medium text-fg">当前筛选没有项目</p><p class="text-[11px] text-fg-3">切换结果类型，或重新对比确认目录状态。</p></section>
+        </template>
       </template>
 
       <template #aside>
+        <template v-if="viewMode === 'health'">
         <section class="panel p-4 stack gap-4">
           <p class="eyebrow">扫描设置</p>
           <FieldRow label="大文件阈值" hint="只影响大文件分类，不会限制扫描">
@@ -251,6 +373,23 @@ function directoryLabel(path: string) {
           <p v-if="selectedItems.length" class="text-[11px] text-warn">回收站可恢复；空文件夹不会被处理。</p>
         </section>
         <section v-if="scanWarnings.length" class="panel p-4 stack gap-2"><p class="eyebrow text-warn">扫描提示</p><p v-for="warning in scanWarnings.slice(0, 5)" :key="warning" class="text-[11px] text-fg-3 leading-relaxed">{{ warning }}</p><p v-if="scanWarnings.length > 5" class="text-[11px] text-fg-3">另有 {{ scanWarnings.length - 5 }} 条提示已收起。</p></section>
+        </template>
+        <template v-else>
+          <section class="panel p-4 stack gap-4">
+            <p class="eyebrow">对比设置</p>
+            <p class="text-[11px] text-fg-3 leading-relaxed">左侧可理解为基准目录，右侧是待检查目录。只报告差异，不提供同步或覆盖操作。</p>
+            <button class="btn-primary btn-lg w-full" :disabled="!desktop || !root || !compareRoot || busy" @click="compare"><AppIcon name="diff" :size="15" />{{ busy ? '正在对比…' : compareReport ? '重新对比' : '开始对比' }}</button>
+            <p class="text-[11px] text-fg-3 leading-relaxed" aria-live="polite">{{ message }}</p>
+          </section>
+          <section v-if="compareReport" class="panel p-4 stack gap-2">
+            <p class="eyebrow">只读结果</p>
+            <div class="row-between text-[11px] text-fg-3"><span>哈希校验</span><span class="tabular-nums">{{ formatBytes(compareReport.hashedBytes) }}</span></div>
+            <div class="row-between text-[11px] text-fg-3"><span>左侧文件</span><span class="tabular-nums">{{ compareReport.scannedLeftFiles }}</span></div>
+            <div class="row-between text-[11px] text-fg-3"><span>右侧文件</span><span class="tabular-nums">{{ compareReport.scannedRightFiles }}</span></div>
+            <p v-if="compareReport.truncated" class="text-[11px] text-warn leading-relaxed">结果触及上限，未校验项请人工复核。</p>
+          </section>
+          <section v-if="compareWarnings.length" class="panel p-4 stack gap-2"><p class="eyebrow text-warn">对比提示</p><p v-for="warning in compareWarnings.slice(0, 5)" :key="warning" class="text-[11px] text-fg-3 leading-relaxed">{{ warning }}</p><p v-if="compareWarnings.length > 5" class="text-[11px] text-fg-3">另有 {{ compareWarnings.length - 5 }} 条提示已收起。</p></section>
+        </template>
       </template>
     </ToolLayout>
   </div>
