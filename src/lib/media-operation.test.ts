@@ -17,6 +17,8 @@ describe('media operation catalog', () => {
     expect(firstAvailableMediaOperation(video)).toBe('transcode-mp4')
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'lossless-clip')!, audio)).toBe(true)
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'remux-mp4')!, audio)).toBe(false)
+    expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'extract-subtitle')!, { tracks: [{ index: 2, kind: 'subtitle', codec: 'subrip' }] })).toBe(true)
+    expect(mediaOperationUnavailableReason(mediaOperations.find((item) => item.id === 'extract-subtitle')!, audio)).toBe('当前文件没有文字字幕轨')
   })
 
   it('recognizes supported desktop drops and output MIME types', () => {
@@ -26,5 +28,6 @@ describe('media operation catalog', () => {
     expect(mediaOutputMime('silent.mp4')).toBe('video/mp4')
     expect(mediaOutputMime('clip-lossless.mkv')).toBe('video/x-matroska')
     expect(mediaOutputMime('voice.flac')).toBe('audio/flac')
+    expect(mediaOutputMime('captions.srt')).toBe('text/plain')
   })
 })

@@ -193,7 +193,7 @@ async function run() {
   if (qaPreview) {
     running.value = true
     mediaProgress.value = 100
-    const extension = operation.value === 'extract-mp3' ? 'mp3' : operation.value === 'transcode-m4a' ? 'm4a' : operation.value === 'transcode-wav' ? 'wav' : 'mp4'
+    const extension = operation.value === 'extract-mp3' ? 'mp3' : operation.value === 'transcode-m4a' ? 'm4a' : operation.value === 'transcode-wav' ? 'wav' : operation.value === 'extract-subtitle' ? 'srt' : operation.value === 'extract-cover' ? 'jpg' : operation.value === 'clean-metadata' ? (source.value.name.split('.').at(-1) || 'mkv') : 'mp4'
     const name = `数据结构复习课-knitspace-${operation.value}.${extension}`
     output.value = { path: `F:\\Knitspace\\Outputs\\${name}`, name, size: 82_417_664, elapsedMs: 12_400 }
     notice.value = 'QA 输出已生成；预览没有运行 FFmpeg，也没有写入 Vault 或任务历史。'
@@ -572,6 +572,9 @@ onBeforeUnmount(() => {
         <button v-if="source?.audioCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('extract-mp3')">提取音轨为 MP3</button>
         <button v-if="source?.audioCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('transcode-wav')">转为语音 WAV</button>
         <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('mute-video')">生成静音视频</button>
+        <button v-if="source?.tracks?.some((track) => track.kind === 'subtitle')" class="menu-item" role="menuitem" @click="selectOperationFromSource('extract-subtitle')">提取字幕为 SRT</button>
+        <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('extract-cover')">提取视频封面</button>
+        <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('clean-metadata')">清除媒体元数据</button>
         <button class="menu-item" role="menuitem" @click="selectClipFromSource">截取这段媒体…</button>
         <i class="menu-sep" aria-hidden="true" />
         <button class="menu-item" role="menuitem" @click="reInspect">重新读取信息</button>

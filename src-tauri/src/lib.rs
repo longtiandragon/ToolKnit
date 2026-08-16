@@ -2172,7 +2172,9 @@ async fn inspect_media_file(path: String) -> Result<MediaFileInfo, String> {
 fn required_media_track(operation: &str) -> Option<&'static str> {
     match operation {
         "extract-mp3" | "transcode-m4a" | "transcode-wav" => Some("audio"),
-        "transcode-mp4" | "mute-video" | "remux-mp4" => Some("video"),
+        "transcode-mp4" | "mute-video" | "remux-mp4" | "extract-cover" => Some("video"),
+        "extract-subtitle" => Some("subtitle"),
+        "clean-metadata" => Some("media"),
         "trim-clip" | "lossless-clip" => Some("media"),
         _ => None,
     }
@@ -2198,12 +2200,14 @@ fn transcode_media(
         let available = match required {
             "audio" => info.audio_codec.is_some(),
             "video" => info.video_codec.is_some(),
+            "subtitle" => info.tracks.iter().any(|track| track.kind == "subtitle"),
             _ => info.audio_codec.is_some() || info.video_codec.is_some(),
         };
         if !available {
             return Err(match required {
                 "video" => "当前文件没有可处理的视频轨。",
                 "audio" => "当前文件没有可处理的音轨。",
+                "subtitle" => "当前文件没有可处理的文字字幕轨。",
                 _ => "当前文件没有可处理的媒体轨道。",
             }
             .into());
@@ -2353,6 +2357,37 @@ fn transcode_media(
             "remux",
             "mp4".into(),
             ["-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart"]
+                .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            source_duration,
+        ),
+        "extract-subtitle" => (
+            "subtitle",
+            "srt".into(),
+            ["-map", "0:s:0", "-c:s", "srt"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            None,
+        ),
+        "extract-cover" => (
+            "cover",
+            "jpg".into(),
+            ["-map", "0:v:0", "-frames:v", "1", "-q:v", "2"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            None,
+        ),
+        "clean-metadata" => (
+            "metadata-clean",
+            input
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("mkv")
+                .to_ascii_lowercase(),
+            ["-map", "0", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy"]
                 .into_iter()
                 .map(str::to_owned)
                 .collect(),
@@ -4656,6 +4691,9 @@ mod external_markdown_tests {
         assert_eq!(required_media_track("trim-clip"), Some("media"));
         assert_eq!(required_media_track("lossless-clip"), Some("media"));
         assert_eq!(required_media_track("remux-mp4"), Some("video"));
+        assert_eq!(required_media_track("extract-subtitle"), Some("subtitle"));
+        assert_eq!(required_media_track("extract-cover"), Some("video"));
+        assert_eq!(required_media_track("clean-metadata"), Some("media"));
         assert_eq!(required_media_track("unsupported"), None);
     }
 

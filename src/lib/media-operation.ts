@@ -9,6 +9,9 @@ export type MediaOperation =
   | 'trim-clip'
   | 'lossless-clip'
   | 'remux-mp4'
+  | 'extract-subtitle'
+  | 'extract-cover'
+  | 'clean-metadata'
 
 export interface MediaOperationDefinition {
   id: MediaOperation
@@ -16,7 +19,7 @@ export interface MediaOperationDefinition {
   description: string
   detail: string
   extension: string
-  requiredTrack: 'audio' | 'video' | 'media'
+  requiredTrack: 'audio' | 'video' | 'subtitle' | 'media'
 }
 
 export const mediaOperations: readonly MediaOperationDefinition[] = [
@@ -28,6 +31,9 @@ export const mediaOperations: readonly MediaOperationDefinition[] = [
   { id: 'trim-clip', title: '截取一个片段', description: '按开始与结束时间生成新媒体', detail: '精确区间 · 原件保持完整', extension: '片段', requiredTrack: 'media' },
   { id: 'lossless-clip', title: '无损截取片段', description: '不重新编码，快速裁出原始轨道', detail: '画质与音质不变 · 关键帧附近更准确', extension: '原容器', requiredTrack: 'media' },
   { id: 'remux-mp4', title: '重新封装为 MP4', description: '只换容器，不重新编码视频和音频', detail: '适合播放器兼容性整理', extension: 'MP4', requiredTrack: 'video' },
+  { id: 'extract-subtitle', title: '提取字幕为 SRT', description: '把第一条文字字幕导出为通用格式', detail: '保留时间轴 · 位图字幕需先转码', extension: 'SRT', requiredTrack: 'subtitle' },
+  { id: 'extract-cover', title: '提取视频封面', description: '从视频第一条画面导出一张 JPG', detail: '单帧封面 · 不修改原视频', extension: 'JPG', requiredTrack: 'video' },
+  { id: 'clean-metadata', title: '清除媒体元数据', description: '移除标题、设备和位置等容器元数据', detail: '只复制轨道 · 原文件保持完整', extension: '清理', requiredTrack: 'media' },
 ]
 
 const mediaExtensions = new Set(['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus'])
@@ -37,19 +43,20 @@ export function routeMediaOperation(value: unknown): MediaOperation {
   return mediaOperations.some((item) => item.id === value) ? value as MediaOperation : 'extract-mp3'
 }
 
-export function mediaOperationAvailable(operation: MediaOperationDefinition, source?: Pick<MediaFileInfo, 'audioCodec' | 'videoCodec'>) {
+export function mediaOperationAvailable(operation: MediaOperationDefinition, source?: Pick<MediaFileInfo, 'audioCodec' | 'videoCodec' | 'tracks'>) {
   if (!source) return true
   if (operation.requiredTrack === 'audio') return Boolean(source.audioCodec)
   if (operation.requiredTrack === 'video') return Boolean(source.videoCodec)
+  if (operation.requiredTrack === 'subtitle') return Boolean(source.tracks?.some((track) => track.kind === 'subtitle'))
   return Boolean(source.audioCodec || source.videoCodec)
 }
 
-export function mediaOperationUnavailableReason(operation: MediaOperationDefinition, source?: Pick<MediaFileInfo, 'audioCodec' | 'videoCodec'>) {
+export function mediaOperationUnavailableReason(operation: MediaOperationDefinition, source?: Pick<MediaFileInfo, 'audioCodec' | 'videoCodec' | 'tracks'>) {
   if (mediaOperationAvailable(operation, source)) return ''
-  return operation.requiredTrack === 'video' ? '当前文件没有视频轨' : operation.requiredTrack === 'audio' ? '当前文件没有音轨' : '没有可处理的媒体轨道'
+  return operation.requiredTrack === 'video' ? '当前文件没有视频轨' : operation.requiredTrack === 'audio' ? '当前文件没有音轨' : operation.requiredTrack === 'subtitle' ? '当前文件没有文字字幕轨' : '没有可处理的媒体轨道'
 }
 
-export function firstAvailableMediaOperation(source?: Pick<MediaFileInfo, 'audioCodec' | 'videoCodec'>) {
+export function firstAvailableMediaOperation(source?: Pick<MediaFileInfo, 'audioCodec' | 'videoCodec' | 'tracks'>) {
   return mediaOperations.find((item) => mediaOperationAvailable(item, source))?.id ?? 'extract-mp3'
 }
 
@@ -69,5 +76,6 @@ export function mediaOutputMime(name: string) {
   if (lower.endsWith('.wav')) return 'audio/wav'
   if (lower.endsWith('.flac')) return 'audio/flac'
   if (lower.endsWith('.ogg') || lower.endsWith('.opus')) return 'audio/ogg'
+  if (lower.endsWith('.srt') || lower.endsWith('.vtt')) return 'text/plain'
   return lower.endsWith('.m4a') || lower.endsWith('.aac') ? 'audio/mp4' : 'application/octet-stream'
 }
