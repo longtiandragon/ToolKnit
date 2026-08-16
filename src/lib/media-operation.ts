@@ -67,6 +67,8 @@ export function isSupportedMediaPath(path: string) {
 
 export function mediaOutputMime(name: string) {
   const lower = name.toLocaleLowerCase('en-US')
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
+  if (lower.endsWith('.png')) return 'image/png'
   if (lower.endsWith('.mp4') || lower.endsWith('.m4v')) return 'video/mp4'
   if (lower.endsWith('.mov')) return 'video/quicktime'
   if (lower.endsWith('.mkv')) return 'video/x-matroska'

@@ -29,5 +29,6 @@ describe('media operation catalog', () => {
     expect(mediaOutputMime('clip-lossless.mkv')).toBe('video/x-matroska')
     expect(mediaOutputMime('voice.flac')).toBe('audio/flac')
     expect(mediaOutputMime('captions.srt')).toBe('text/plain')
+    expect(mediaOutputMime('cover.jpg')).toBe('image/jpeg')
   })
 })
