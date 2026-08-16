@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { Job } from '@/types'
+import type { ActivityRecord, Job } from '@/types'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { filterHistoryActivities, filterHistoryJobs, historyActivityKindFromQuery, historyJobSummary, historyKindFromQuery, historyOutputPaths, historyReplayLocation, historyStatusFromQuery, historyViewFromQuery, historyWindow, toggleHistorySelection, type HistoryActivityFilter, type HistoryKindFilter, type HistoryStatusFilter, type HistoryView } from '@/lib/history-list'
 import { revealDesktopFile, saveOutputAs } from '@/lib/native'
@@ -32,6 +32,9 @@ const listViewportHeight = ref(0)
 const contextMenu = ref<{ job: Job; x: number; y: number }>()
 const contextMenuElement = ref<HTMLElement>()
 let contextMenuTrigger: HTMLElement | undefined
+const activityContextMenu = ref<{ activity: ActivityRecord; x: number; y: number }>()
+const activityContextMenuElement = ref<HTMLElement>()
+let activityContextMenuTrigger: HTMLElement | undefined
 let searchTimer: number | undefined
 let scrollFrame: number | undefined
 
@@ -135,6 +138,16 @@ async function removeSelected() {
   clearSelection()
 }
 
+async function loadOlderJobs() {
+  const loaded = await store.loadMoreJobs()
+  if (!loaded && store.vaultError) ui.toast('较早记录没有载入', store.vaultError, 'warning')
+}
+
+async function loadOlderActivities() {
+  const loaded = await store.loadMoreActivities()
+  if (!loaded && store.vaultError) ui.toast('较早日志没有载入', store.vaultError, 'warning')
+}
+
 function historyOutputPath(job: Job) { return historyOutputPaths(job)[0] }
 function historyOutputName(job: Job) { return job.outputs?.find((output) => output.path)?.name }
 function historyOutputCount(job: Job) { return historyOutputPaths(job).length }
@@ -178,10 +191,46 @@ function closeContext(restoreFocus = false) {
   if (restoreFocus) void nextTick(() => contextMenuTrigger?.focus({ preventScroll: true }))
 }
 
+function closeActivityContext(restoreFocus = false) {
+  activityContextMenu.value = undefined
+  if (restoreFocus) void nextTick(() => activityContextMenuTrigger?.focus({ preventScroll: true }))
+}
+
 function showContext(job: Job, x: number, y: number, trigger: HTMLElement) {
+  closeActivityContext()
   contextMenuTrigger = trigger
   contextMenu.value = { job, ...clampMenuPosition(x, y, { menuWidth: 220, menuHeight: 272, margin: 12 }) }
   void nextTick(() => contextMenuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus())
+}
+
+function showActivityContext(activity: ActivityRecord, x: number, y: number, trigger: HTMLElement) {
+  closeContext()
+  activityContextMenuTrigger = trigger
+  activityContextMenu.value = { activity, ...clampMenuPosition(x, y, { menuWidth: 220, menuHeight: 170, margin: 12 }) }
+  void nextTick(() => activityContextMenuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus())
+}
+
+function openActivityContext(event: MouseEvent, activity: ActivityRecord) {
+  event.preventDefault()
+  showActivityContext(activity, event.clientX, event.clientY, event.currentTarget as HTMLElement)
+}
+
+function handleActivityKeydown(event: KeyboardEvent, activity: ActivityRecord) {
+  if (!isContextMenuShortcut(event)) return
+  event.preventDefault()
+  event.stopPropagation()
+  const trigger = event.currentTarget as HTMLElement
+  const bounds = trigger.getBoundingClientRect()
+  showActivityContext(activity, bounds.right - 22, bounds.top + 24, trigger)
+}
+
+function handleActivityContextKeydown(event: KeyboardEvent) {
+  const items = [...(activityContextMenuElement.value?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])]
+  if (event.key === 'Escape') { event.preventDefault(); closeActivityContext(true); return }
+  const next = nextMenuItemIndex(event.key, items.indexOf(document.activeElement as HTMLButtonElement), items.length)
+  if (next === undefined) return
+  event.preventDefault()
+  items[next]?.focus()
 }
 
 function openContext(event: MouseEvent, job: Job) {
@@ -213,6 +262,28 @@ async function contextSaveAs() { const job = contextMenu.value?.job; closeContex
 async function contextCopy() { const job = contextMenu.value?.job; closeContext(); if (job) await copyOutputs(job) }
 function contextToggleSelection() { const job = contextMenu.value?.job; closeContext(); if (!job || ['queued', 'running'].includes(job.status)) return; selectionMode.value = true; toggleSelected(job.id) }
 async function contextRemove() { const job = contextMenu.value?.job; closeContext(); if (job) await remove(job.id) }
+
+async function activityContextOpen() {
+  const activity = activityContextMenu.value?.activity
+  closeActivityContext()
+  if (activity?.route) await router.push(activity.route)
+}
+
+async function activityContextCopy() {
+  const activity = activityContextMenu.value?.activity
+  closeActivityContext()
+  if (!activity) return
+  try {
+    await navigator.clipboard.writeText([activity.title, activity.detail].filter(Boolean).join('\n'))
+    ui.toast('已复制日志内容', activity.title, 'success')
+  } catch (error) { ui.toast('复制日志失败', error instanceof Error ? error.message : '系统剪贴板暂时不可用。', 'error') }
+}
+
+function activityContextFilter() {
+  const activity = activityContextMenu.value?.activity
+  closeActivityContext()
+  if (activity) activityKind.value = activity.kind
+}
 
 watch(query, (value) => {
   window.clearTimeout(searchTimer)
@@ -248,7 +319,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="history-view page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeContext()">
+  <div class="history-view page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeContext(); closeActivityContext()">
     <AppBreadcrumbs :items="[{ label: '工作', to: '/' }, { label: '处理历史' }]" />
     <PageHeader
       title="处理历史"
@@ -333,7 +404,7 @@ onBeforeUnmount(() => {
             <article
               v-for="job in visibleJobs"
               :key="job.id"
-              v-memo="[job.id, job.status, job.progress, job.detail, job.completedAt, job.outputs, job.outputNames, selectionMode, selectedJobIds.has(job.id)]"
+              v-memo="[job.id, job.status, job.progress, job.detail, job.completedAt, job.outputs, job.outputNames, selectionMode, selectedJobIds.has(job.id), contextMenu?.job.id === job.id]"
               class="group row gap-3 h-24 px-3 border-b border-line transition-colors"
               :class="selectedJobIds.has(job.id) ? 'bg-accent-soft' : 'hover:bg-surface-2'"
               tabindex="0"
@@ -405,6 +476,11 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+      <footer v-if="store.jobsHasMore || store.jobsLoadingMore" class="row-center min-h-11 px-3 border-t border-line bg-surface-2/40">
+        <button class="btn-ghost btn-sm" :disabled="store.jobsLoadingMore" @click="loadOlderJobs">
+          <AppIcon name="clock" :size="14" />{{ store.jobsLoadingMore ? '正在载入较早记录…' : '载入较早记录' }}
+        </button>
+      </footer>
     </section>
 
     <EmptyState v-else-if="activeView === 'jobs' && store.jobs.length && hasActiveFilters" icon="search" title="没有匹配的处理记录" description="试试清除搜索，或放宽状态与类型筛选。" action="清除筛选" @action="clearFilters" />
@@ -414,15 +490,19 @@ onBeforeUnmount(() => {
       <article
         v-for="item in activities"
         :key="item.id"
-        v-memo="[item.id, item.title, item.detail, item.route]"
+        v-memo="[item.id, item.title, item.detail, item.route, activityContextMenu?.activity.id === item.id]"
         class="row gap-3 px-4 py-3 border-b border-line last:border-b-0"
         :class="item.route ? 'cursor-pointer hover:bg-surface-2' : ''"
         :role="item.route ? 'link' : undefined"
-        :tabindex="item.route ? 0 : undefined"
-        :aria-label="item.route ? `${item.title}；打开相关页面` : undefined"
+        tabindex="0"
+        aria-haspopup="menu"
+        :aria-expanded="activityContextMenu?.activity.id === item.id"
+        :aria-label="`${item.title}${item.route ? '；打开相关页面' : ''}；右键或 Shift 加 F10 打开日志菜单`"
         @click="item.route ? router.push(item.route) : undefined"
         @keydown.enter="item.route ? router.push(item.route) : undefined"
         @keydown.space.prevent="item.route ? router.push(item.route) : undefined"
+        @contextmenu.stop="openActivityContext($event, item)"
+        @keydown="handleActivityKeydown($event, item)"
       >
         <b class="center w-14 h-6 shrink-0 rounded-full bg-surface-2 text-[10px] font-semibold tracking-wide text-fg-3">{{ item.kind.toUpperCase() }}</b>
         <span class="stack gap-0.5 min-w-0 flex-1">
@@ -432,6 +512,11 @@ onBeforeUnmount(() => {
         <time class="text-[11px] tabular-nums text-fg-3 shrink-0">{{ formatTime(item.createdAt) }}</time>
         <AppIcon v-if="item.route" name="arrow-right" :size="14" class="shrink-0 text-fg-3" />
       </article>
+      <footer v-if="store.activitiesHasMore || store.activitiesLoadingMore" class="row-center min-h-11 px-3 border-t border-line bg-surface-2/40">
+        <button class="btn-ghost btn-sm" :disabled="store.activitiesLoadingMore" @click="loadOlderActivities">
+          <AppIcon name="sort" :size="14" />{{ store.activitiesLoadingMore ? '正在载入较早日志…' : '载入较早日志' }}
+        </button>
+      </footer>
     </section>
 
     <EmptyState v-else-if="store.activities.length && hasActiveFilters" icon="search" title="没有匹配的操作日志" description="日志仍在本机；清除搜索或换个活动类型即可查看。" action="清除筛选" @action="clearFilters" />
@@ -462,6 +547,22 @@ onBeforeUnmount(() => {
           {{ selectedJobIds.has(contextMenu.job.id) ? '取消选择此记录' : '选择此记录' }}
         </button>
         <button class="nav-item w-full hover:bg-danger-soft hover:text-danger" role="menuitem" @click="contextRemove">删除历史记录</button>
+      </div>
+      <div
+        v-if="activityContextMenu"
+        ref="activityContextMenuElement"
+        class="fixed z-[120] w-55 p-1 rounded-md bg-surface border border-line-strong shadow-lg"
+        role="menu"
+        :aria-label="`${activityContextMenu.activity.title} 日志操作`"
+        :style="{ left: `${activityContextMenu.x}px`, top: `${activityContextMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleActivityContextKeydown"
+      >
+        <p class="px-2.5 py-1.5 text-[11px] text-fg-3 truncate">{{ activityContextMenu.activity.title }}</p>
+        <button class="nav-item w-full" role="menuitem" :disabled="!activityContextMenu.activity.route" @click="activityContextOpen">打开相关页面</button>
+        <button class="nav-item w-full" role="menuitem" @click="activityContextCopy">复制标题与详情</button>
+        <button class="nav-item w-full" role="menuitem" @click="activityContextFilter">只看此类日志</button>
       </div>
     </Teleport>
   </div>

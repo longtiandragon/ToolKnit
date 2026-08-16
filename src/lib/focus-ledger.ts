@@ -16,6 +16,12 @@ export interface FocusLedgerSummary {
   maxMinutes: number
 }
 
+export interface FocusAnalyticsSnapshot {
+  sessions7Days: number
+  minutes7Days: number
+  daily7Days: Array<{ date: string; sessions: number; minutes: number }>
+}
+
 function startOfLocalDay(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate())
 }
@@ -71,3 +77,24 @@ export function buildFocusLedger(events: readonly TimelineEvent[], now = new Dat
   }
 }
 
+/** Projects the native aggregate into the existing Today-page view model. */
+export function focusLedgerFromAnalytics(analytics: FocusAnalyticsSnapshot): FocusLedgerSummary {
+  const days = analytics.daily7Days.slice(-7)
+  const maxMinutes = Math.max(0, ...days.map(day => day.minutes))
+  return {
+    days: days.map((day, index) => {
+      const date = new Date(`${day.date}T12:00:00`)
+      return {
+        key: day.date,
+        label: index === days.length - 1 ? '今' : `周${'日一二三四五六'[date.getDay()]}`,
+        fullLabel: `${date.getMonth() + 1} 月 ${date.getDate()} 日`,
+        minutes: day.minutes,
+        percent: maxMinutes && day.minutes ? Math.max(8, Math.round(day.minutes / maxMinutes * 100)) : 0,
+        isToday: index === days.length - 1,
+      }
+    }),
+    totalMinutes: analytics.minutes7Days,
+    sessionCount: analytics.sessions7Days,
+    maxMinutes,
+  }
+}

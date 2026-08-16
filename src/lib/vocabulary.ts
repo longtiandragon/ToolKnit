@@ -8,7 +8,7 @@ function stringList(value: unknown) {
 function reviewFacets(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   const input = value as Record<string, unknown>
-  const facets: NonNullable<VocabularySense['reviewFacets']> = Object.fromEntries(['spelling', 'example'].flatMap((facet) => {
+  const facets: NonNullable<VocabularySense['reviewFacets']> = Object.fromEntries(['spelling', 'example', 'comparison'].flatMap((facet) => {
     const review = input[facet]
     return review && typeof review === 'object' && typeof (review as Partial<ReviewState>).due === 'string'
       ? [[facet, cloneReviewState(review as ReviewState)]]
@@ -45,6 +45,14 @@ export function cloneVocabularyEntry(entry: VocabularyEntry): VocabularyEntry {
     forms,
     senses: Array.isArray(plain.senses) ? plain.senses.map((sense) => cloneVocabularySense(sense as VocabularySense)) : [],
     createdAt: typeof plain.createdAt === 'string' ? plain.createdAt : new Date().toISOString(),
-    updatedAt: typeof plain.updatedAt === 'string' ? plain.updatedAt : new Date().toISOString()
+    updatedAt: typeof plain.updatedAt === 'string' ? plain.updatedAt : new Date().toISOString(),
+    ...(plain.summaryOnly === true ? { summaryOnly: true } : {}),
+    ...(typeof plain.senseCount === 'number' ? { senseCount: Math.max(0, Math.floor(plain.senseCount)) } : {}),
+    ...(typeof plain.partOfSpeechPreview === 'string' ? { partOfSpeechPreview: plain.partOfSpeechPreview } : {}),
+    ...(typeof plain.definitionPreview === 'string' ? { definitionPreview: plain.definitionPreview } : {})
   }
+}
+
+export function vocabularySenseCount(entry: VocabularyEntry) {
+  return entry.summaryOnly ? entry.senseCount ?? 0 : entry.senses.length
 }

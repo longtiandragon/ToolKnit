@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFocusLedger, focusEventMinutes, localDateKey } from './focus-ledger'
+import { buildFocusLedger, focusEventMinutes, focusLedgerFromAnalytics, localDateKey } from './focus-ledger'
 import type { TimelineEvent } from '@/types'
 
 function focus(id: string, date: Date, minutes: unknown): TimelineEvent {
@@ -40,5 +40,25 @@ describe('focus ledger', () => {
 
   it('formats dates from local calendar fields instead of UTC slices', () => {
     expect(localDateKey(new Date(2026, 0, 2, 0, 5))).toBe('2026-01-02')
+  })
+
+  it('projects the complete native aggregate without rescanning bounded history', () => {
+    const summary = focusLedgerFromAnalytics({
+      sessions7Days: 126,
+      minutes7Days: 655,
+      daily7Days: [
+        { date: '2026-08-10', sessions: 0, minutes: 0 },
+        { date: '2026-08-11', sessions: 0, minutes: 0 },
+        { date: '2026-08-12', sessions: 0, minutes: 0 },
+        { date: '2026-08-13', sessions: 0, minutes: 0 },
+        { date: '2026-08-14', sessions: 0, minutes: 0 },
+        { date: '2026-08-15', sessions: 1, minutes: 30 },
+        { date: '2026-08-16', sessions: 125, minutes: 625 },
+      ],
+    })
+    expect(summary.sessionCount).toBe(126)
+    expect(summary.totalMinutes).toBe(655)
+    expect(summary.days.at(-1)).toMatchObject({ key: '2026-08-16', minutes: 625, percent: 100, isToday: true })
+    expect(summary.days.at(-2)?.percent).toBeGreaterThanOrEqual(8)
   })
 })

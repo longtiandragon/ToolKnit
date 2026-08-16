@@ -3,12 +3,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
-import { buildFocusLedger } from '@/lib/focus-ledger'
-import { deleteDesktopEvent, isDesktop, listDesktopPersonalEvents, saveDesktopEvent } from '@/lib/native'
+import { buildFocusLedger, focusLedgerFromAnalytics } from '@/lib/focus-ledger'
+import { deleteDesktopEvent, getDesktopFocusAnalytics, importDesktopLegacyEvents, isDesktop, listDesktopFocusEvents, listDesktopPersonalEvents, saveDesktopEvent, type DesktopFocusAnalytics } from '@/lib/native'
 import { newId } from '@/lib/id'
+import { BROWSER_PERSONAL_EVENTS_KEY, migrateBrowserPersonalEvents, parseBrowserPersonalEvents } from '@/lib/personal-event-migration'
 import type { TimelineEvent } from '@/types'
 
-const BROWSER_EVENTS_KEY = 'knitspace:today-events:v1'
 const FOCUS_SESSION_KEY = 'knitspace:focus-session:v1'
 const PERSONAL_EVENT_LIMIT = 120
 const route = useRoute()
@@ -27,6 +27,8 @@ const phase = ref<'idle' | 'running' | 'paused'>('idle')
 const endsAt = ref<number | null>(null)
 const startedAt = ref('')
 const events = ref<TimelineEvent[]>([])
+const nativeFocusAnalytics = ref<DesktopFocusAnalytics>()
+const calendarDay = ref(new Date().toDateString())
 const loading = ref(true)
 const notice = ref('选择时长后开始；完成记录会保存在本机资料库。')
 const anniversaryTitle = ref('')
@@ -38,23 +40,30 @@ const anniversaryTitleInput = ref<HTMLInputElement>()
 const focusEntryTitleInput = ref<HTMLInputElement>()
 const focusHistoryOpen = ref(false)
 const focusHistoryExpanded = ref(false)
+const focusHistoryPage = ref(0)
+const focusHistoryHasMore = ref(false)
+const focusHistoryLoading = ref(false)
 const focusEntryOpen = ref(false)
 const editingFocusId = ref('')
 const focusEntryTitle = ref('')
 const focusEntryMinutes = ref(25)
 const focusEntryAt = ref('')
 let timer: number | undefined
+let calendarTimer: number | undefined
 let menuTrigger: HTMLElement | undefined
 
 const elapsedSeconds = computed(() => Math.max(0, durationMinutes.value * 60 - secondsLeft.value))
 const timerText = computed(() => `${String(Math.floor(secondsLeft.value / 60)).padStart(2, '0')}:${String(secondsLeft.value % 60).padStart(2, '0')}`)
 const timerStatus = computed(() => phase.value === 'running' ? '专注中' : phase.value === 'paused' ? '已暂停' : '准备开始')
 const focusSessions = computed(() => events.value.filter((event) => event.type === 'pomodoro'))
-const todayFocusSessions = computed(() => focusSessions.value.filter((event) => new Date(event.startsAt).toDateString() === new Date().toDateString()))
-const pomodorosToday = computed(() => todayFocusSessions.value.length)
-const focusMinutesToday = computed(() => todayFocusSessions.value.reduce((total, event) => total + minutesOf(event), 0))
+const todayFocusSessions = computed(() => focusSessions.value.filter((event) => new Date(event.startsAt).toDateString() === calendarDay.value))
+const pomodorosToday = computed(() => nativeFocusAnalytics.value?.sessionsToday ?? todayFocusSessions.value.length)
+const focusMinutesToday = computed(() => nativeFocusAnalytics.value?.minutesToday ?? todayFocusSessions.value.reduce((total, event) => total + minutesOf(event), 0))
 const visibleFocusSessions = computed(() => focusHistoryExpanded.value ? focusSessions.value : focusSessions.value.slice(0, 4))
-const focusLedger = computed(() => buildFocusLedger(focusSessions.value))
+const focusLedger = computed(() => {
+  void calendarDay.value
+  return nativeFocusAnalytics.value ? focusLedgerFromAnalytics(nativeFocusAnalytics.value) : buildFocusLedger(focusSessions.value)
+})
 const anniversaries = computed(() => events.value
   .filter((event) => event.type === 'anniversary')
   .map((event) => ({ event, title: titleOf(event), days: daysUntil(event.startsAt) }))
@@ -170,24 +179,82 @@ function reset(silent = false) {
 }
 
 function readBrowserEvents() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(BROWSER_EVENTS_KEY) ?? '[]')
-    if (!Array.isArray(parsed)) return [] as TimelineEvent[]
-    return parsed.filter((event): event is TimelineEvent => event && typeof event.id === 'string' && ['pomodoro', 'anniversary', 'activity'].includes(event.type) && typeof event.startsAt === 'string' && event.payload !== null && typeof event.payload === 'object' && !Array.isArray(event.payload))
-  } catch { return [] }
+  return parseBrowserPersonalEvents(localStorage.getItem(BROWSER_PERSONAL_EVENTS_KEY))
 }
 
 function writeBrowserEvents() {
-  localStorage.setItem(BROWSER_EVENTS_KEY, JSON.stringify(events.value.slice(0, 80)))
+  localStorage.setItem(BROWSER_PERSONAL_EVENTS_KEY, JSON.stringify(events.value.slice(0, 80)))
+}
+
+async function refreshNativeFocusAnalytics() {
+  if (!isDesktop()) return
+  try { nativeFocusAnalytics.value = await getDesktopFocusAnalytics() }
+  catch { /* the bounded event list remains a usable fallback */ }
+}
+
+function refreshCalendarDay() {
+  const next = new Date().toDateString()
+  if (next === calendarDay.value) return
+  calendarDay.value = next
+  void refreshNativeFocusAnalytics()
 }
 
 async function saveEvent(event: TimelineEvent) {
+  const existed = events.value.some((item) => item.id === event.id)
   if (isDesktop()) await saveDesktopEvent(event)
   const index = events.value.findIndex((item) => item.id === event.id)
   if (index >= 0) events.value.splice(index, 1, event)
   else events.value.unshift(event)
   events.value.sort((left, right) => right.startsAt.localeCompare(left.startsAt))
-  if (!isDesktop()) writeBrowserEvents()
+  if (isDesktop() && event.type === 'pomodoro') {
+    await refreshNativeFocusAnalytics()
+    // A save can move an edited record across the page boundary. Re-read the
+    // latest native page instead of guessing which row should fill the gap.
+    // When editing an explicitly older page, keep that page in place.
+    if (!existed || focusHistoryPage.value === 0) await loadLatestFocusPage(false)
+  }
+  else if (!isDesktop()) writeBrowserEvents()
+}
+
+function replaceFocusPage(focus: TimelineEvent[]) {
+  events.value = [
+    ...events.value.filter((event) => event.type === 'anniversary'),
+    ...focus,
+  ].sort((left, right) => right.startsAt.localeCompare(left.startsAt) || right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))
+}
+
+async function loadLatestFocusPage(reveal = true) {
+  if (!isDesktop() || focusHistoryLoading.value) return
+  focusHistoryLoading.value = true
+  try {
+    const page = await listDesktopFocusEvents(PERSONAL_EVENT_LIMIT + 1)
+    replaceFocusPage(page.slice(0, PERSONAL_EVENT_LIMIT))
+    focusHistoryHasMore.value = page.length > PERSONAL_EVENT_LIMIT
+    focusHistoryPage.value = 0
+    if (reveal) {
+      focusHistoryExpanded.value = true
+      notice.value = '已返回最近的时间记录。'
+    }
+  } catch (error) {
+    notice.value = error instanceof Error ? error.message : '最近时间记录暂时不可读取。'
+  } finally { focusHistoryLoading.value = false }
+}
+
+async function loadOlderFocusPage() {
+  if (!isDesktop() || focusHistoryLoading.value || !focusHistoryHasMore.value) return
+  const cursor = focusSessions.value.at(-1)
+  if (!cursor) { focusHistoryHasMore.value = false; return }
+  focusHistoryLoading.value = true
+  try {
+    const page = await listDesktopFocusEvents(PERSONAL_EVENT_LIMIT + 1, cursor)
+    replaceFocusPage(page.slice(0, PERSONAL_EVENT_LIMIT))
+    focusHistoryHasMore.value = page.length > PERSONAL_EVENT_LIMIT
+    focusHistoryPage.value += 1
+    focusHistoryExpanded.value = true
+    notice.value = `正在查看更早的时间记录（第 ${focusHistoryPage.value + 1} 页）。`
+  } catch (error) {
+    notice.value = error instanceof Error ? error.message : '更早的时间记录暂时不可读取。'
+  } finally { focusHistoryLoading.value = false }
 }
 
 async function recordPomodoro(status: 'completed' | 'stopped') {
@@ -327,9 +394,22 @@ async function saveFocusEntry() {
 
 async function removeEvent(id: string) {
   try {
+    const removed = events.value.find((event) => event.id === id)
     if (isDesktop()) await deleteDesktopEvent(id)
     events.value = events.value.filter((event) => event.id !== id)
-    if (!isDesktop()) writeBrowserEvents()
+    if (isDesktop() && removed?.type === 'pomodoro') {
+      await refreshNativeFocusAnalytics()
+      if (focusHistoryPage.value === 0) await loadLatestFocusPage(false)
+      else if (focusHistoryHasMore.value && focusSessions.value.length < PERSONAL_EVENT_LIMIT) {
+        const cursor = focusSessions.value.at(-1)
+        if (cursor) {
+          const refill = await listDesktopFocusEvents(2, cursor)
+          replaceFocusPage([...focusSessions.value, ...refill.slice(0, 1)])
+          focusHistoryHasMore.value = refill.length > 1
+        }
+      }
+    }
+    else if (!isDesktop()) writeBrowserEvents()
     notice.value = '记录已删除。'
   } catch (error) { notice.value = error instanceof Error ? error.message : '删除失败。' }
   menu.value = null
@@ -426,12 +506,35 @@ function closeMenuOnOutsideClick() { closeMenu() }
 watch(durationMinutes, updateDuration)
 watch(() => route.fullPath, () => syncFocusAnchor(route.hash), { immediate: true })
 onMounted(async () => {
-  try { events.value = isDesktop() ? await listDesktopPersonalEvents(PERSONAL_EVENT_LIMIT) : readBrowserEvents() }
+  try {
+    if (isDesktop()) {
+      let migrationWarning = ''
+      try {
+        await migrateBrowserPersonalEvents(localStorage, importDesktopLegacyEvents)
+      } catch {
+        // The old snapshot remains in place for the next retry. Native history
+        // must still open even when a one-time migration cannot commit.
+        migrationWarning = '旧版时间记录暂未迁移，原始副本仍安全保留。'
+      }
+      const [personalEvents, analytics] = await Promise.all([
+        listDesktopPersonalEvents(PERSONAL_EVENT_LIMIT + 1),
+        getDesktopFocusAnalytics(),
+      ])
+      const focus = personalEvents.filter((event) => event.type === 'pomodoro')
+      const anniversaries = personalEvents.filter((event) => event.type === 'anniversary').slice(0, PERSONAL_EVENT_LIMIT)
+      events.value = [...anniversaries, ...focus.slice(0, PERSONAL_EVENT_LIMIT)]
+        .sort((left, right) => right.startsAt.localeCompare(left.startsAt) || right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))
+      focusHistoryHasMore.value = focus.length > PERSONAL_EVENT_LIMIT
+      nativeFocusAnalytics.value = analytics
+      if (migrationWarning) notice.value = migrationWarning
+    } else events.value = readBrowserEvents()
+  }
   catch (error) { notice.value = error instanceof Error ? error.message : '时间记录暂时不可读取。' }
   finally { loading.value = false; restoreFocusSession(); syncFocusAnchor(route.hash) }
+  calendarTimer = window.setInterval(refreshCalendarDay, 60_000)
   window.addEventListener('click', closeMenuOnOutsideClick)
 })
-onBeforeUnmount(() => { clearTimer(); window.removeEventListener('click', closeMenuOnOutsideClick) })
+onBeforeUnmount(() => { clearTimer(); if (calendarTimer !== undefined) window.clearInterval(calendarTimer); window.removeEventListener('click', closeMenuOnOutsideClick) })
 </script>
 
 <template>
@@ -545,10 +648,17 @@ onBeforeUnmount(() => { clearTimer(); window.removeEventListener('click', closeM
       </section>
 
       <ul v-if="focusHistoryOpen && focusSessions.length" class="stack shrink-0 m-0 px-0 max-h-60 overflow-y-auto border-t border-line bg-surface-2" aria-label="最近专注记录">
-        <li v-for="event in visibleFocusSessions" :key="event.id" v-memo="[event.id, event.startsAt, event.updatedAt, event.payload]" tabindex="0" role="button" aria-haspopup="menu" :aria-expanded="menu?.id === event.id" :aria-label="`${titleOf(event)}，${minutesOf(event)} 分钟。按菜单键打开操作。`" class="row-between gap-3 shrink-0 h-8.5 px-4 border-b border-line last:border-b-0 cursor-context-menu transition-colors duration-120 hover:bg-surface-3" @contextmenu.stop="openMenu($event, event.id)" @keydown="handleRecordKeydown($event, event.id)"><span class="flex items-baseline gap-2 min-w-0"><b class="text-[12px] font-medium text-fg-2 truncate">{{ titleOf(event) }}</b><small class="shrink-0 text-[11px] text-fg-3">{{ timeOf(event.startsAt) }}</small></span><strong class="shrink-0 text-[12px] font-medium text-fg tabular-nums">{{ minutesOf(event) }} 分钟</strong></li>
+        <li v-for="event in visibleFocusSessions" :key="event.id" v-memo="[event.id, event.startsAt, event.updatedAt, event.payload, menu?.id === event.id]" tabindex="0" role="button" aria-haspopup="menu" :aria-expanded="menu?.id === event.id" :aria-label="`${titleOf(event)}，${minutesOf(event)} 分钟。按菜单键打开操作。`" class="row-between gap-3 shrink-0 h-8.5 px-4 border-b border-line last:border-b-0 cursor-context-menu transition-colors duration-120 hover:bg-surface-3" @contextmenu.stop="openMenu($event, event.id)" @keydown="handleRecordKeydown($event, event.id)"><span class="flex items-baseline gap-2 min-w-0"><b class="text-[12px] font-medium text-fg-2 truncate">{{ titleOf(event) }}</b><small class="shrink-0 text-[11px] text-fg-3">{{ timeOf(event.startsAt) }}</small></span><strong class="shrink-0 text-[12px] font-medium text-fg tabular-nums">{{ minutesOf(event) }} 分钟</strong></li>
       </ul>
       <p v-else-if="focusHistoryOpen" class="shrink-0 px-4 py-3 border-t border-line bg-surface-2 text-[12px] leading-relaxed text-fg-3">还没有时间记录。开始一次专注，或补记刚完成的学习。</p>
-      <button v-if="focusHistoryOpen && focusSessions.length > 4" class="center w-full shrink-0 h-8 px-4 border-t border-line bg-surface-2 text-[12px] text-fg-2 transition-colors duration-120 hover:bg-surface-3 hover:text-fg" :aria-expanded="focusHistoryExpanded" @click.stop="focusHistoryExpanded = !focusHistoryExpanded">{{ focusHistoryExpanded ? '只看最近 4 条' : `查看更早记录 · ${focusSessions.length - 4}${focusSessions.length >= PERSONAL_EVENT_LIMIT ? '+' : ''}` }}</button>
+      <div v-if="focusHistoryOpen && (focusSessions.length > 4 || focusHistoryPage > 0 || focusHistoryHasMore)" class="grid shrink-0 border-t border-line bg-surface-2" :class="focusHistoryExpanded && focusHistoryHasMore ? 'grid-cols-2' : 'grid-cols-1'">
+        <button class="center h-8 px-4 text-[12px] text-fg-2 transition-colors duration-120 hover:bg-surface-3 hover:text-fg" :disabled="focusHistoryLoading" :aria-expanded="focusHistoryPage === 0 ? focusHistoryExpanded : undefined" @click.stop="focusHistoryPage > 0 ? loadLatestFocusPage() : focusHistoryExpanded = !focusHistoryExpanded">
+          {{ focusHistoryLoading ? '正在读取…' : focusHistoryPage > 0 ? '返回最近记录' : focusHistoryExpanded ? '只看最近 4 条' : `查看更早记录 · ${Math.max(0, focusSessions.length - 4)}${focusHistoryHasMore ? '+' : ''}` }}
+        </button>
+        <button v-if="focusHistoryExpanded && focusHistoryHasMore" class="center h-8 px-4 border-l border-line text-[12px] text-fg-2 transition-colors duration-120 hover:bg-surface-3 hover:text-fg" :disabled="focusHistoryLoading" @click.stop="loadOlderFocusPage">
+          第 {{ focusHistoryPage + 2 }} 页 · 载入更早
+        </button>
+      </div>
     </article>
 
     <!-- ── Anniversaries ─────────────────────────────────────────────────── -->
@@ -574,7 +684,7 @@ onBeforeUnmount(() => { clearTimer(); window.removeEventListener('click', closeM
       </form>
 
       <ul v-if="anniversaries.length" class="stack gap-0.5 flex-1 min-h-0 m-0 px-2.5 pb-3 overflow-y-auto">
-        <li v-for="item in anniversaries" :key="item.event.id" v-memo="[item.event.id, item.event.startsAt, item.event.updatedAt, item.event.payload]" tabindex="0" role="button" aria-haspopup="menu" :aria-expanded="menu?.id === item.event.id" :aria-label="`${item.title}，${item.days === 0 ? '今天' : `${item.days} 天后`}。按菜单键打开操作。`" class="row-between gap-2.5 shrink-0 min-h-10 px-1.5 py-1 rounded-sm cursor-context-menu transition-colors duration-120 hover:bg-surface-2" @contextmenu.stop="openMenu($event, item.event.id)" @keydown="handleRecordKeydown($event, item.event.id)"><div class="stack gap-0.5 min-w-0"><b class="text-[13px] font-medium text-fg truncate">{{ item.title }}</b><small class="text-[11px] text-fg-3 tabular-nums">{{ dateInputValue(item.event.startsAt) }} · 每年</small></div><strong class="shrink-0 text-[12px] font-medium tabular-nums" :class="item.days === 0 ? 'text-accent' : 'text-fg-2'">{{ item.days === 0 ? '今天' : `${item.days} 天后` }}</strong></li>
+        <li v-for="item in anniversaries" :key="item.event.id" v-memo="[item.event.id, item.event.startsAt, item.event.updatedAt, item.event.payload, menu?.id === item.event.id]" tabindex="0" role="button" aria-haspopup="menu" :aria-expanded="menu?.id === item.event.id" :aria-label="`${item.title}，${item.days === 0 ? '今天' : `${item.days} 天后`}。按菜单键打开操作。`" class="row-between gap-2.5 shrink-0 min-h-10 px-1.5 py-1 rounded-sm cursor-context-menu transition-colors duration-120 hover:bg-surface-2" @contextmenu.stop="openMenu($event, item.event.id)" @keydown="handleRecordKeydown($event, item.event.id)"><div class="stack gap-0.5 min-w-0"><b class="text-[13px] font-medium text-fg truncate">{{ item.title }}</b><small class="text-[11px] text-fg-3 tabular-nums">{{ dateInputValue(item.event.startsAt) }} · 每年</small></div><strong class="shrink-0 text-[12px] font-medium tabular-nums" :class="item.days === 0 ? 'text-accent' : 'text-fg-2'">{{ item.days === 0 ? '今天' : `${item.days} 天后` }}</strong></li>
       </ul>
       <p v-else class="px-4 pb-4 text-[12px] leading-relaxed text-fg-3">在这里记住对你重要的日期。</p>
     </article>

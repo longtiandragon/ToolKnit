@@ -40,12 +40,13 @@ const reviewFacetChoices: Array<{ id: VocabularyReviewFacet; label: string; deta
   { id: 'meaning', label: '词义', detail: '单词 → 释义' },
   { id: 'spelling', label: '拼写', detail: '释义 → 单词' },
   { id: 'example', label: '例句', detail: '上下文填空' },
+  { id: 'comparison', label: '近义 / 易混', detail: '词条 → 相关词' },
 ]
 const reviewSelectionSummary = computed(() => {
   if (!reviewFacets.value.length) return '不自动加入复习；之后仍可按词义单独开启。'
   const cards = prepared.value.reviewCardCount
   const skipped = prepared.value.skippedReviewCardCount
-  return `${cards} 张独立 FSRS 卡${skipped ? ` · ${skipped} 条因缺少例句未建例句卡` : ''}`
+  return `${cards} 张独立 FSRS 卡${skipped ? ` · ${skipped} 张因缺少例句或易混词未建立` : ''}`
 })
 
 function applyResult(result: VocabularyImportParseResult) {
@@ -124,9 +125,16 @@ async function requestClose() {
 
 async function commitImport() {
   if (!canImport.value) return
-  const snapshot = prepared.value
   importing.value = true
   try {
+    // Native list rows intentionally omit senses. Read only duplicate targets
+    // before merging so an import can never replace unseen existing meanings.
+    if (store.desktopVaultActive && policy.value === 'merge') {
+      const keys = new Set(includedRows.value.map(row => `${row.lemma.trim().toLocaleLowerCase('en-US')}\u0000${row.language.trim().toLocaleLowerCase('zh-CN')}`))
+      const duplicates = store.vocabulary.filter(entry => entry.summaryOnly && keys.has(`${entry.lemma.trim().toLocaleLowerCase('en-US')}\u0000${entry.language.trim().toLocaleLowerCase('zh-CN')}`))
+      await Promise.all(duplicates.map(entry => store.loadVocabulary(entry.id)))
+    }
+    const snapshot = prepareVocabularyImport(includedRows.value, store.vocabulary, policy.value, reviewFacets.value)
     await store.importVocabularyEntries(snapshot.entries)
     emit('complete', { imported: snapshot.newCount, updated: snapshot.updatedCount, skipped: snapshot.skippedCount + excludedLines.value.size, reviewCards: snapshot.reviewCardCount, firstId: snapshot.entries[0]?.id })
   } catch (error) {
@@ -275,7 +283,7 @@ onBeforeUnmount(() => { window.clearTimeout(parseTimer); worker?.terminate(); wi
           <!-- A bordered `fieldset` puts its legend *in* the top border, which
                would misalign this card's title with the two beside it. The edge
                is drawn as a ring instead; the fieldset itself keeps the
-               `:disabled` cascade over all three checkboxes. -->
+               `:disabled` cascade over all review-direction checkboxes. -->
           <fieldset class="min-w-0 px-3 py-2.5 rounded-md bg-surface-2 border-0 ring-1 ring-[var(--line)] disabled:opacity-45" :disabled="importing">
             <legend class="text-[12px] font-medium text-fg">为本次词义创建复习卡</legend>
             <div class="row flex-wrap gap-1.5 mt-1.5">

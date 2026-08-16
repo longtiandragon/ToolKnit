@@ -4,7 +4,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import type { VocabularyEntry, VocabularyReviewFacet, VocabularySense } from '@/types'
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useUiStore } from '@/stores/ui'
-import { cloneVocabularyEntry } from '@/lib/vocabulary'
+import { cloneVocabularyEntry, vocabularySenseCount } from '@/lib/vocabulary'
 import { vocabularyToMarkdown } from '@/lib/vocabulary-markdown'
 import { matchesVocabularySearch } from '@/lib/vocabulary-search'
 import { vocabularyKnowledgeAction } from '@/lib/knowledge-workflows'
@@ -27,6 +27,12 @@ const route = useRoute()
 const router = useRouter()
 const query = ref('')
 const appliedQuery = ref('')
+const indexedWords = ref<VocabularyEntry[]>([])
+const indexedSearchLoading = ref(false)
+const indexedSearchError = ref('')
+const entryLoading = ref(false)
+let indexedSearchRevision = 0
+let entryLoadRevision = 0
 const importDialogOpen = ref(route.query.import === '1')
 const selectedId = ref(typeof route.query.word === 'string' ? route.query.word : store.vocabulary[0]?.id ?? '')
 const draft = ref<VocabularyEntry | null>(null)
@@ -70,16 +76,17 @@ const onboardingSteps = [
   { index: '03', title: '加入复习', detail: '只让需要巩固的词义进入队列' },
 ]
 const vocabularyListOverscan = 8
-const reviewFacetChoices: VocabularyReviewFacet[] = ['meaning', 'spelling', 'example']
+const reviewFacetChoices: VocabularyReviewFacet[] = ['meaning', 'spelling', 'example', 'comparison']
 const { speakingEntryId, speakVocabularyEntry: speakVocabulary, disposeVocabularySpeech } = useVocabularySpeech()
 
 const words = computed(() => {
   const needle = appliedQuery.value.trim().toLocaleLowerCase('zh-CN')
   if (!needle) return store.vocabulary
+  if (store.desktopVaultActive && !indexedSearchError.value) return indexedWords.value
   return store.vocabulary.filter((entry) => matchesVocabularySearch(entry, needle))
 })
 const hasVocabulary = computed(() => store.vocabulary.length > 0)
-const searchPending = computed(() => query.value.trim() !== appliedQuery.value.trim())
+const searchPending = computed(() => query.value.trim() !== appliedQuery.value.trim() || indexedSearchLoading.value)
 const vocabularyWindowStart = computed(() => Math.max(0, Math.floor(listScrollTop.value / vocabularyRowHeight) - vocabularyListOverscan))
 const vocabularyWindowEnd = computed(() => Math.min(words.value.length, Math.ceil((listScrollTop.value + listViewportHeight.value) / vocabularyRowHeight) + vocabularyListOverscan))
 const visibleWords = computed(() => words.value.slice(vocabularyWindowStart.value, vocabularyWindowEnd.value))
@@ -102,9 +109,21 @@ function markDraftDirty() {
 watch([draftDirty, () => draft.value?.lemma ?? ''], ([dirty, title]) => {
   window.dispatchEvent(new CustomEvent('knitspace:editor-dirty', { detail: { dirty, id: draft.value?.id, title, kindLabel: '单词', discardRecovery: clearCurrentRecovery } }))
 })
-watch(selected, (entry) => {
-  replaceDraft(entry ?? null)
-  void loadCrashDraft(entry ?? null)
+watch(selected, async (entry) => {
+  const revision = ++entryLoadRevision
+  replaceDraft(null)
+  if (!entry) { entryLoading.value = false; return }
+  entryLoading.value = Boolean(store.desktopVaultActive && entry.summaryOnly)
+  try {
+    const loaded = entry.summaryOnly ? await store.loadVocabulary(entry.id) : entry
+    if (revision !== entryLoadRevision || selectedId.value !== entry.id) return
+    replaceDraft(loaded ?? null)
+    void loadCrashDraft(loaded ?? null)
+  } catch (error) {
+    if (revision === entryLoadRevision) ui.toast('词条没有打开', error instanceof Error ? error.message : '本地资料库暂时没有响应。', 'error')
+  } finally {
+    if (revision === entryLoadRevision) entryLoading.value = false
+  }
 }, { immediate: true })
 watch(selectedId, (id) => {
   if (store.vocabulary.some((entry) => entry.id === id)) store.touchContentRecent('word', id)
@@ -117,11 +136,29 @@ watch(() => route.query.action, async (action) => {
   await router.replace({ path: '/words', query })
   await addWord()
 }, { immediate: true })
-watch(words, (visible) => { if (!draftDirty.value && !visible.some((entry) => entry.id === selectedId.value)) selectedId.value = visible[0]?.id ?? '' }, { immediate: true })
+watch(words, (visible) => {
+  if (!searchPending.value && !draftDirty.value && !visible.some((entry) => entry.id === selectedId.value)) selectedId.value = visible[0]?.id ?? ''
+}, { immediate: true })
 watch(query, (value) => {
   window.clearTimeout(searchTimer)
   searchTimer = window.setTimeout(() => { appliedQuery.value = value }, 140)
 })
+watch(appliedQuery, async (value) => {
+  const needle = value.trim()
+  const revision = ++indexedSearchRevision
+  indexedWords.value = []
+  indexedSearchError.value = ''
+  if (!needle || !store.desktopVaultActive) { indexedSearchLoading.value = false; return }
+  indexedSearchLoading.value = true
+  try {
+    const results = await store.searchVocabularyEntries(needle, 160)
+    if (revision === indexedSearchRevision) indexedWords.value = results
+  } catch (error) {
+    if (revision === indexedSearchRevision) indexedSearchError.value = error instanceof Error ? error.message : '本机词库索引暂时不可用。'
+  } finally {
+    if (revision === indexedSearchRevision) indexedSearchLoading.value = false
+  }
+}, { immediate: true })
 watch(selectedId, (id) => {
   const rowIndex = words.value.findIndex((entry) => entry.id === id)
   const viewport = listViewport.value
@@ -292,6 +329,10 @@ function toggleReviewFacet(sense: VocabularySense, facet: VocabularyReviewFacet)
     ui.toast('例句填空卡需要至少一条例句。', undefined, 'info')
     return
   }
+  if (facet === 'comparison' && !sense.synonyms.some((synonym) => synonym.trim())) {
+    ui.toast('近义 / 易混卡需要至少填写一个相关词。', undefined, 'info')
+    return
+  }
   Object.assign(sense, withVocabularyReviewFacet(sense, facet, createVocabularyReviewState()))
 }
 function removeSense(id: string) {
@@ -319,7 +360,9 @@ async function removeEntry(entry: VocabularyEntry) {
 }
 async function copyEntryAsMarkdown(entry: VocabularyEntry) {
   try {
-    await navigator.clipboard.writeText(vocabularyToMarkdown(entry))
+    const complete = entry.summaryOnly ? await store.loadVocabulary(entry.id) : entry
+    if (!complete) throw new Error('词条已不存在。')
+    await navigator.clipboard.writeText(vocabularyToMarkdown(complete))
     ui.toast('已复制为 Markdown', '包含词形、词义、搭配、例句和易混词。', 'success')
   } catch (error) {
     ui.toast('无法写入剪贴板', error instanceof Error ? error.message : '请检查系统剪贴板权限。', 'error')
@@ -353,7 +396,7 @@ async function copyEntryCollocations(entry: VocabularyEntry) {
 }
 async function createEntryNote(entry: VocabularyEntry) {
   if (selectedId.value === entry.id && !await confirmEntryTransition('创建关联笔记')) return
-  const source = store.vocabulary.find((item) => item.id === entry.id) ?? entry
+  const source = await store.loadVocabulary(entry.id) ?? entry
   const lemma = source.lemma.trim() || '未命名词条'
   const note = store.createNote(`单词：${lemma}`, undefined, vocabularyToMarkdown(source))
   store.createRelation(source.id, note.id, 'related')
@@ -473,7 +516,7 @@ onBeforeUnmount(() => {
               <button
                 v-for="entry in visibleWords"
                 :key="entry.id"
-                v-memo="[entry.id, entry.lemma, entry.updatedAt, entry.id === selectedId, entry.id === selectedId && draftDirty, store.isContentFavorite('word', entry.id)]"
+                v-memo="[entry.id, entry.lemma, entry.updatedAt, vocabularySenseCount(entry), entry.id === selectedId, entry.id === selectedId && draftDirty, store.isContentFavorite('word', entry.id)]"
                 class="row-between gap-2 w-full h-15 px-3 text-left border-b border-line border-l-2 transition-colors duration-120"
                 :class="entry.id === selectedId ? 'border-l-accent bg-accent-soft' : 'border-l-transparent hover:bg-surface-2'"
                 @click="pick(entry)"
@@ -487,7 +530,7 @@ onBeforeUnmount(() => {
                 <i class="row gap-1 shrink-0 text-[11px] not-italic" :class="entry.id === selectedId && draftDirty ? 'font-medium text-warn' : 'text-fg-3'">
                   <template v-if="entry.id === selectedId && draftDirty">未保存</template>
                   <template v-else>
-                    <AppIcon v-if="store.isContentFavorite('word', entry.id)" name="star" :size="11" />{{ entry.senses.length }} 义
+                    <AppIcon v-if="store.isContentFavorite('word', entry.id)" name="star" :size="11" />{{ vocabularySenseCount(entry) }} 义
                   </template>
                 </i>
               </button>
@@ -514,7 +557,11 @@ onBeforeUnmount(() => {
         </footer>
       </aside>
 
-      <section v-if="draft" class="pane h-full min-h-0" @input="markDraftDirty" @change="markDraftDirty">
+      <section v-if="entryLoading" class="pane center h-full min-h-0" role="status" aria-live="polite">
+        <span class="row gap-2 text-[12px] text-fg-3"><AppIcon name="refresh" :size="14" class="animate-spin" />正在从本机资料库读取完整词条…</span>
+      </section>
+
+      <section v-else-if="draft" class="pane h-full min-h-0" @input="markDraftDirty" @change="markDraftDirty">
         <header class="row-between gap-3 shrink-0 px-3 h-12 border-b border-line">
           <span class="row gap-2 min-w-0 flex-1">
             <input v-model="draft.lemma" class="min-w-0 max-w-56 h-8 bg-transparent border-0 shadow-none! text-[16px] font-semibold text-fg focus:outline-none" aria-label="单词" placeholder="run" />

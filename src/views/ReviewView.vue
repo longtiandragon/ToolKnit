@@ -20,7 +20,9 @@ import { useVocabularySpeech } from '@/lib/use-vocabulary-speech'
 import { classifyMarkdownLink } from '@/lib/markdown-link'
 import { questionSourceActionLabel, questionSourceReference } from '@/lib/question-source'
 import { stageLocalFileHandoff } from '@/lib/local-file-handoff'
-import { isDesktop, openExternalUrl } from '@/lib/native'
+import { getDesktopReviewAnalytics, getDesktopReviewQueueSummary, isDesktop, listDesktopDueReviewCards, listDesktopReviewHistory, openExternalUrl, type DesktopReviewAnalytics, type DesktopReviewCardSummary, type DesktopReviewCursor, type DesktopReviewHistoryEntry, type DesktopReviewQueueSummary } from '@/lib/native'
+import { mergeNativeReviewCards, updateNativeReviewDueSummary } from '@/lib/native-review-session'
+import { applyNativeReviewGradeToAnalytics } from '@/lib/native-review-analytics'
 
 const store = useWorkbenchStore()
 const ui = useUiStore()
@@ -33,6 +35,7 @@ const index = ref(0)
 const revealed = ref(false)
 const ratingInProgress = ref(false)
 const questionLoading = ref(false)
+const wordLoading = ref(false)
 const loadedQuestion = ref<typeof store.documents[number]>()
 const sessionReviewed = ref(0)
 const deferredItemKeys = ref<string[]>([])
@@ -49,12 +52,27 @@ const typedAnswer = ref('')
 const questionDraftAnswer = ref('')
 const reviewMenu = ref<{ x: number; y: number } | null>(null)
 const reviewMenuElement = ref<HTMLElement>()
+const reviewHistoryOpen = ref(false)
+const reviewHistoryLoading = ref(false)
+const reviewHistoryError = ref('')
+const reviewHistoryEntries = ref<DesktopReviewHistoryEntry[]>([])
+const reviewHistoryTitle = ref('')
+const reviewHistoryElement = ref<HTMLElement>()
 let reviewMenuTrigger: HTMLElement | undefined
 const { speakingEntryId, speakVocabularyEntry, stopVocabularySpeech, disposeVocabularySpeech } = useVocabularySpeech()
-type ReviewItem = { type: 'question'; document: typeof store.documents[number]; facet: QuestionReviewFacet; review: ReviewState } | { type: 'word'; entry: VocabularyEntry; sense: VocabularySense; facet: VocabularyReviewFacet; review: ReviewState }
-type ReviewUndo =
+type ReviewItem =
+  | { type: 'question'; document: typeof store.documents[number]; facet: QuestionReviewFacet; review: ReviewState; nativeCard?: DesktopReviewCardSummary }
+  | { type: 'word'; entry: VocabularyEntry; sense: VocabularySense; facet: VocabularyReviewFacet; review: ReviewState; nativeCard?: DesktopReviewCardSummary }
+type ReviewUndoBase =
   | { type: 'question'; documentId: string; facet: QuestionReviewFacet; previousReview: ReviewState }
   | { type: 'word'; entryId: string; senseId: string; facet: VocabularyReviewFacet; previousReview: ReviewState }
+type ReviewUndo = ReviewUndoBase & {
+  native?: {
+    eventId: string
+    expectedCardUpdatedAt: string
+    card: DesktopReviewCardSummary
+  }
+}
 const ratingOptions = [
   { rating: 'Again', label: '重来', shortcut: '1' },
   { rating: 'Hard', label: '费劲', shortcut: '2' },
@@ -68,14 +86,59 @@ const reviewKindOptions: { id: ReviewKind; label: string }[] = [
   { id: 'error', label: '错因卡' },
   { id: 'word', label: '单词卡' },
 ]
-const allQueue = computed<ReviewItem[]>(() => [
+const nativeReviewCards = ref<DesktopReviewCardSummary[]>([])
+const nativeReviewSummary = ref<DesktopReviewQueueSummary>()
+const nativeReviewAnalytics = ref<DesktopReviewAnalytics>()
+const nativeReviewCursor = ref<DesktopReviewCursor>()
+const nativeReviewHasMore = ref(false)
+const nativeReviewLoading = ref(false)
+const nativeReviewReady = ref(false)
+const nativeReviewFailed = ref(false)
+let nativeReviewRevision = 0
+const documentById = computed(() => new Map(store.documents.map((document) => [document.id, document])))
+const vocabularyById = computed(() => new Map(store.vocabulary.map((entry) => [entry.id, entry])))
+const nativeQueue = computed<ReviewItem[]>(() => {
+  const items: ReviewItem[] = []
+  for (const card of nativeReviewCards.value) {
+    if (card.entityKind === 'question') {
+      const document = documentById.value.get(card.entityId)
+      if (document && (card.facet === 'answer' || card.facet === 'error')) {
+        items.push({ type: 'question', document, facet: card.facet, review: card.review, nativeCard: card })
+      }
+      continue
+    }
+    const entry = vocabularyById.value.get(card.entityId)
+    const sense = entry?.senses.find((item) => item.id === card.senseId) ?? (entry && card.senseId ? {
+      id: card.senseId,
+      partOfSpeech: '',
+      definition: card.detail,
+      examples: [],
+      collocations: [],
+      synonyms: [],
+      reviewEnabled: true,
+    } satisfies VocabularySense : undefined)
+    if (entry && sense && ['meaning', 'spelling', 'example', 'comparison'].includes(card.facet)) {
+      items.push({ type: 'word', entry, sense, facet: card.facet as VocabularyReviewFacet, review: card.review, nativeCard: card })
+    }
+  }
+  return items
+})
+const browserQueue = computed<ReviewItem[]>(() => [
   ...store.dueQuestionCards.map(({ document, facet, review }) => ({ type: 'question' as const, document, facet, review })),
-  ...store.dueVocabularyCards.map(({ entry, sense, facet, review }) => ({ type: 'word' as const, entry, sense, facet, review }))
-].sort((left, right) => {
+  ...store.dueVocabularyCards.map(({ entry, sense, facet, review }) => ({ type: 'word' as const, entry, sense, facet, review })),
+])
+const allQueue = computed<ReviewItem[]>(() => (store.desktopVaultActive && !nativeReviewFailed.value ? nativeQueue.value : browserQueue.value).sort((left, right) => {
   return new Date(left.review.due).getTime() - new Date(right.review.due).getTime()
 }))
 const queue = computed(() => filterReviewItems(allQueue.value, reviewKind.value))
-const queueKindCounts = computed(() => countReviewKinds(allQueue.value))
+const queueKindCounts = computed(() => nativeReviewReady.value && nativeReviewSummary.value
+  ? {
+      all: nativeReviewSummary.value.dueCount,
+      question: nativeReviewSummary.value.dueQuestionCount,
+      error: nativeReviewSummary.value.dueErrorCount,
+      word: nativeReviewSummary.value.dueWordCount,
+    }
+  : countReviewKinds(allQueue.value))
 function reviewItemKey(item: ReviewItem) {
   return item.type === 'question' ? `question:${item.document.id}:facet:${item.facet}` : `word:${item.entry.id}:sense:${item.sense.id}:facet:${item.facet}`
 }
@@ -93,6 +156,16 @@ const remainingKindsLabel = computed(() => {
   return [counts.question ? `${counts.question} 题` : '', counts.word ? `${counts.word} 词` : ''].filter(Boolean).join(' · ') || '本轮已完成'
 })
 const reviewInventorySummary = computed(() => {
+  if (store.desktopVaultActive && !nativeReviewFailed.value) {
+    return nativeReviewSummary.value
+      ? {
+          questionMaterialCount: nativeReviewSummary.value.questionMaterialCount,
+          vocabularyMaterialCount: nativeReviewSummary.value.vocabularyMaterialCount,
+          count: nativeReviewSummary.value.scheduledCount,
+          nextDue: nativeReviewSummary.value.nextFutureDue ?? nativeReviewSummary.value.earliestDue ?? '',
+        }
+      : { questionMaterialCount: 0, vocabularyMaterialCount: 0, count: 0, nextDue: '' }
+  }
   let questionMaterialCount = 0
   let count = 0
   let nextDue = Number.POSITIVE_INFINITY
@@ -124,6 +197,99 @@ const reviewInventorySummary = computed(() => {
 const questionMaterialCount = computed(() => reviewInventorySummary.value.questionMaterialCount)
 const vocabularyMaterialCount = computed(() => reviewInventorySummary.value.vocabularyMaterialCount)
 const reviewScheduleSummary = computed(() => reviewInventorySummary.value)
+const analyticsDailyMax = computed(() => Math.max(1, ...(nativeReviewAnalytics.value?.daily14Days.map((day) => day.count) ?? [1])))
+const analyticsRatingTotal = computed(() => {
+  const analytics = nativeReviewAnalytics.value
+  return analytics ? analytics.again30Days + analytics.hard30Days + analytics.good30Days + analytics.easy30Days : 0
+})
+const analyticsMetrics = computed(() => {
+  const analytics = nativeReviewAnalytics.value
+  if (!analytics) return []
+  return [
+    { label: '今天', value: analytics.reviewedToday, suffix: '张' },
+    { label: '近 7 天', value: analytics.reviewed7Days, suffix: '张' },
+    { label: '当前连续', value: analytics.currentStreakDays, suffix: '天' },
+    { label: '30 天学习日', value: analytics.studyDays30, suffix: '天' },
+  ]
+})
+
+function updateNativeAnalyticsAfterGrade(rating: ReviewRating) {
+  const analytics = nativeReviewAnalytics.value
+  const next = analytics && applyNativeReviewGradeToAnalytics(analytics, rating)
+  if (!next) {
+    void getDesktopReviewAnalytics().then((value) => { if (value) nativeReviewAnalytics.value = value })
+    return
+  }
+  nativeReviewAnalytics.value = next
+}
+function refreshNativeReviewAnalytics() {
+  if (!store.desktopVaultActive) return
+  void getDesktopReviewAnalytics().then((value) => { if (value) nativeReviewAnalytics.value = value })
+}
+function shortReviewDate(date: string) {
+  const parsed = new Date(`${date}T00:00:00`)
+  return Number.isNaN(parsed.getTime()) ? date.slice(5) : `${parsed.getMonth() + 1}/${parsed.getDate()}`
+}
+
+async function loadNativeReviewQueue(reset = false) {
+  if (!store.desktopVaultActive || nativeReviewLoading.value || (!reset && !nativeReviewHasMore.value)) return
+  const revision = reset ? ++nativeReviewRevision : nativeReviewRevision
+  if (reset) nativeReviewFailed.value = false
+  nativeReviewLoading.value = true
+  try {
+    const asOf = new Date().toISOString()
+    const [page, summary, analytics] = await Promise.all([
+      listDesktopDueReviewCards({
+        asOf,
+        limit: 500,
+        cursor: reset ? undefined : nativeReviewCursor.value,
+        reviewKind: 'all',
+      }),
+      reset ? getDesktopReviewQueueSummary(asOf) : Promise.resolve(undefined),
+      reset ? getDesktopReviewAnalytics(asOf) : Promise.resolve(undefined),
+    ])
+    if (revision !== nativeReviewRevision) return
+    nativeReviewCards.value = reset ? page.cards : mergeNativeReviewCards(nativeReviewCards.value, page.cards)
+    nativeReviewCursor.value = page.nextCursor
+    nativeReviewHasMore.value = page.hasMore
+    if (summary) nativeReviewSummary.value = summary
+    if (analytics) nativeReviewAnalytics.value = analytics
+    nativeReviewReady.value = true
+    nativeReviewFailed.value = false
+  } catch (error) {
+    if (revision !== nativeReviewRevision) return
+    // An older development binary can still use the in-memory browser queue.
+    // Keep the page usable and expose the native error through the existing
+    // review status instead of replacing the established layout.
+    nativeReviewReady.value = false
+    nativeReviewFailed.value = true
+    reviewError.value = error instanceof Error ? error.message : '暂时无法读取本机复习队列。'
+  } finally {
+    if (revision === nativeReviewRevision) nativeReviewLoading.value = false
+  }
+}
+
+watch(
+  [() => store.vaultReady, () => store.desktopVaultActive],
+  ([ready, active]) => {
+    if (ready && active) void loadNativeReviewQueue(true)
+    else if (!active) {
+      nativeReviewRevision += 1
+      nativeReviewCards.value = []
+      nativeReviewSummary.value = undefined
+      nativeReviewAnalytics.value = undefined
+      nativeReviewCursor.value = undefined
+      nativeReviewHasMore.value = false
+      nativeReviewReady.value = false
+      nativeReviewFailed.value = false
+    }
+  },
+  { immediate: true },
+)
+
+watch(remainingCount, (remaining) => {
+  if (remaining < 50 && nativeReviewReady.value && nativeReviewHasMore.value) void loadNativeReviewQueue()
+})
 const reviewEmptyState = computed(() => {
   return resolveReviewEmptyState({
     sessionReviewed: sessionReviewed.value,
@@ -180,7 +346,7 @@ const reviewFinishedState = computed(() => {
       return {
         icon: 'sort',
         title: '内容已经存在，但还没有启用复习方向',
-        detail: '进入题目或单词，选择答案、错因、词义、拼写或例句卡；每张卡会独立安排 FSRS。',
+        detail: '进入题目或单词，选择答案、错因、词义、拼写、例句或易混卡；每张卡会独立安排 FSRS。',
       }
     case 'waiting':
       return {
@@ -207,7 +373,7 @@ const materialGroups = computed(() => {
       label: '题目与错题',
       icon: 'review',
       to: '/documents?kind=question',
-      summary: `${questionMaterialCount.value} 道题 · ${store.dueQuestionCards.length} 张到期`,
+      summary: `${questionMaterialCount.value} 道题 · ${nativeReviewSummary.value?.dueQuestionCount ?? store.dueQuestionCards.length} 张到期`,
       actions: groups.question,
     },
     {
@@ -215,7 +381,7 @@ const materialGroups = computed(() => {
       label: '结构化单词',
       icon: 'sort',
       to: '/words',
-      summary: `${vocabularyMaterialCount.value} 个词 · ${store.dueVocabularyCards.length} 张到期`,
+      summary: `${vocabularyMaterialCount.value} 个词 · ${nativeReviewSummary.value?.dueWordCount ?? store.dueVocabularyCards.length} 张到期`,
       actions: groups.word,
     },
   ]
@@ -276,6 +442,7 @@ async function selectReviewKind(kind: ReviewKind) {
   if (kind === 'all') delete query.kind
   else query.kind = kind
   await router.replace({ query })
+  if (nativeReviewReady.value && nativeReviewHasMore.value && activeQueue.value.length < 50) void loadNativeReviewQueue()
 }
 watch(() => route.query.kind, (value) => {
   const nextKind = reviewKindFromQuery(value)
@@ -290,9 +457,25 @@ watch(current, async (item) => {
   const revision = ++questionLoadRevision
   loadedQuestion.value = undefined
   reviewError.value = ''
-  if (!item || item.type !== 'question') {
+  wordLoading.value = false
+  if (!item) {
     questionLoading.value = false
-    if (item?.type === 'word' && item.facet !== 'meaning') void nextTick(() => answerInput.value?.focus({ preventScroll: true }))
+    return
+  }
+  if (item.type === 'word') {
+    questionLoading.value = false
+    if (item.entry.summaryOnly) {
+      wordLoading.value = true
+      try {
+        const entry = await store.loadVocabulary(item.entry.id)
+        if (revision === questionLoadRevision && !entry) reviewError.value = '这个单词已不存在。'
+      } catch (error) {
+        if (revision === questionLoadRevision) reviewError.value = error instanceof Error ? error.message : '暂时无法读取完整词条。'
+      } finally {
+        if (revision === questionLoadRevision) wordLoading.value = false
+      }
+    }
+    if (revision === questionLoadRevision && ['spelling', 'example'].includes(item.facet)) void nextTick(() => answerInput.value?.focus({ preventScroll: true }))
     return
   }
   if (item.document.content) { loadedQuestion.value = item.document; questionLoading.value = false; return }
@@ -357,7 +540,7 @@ watch([current, revealed], async ([item, isRevealed]) => {
 }, { flush: 'post' })
 async function rate(rating: ReviewRating) {
   const item = current.value
-  if (!item || ratingInProgress.value || questionLoading.value) return
+  if (!item || ratingInProgress.value || questionLoading.value || wordLoading.value) return
   const review = itemReviewState(item)
   if (!review) return
   const undo: ReviewUndo = item.type === 'question'
@@ -366,8 +549,22 @@ async function rate(rating: ReviewRating) {
   ratingInProgress.value = true
   reviewError.value = ''
   try {
-    if (item.type === 'question') await store.gradeDocument(item.document.id, rating, item.facet)
-    else await store.gradeVocabularySense(item.entry.id, item.sense.id, rating, item.facet)
+    const result = item.type === 'question'
+      ? await store.gradeDocument(item.document.id, rating, item.facet, item.nativeCard)
+      : await store.gradeVocabularySense(item.entry.id, item.sense.id, rating, item.facet, item.nativeCard)
+    if (result && item.nativeCard) {
+      undo.native = {
+        eventId: result.eventId,
+        expectedCardUpdatedAt: result.updatedAt,
+        card: { ...item.nativeCard, review: cloneReviewState(item.nativeCard.review) },
+      }
+      nativeReviewCards.value = nativeReviewCards.value.filter((card) => card.id !== item.nativeCard?.id)
+      if (nativeReviewSummary.value) {
+        nativeReviewSummary.value = updateNativeReviewDueSummary(nativeReviewSummary.value, item.nativeCard, -1)
+      }
+      updateNativeAnalyticsAfterGrade(rating)
+      void store.refreshDesktopReviewSummary()
+    }
     lastRating.value = undo
     sessionReviewed.value += 1
     revealed.value = false
@@ -394,12 +591,31 @@ async function undoLastRating() {
   ratingInProgress.value = true
   reviewError.value = ''
   try {
+    const nativeUndo = undo.native
+      ? { eventId: undo.native.eventId, expectedCardUpdatedAt: undo.native.expectedCardUpdatedAt }
+      : undefined
+    let result
     if (undo.type === 'question') {
       const document = await store.loadDocument(undo.documentId)
       if (!document) throw new Error('原题已不存在，无法撤销评分。')
-      store.restoreQuestionReview(undo.documentId, undo.facet, cloneReviewState(undo.previousReview))
+      result = await store.restoreQuestionReview(undo.documentId, undo.facet, cloneReviewState(undo.previousReview), nativeUndo)
     } else {
-      store.restoreVocabularySenseReview(undo.entryId, undo.senseId, undo.facet, cloneReviewState(undo.previousReview))
+      result = await store.restoreVocabularySenseReview(undo.entryId, undo.senseId, undo.facet, cloneReviewState(undo.previousReview), nativeUndo)
+    }
+    if (result && undo.native) {
+      const restored = {
+        ...undo.native.card,
+        due: result.review.due,
+        dueEpoch: Math.floor(new Date(result.review.due).getTime() / 1_000),
+        review: cloneReviewState(result.review),
+        updatedAt: result.updatedAt,
+      }
+      nativeReviewCards.value = mergeNativeReviewCards(nativeReviewCards.value, [restored])
+      if (nativeReviewSummary.value) {
+        nativeReviewSummary.value = updateNativeReviewDueSummary(nativeReviewSummary.value, restored, 1)
+      }
+      refreshNativeReviewAnalytics()
+      void store.refreshDesktopReviewSummary()
     }
     sessionReviewed.value = Math.max(0, sessionReviewed.value - 1)
     lastRating.value = undefined
@@ -449,10 +665,40 @@ function openReviewMenu(event: MouseEvent, target: EventTarget | null) {
   const trigger = target
   const width = 216
   const provenanceRows = Number(Boolean(currentQuestionSource.value.raw)) + Number(currentQuestionSource.value.kind !== 'text')
-  const height = 190 + (currentSourceAnchor.value ? 36 : 0) + provenanceRows * 36 + (canUndoLastRating.value ? 36 : 0) + (currentWordAnswerVisible.value ? 36 : 0) + (currentCanRetryAnswer.value && (revealed.value || currentHasDraftAnswer.value) ? 36 : 0)
+  const height = 190 + (currentSourceAnchor.value ? 36 : 0) + provenanceRows * 36 + (canUndoLastRating.value ? 36 : 0) + (current.value?.nativeCard ? 36 : 0) + (currentWordAnswerVisible.value ? 36 : 0) + (currentCanRetryAnswer.value && (revealed.value || currentHasDraftAnswer.value) ? 36 : 0)
   reviewMenuTrigger = trigger
   reviewMenu.value = clampMenuPosition(event.clientX, event.clientY, { menuWidth: width, menuHeight: height, margin: 12 })
   void nextTick(() => reviewMenuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus())
+}
+async function openCurrentReviewHistory() {
+  const item = current.value
+  if (!item?.nativeCard) return
+  reviewHistoryTitle.value = currentCardTitle.value
+  reviewHistoryEntries.value = []
+  reviewHistoryError.value = ''
+  reviewHistoryOpen.value = true
+  reviewHistoryLoading.value = true
+  closeReviewMenu()
+  await nextTick()
+  reviewHistoryElement.value?.focus({ preventScroll: true })
+  try {
+    reviewHistoryEntries.value = await listDesktopReviewHistory(item.nativeCard.id, 80)
+  } catch (error) {
+    reviewHistoryError.value = error instanceof Error ? error.message : '暂时无法读取评分记录。'
+  } finally {
+    reviewHistoryLoading.value = false
+  }
+}
+function closeReviewHistory() {
+  reviewHistoryOpen.value = false
+  void nextTick(() => reviewCard.value?.focus({ preventScroll: true }))
+}
+function reviewRatingLabel(rating: ReviewRating) {
+  return ratingOptions.find((item) => item.rating === rating)?.label ?? rating
+}
+function formatReviewHistoryTime(value: string) {
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('zh-CN', { hour12: false })
 }
 function openReviewMenuFromKeyboard(trigger: HTMLElement) {
   const bounds = trigger.getBoundingClientRect()
@@ -596,7 +842,10 @@ function currentReviewMarkdown() {
     if (item.facet === 'spelling') {
       return ['# 根据释义拼写', `> ${sense.partOfSpeech || '拼写卡'}`, sense.definition || '先补全这条释义'].join('\n\n')
     }
-    return ['# 补全例句', `> ${sense.definition || sense.partOfSpeech || '例句填空卡'}`, currentVocabularyCloze.value.prompt].join('\n\n')
+    if (item.facet === 'example') {
+      return ['# 补全例句', `> ${sense.definition || sense.partOfSpeech || '例句填空卡'}`, currentVocabularyCloze.value.prompt].join('\n\n')
+    }
+    return [`# ${item.entry.lemma}`, '> 复习方向：近义 / 易混', '请回想这个词义下记录的近义词或易混词。'].join('\n\n')
   }
   return [
     `# ${item.entry.lemma}`,
@@ -611,7 +860,7 @@ function currentReviewMarkdown() {
 }
 
 async function copyCurrentReviewCard() {
-  if (questionLoading.value) return
+  if (questionLoading.value || wordLoading.value) return
   const item = current.value
   const content = currentReviewMarkdown()
   if (!content) return
@@ -633,6 +882,10 @@ function isTextInput(target: EventTarget | null) {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)
 }
 function handleReviewKeydown(event: KeyboardEvent) {
+  if (reviewHistoryOpen.value) {
+    if (event.key === 'Escape') { event.preventDefault(); closeReviewHistory() }
+    return
+  }
   if (isTextInput(event.target)) return
   if (reviewMenu.value) {
     if (event.key === 'Escape') { event.preventDefault(); closeReviewMenu(true) }
@@ -644,7 +897,7 @@ function handleReviewKeydown(event: KeyboardEvent) {
     void undoLastRating()
     return
   }
-  if (!current.value || ratingInProgress.value || questionLoading.value) return
+  if (!current.value || ratingInProgress.value || questionLoading.value || wordLoading.value) return
   if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'r' && revealed.value && currentCanRetryAnswer.value) {
     event.preventDefault()
     retryCurrentAnswer()
@@ -791,6 +1044,8 @@ onBeforeUnmount(() => {
       <div ref="reviewBody" class="flex-1 min-h-0 overflow-auto px-5 py-4" tabindex="0" aria-label="复习卡正文；内容较长时可在此滚动">
         <div v-if="current.type === 'question' && questionLoading" class="center h-full text-[13px] text-fg-3" role="status" aria-live="polite">正在从本机资料库加载题目…</div>
 
+        <div v-else-if="current.type === 'word' && wordLoading" class="center h-full text-[13px] text-fg-3" role="status" aria-live="polite">正在从本机资料库加载完整词义…</div>
+
         <div v-else-if="current.type === 'question' && !questionFrontAvailable" class="stack items-center justify-center gap-3 h-full text-center">
           <span class="center w-12 h-12 rounded-lg bg-surface-2 text-[20px] font-semibold text-fg-3" aria-hidden="true">?</span>
           <b class="text-[14px] font-semibold text-fg">这张卡还没有题干</b>
@@ -840,7 +1095,7 @@ onBeforeUnmount(() => {
           <small id="question-review-answer-hint" class="text-[11px] text-fg-3">仅本次内存 · 不写回题库 · 评分仍由你决定</small>
         </form>
 
-        <div v-if="current.type === 'word'" class="stack items-center gap-2 py-6 text-center">
+        <div v-if="current.type === 'word' && !wordLoading" class="stack items-center gap-2 py-6 text-center">
           <template v-if="current.facet === 'meaning'">
             <span class="text-[12px] text-fg-3">请回想这一条词义</span>
             <b class="text-[32px] font-semibold leading-tight text-fg">{{ current.entry.lemma }}</b>
@@ -851,10 +1106,15 @@ onBeforeUnmount(() => {
             <b class="max-w-160 text-[20px] font-medium leading-snug text-fg">{{ current.sense.definition || '先补全这条释义' }}</b>
             <small class="text-[12px] text-fg-3">{{ current.sense.partOfSpeech || '拼写卡' }}</small>
           </template>
-          <template v-else>
+          <template v-else-if="current.facet === 'example'">
             <span class="text-[12px] text-fg-3">补全例句中的空白</span>
             <b class="max-w-160 text-[19px] font-medium leading-relaxed text-fg">{{ currentVocabularyCloze.prompt }}</b>
             <small class="text-[12px] text-fg-3">{{ current.sense.definition || current.sense.partOfSpeech || '例句填空卡' }}</small>
+          </template>
+          <template v-else>
+            <span class="text-[12px] text-fg-3">回想这一词义下的近义词或易混词</span>
+            <b class="text-[32px] font-semibold leading-tight text-fg">{{ current.entry.lemma }}</b>
+            <small class="max-w-160 text-[12px] leading-relaxed text-fg-3">{{ current.sense.definition || current.sense.partOfSpeech || '近义 / 易混卡' }}</small>
           </template>
 
           <form v-if="currentCanTypeAnswer && !revealed" class="stack gap-2 w-full max-w-100 mt-3 text-left" @submit.prevent="checkTypedAnswer" @contextmenu.stop>
@@ -880,7 +1140,7 @@ onBeforeUnmount(() => {
           </form>
         </div>
 
-        <div v-if="revealed && !questionLoading" ref="answerReveal" class="stack gap-3 mt-4 pt-4 border-t border-line">
+        <div v-if="revealed && !questionLoading && !wordLoading" ref="answerReveal" class="stack gap-3 mt-4 pt-4 border-t border-line">
           <template v-if="current.type === 'question'">
             <section v-if="questionDraftAnswer.trim()" class="stack gap-1.5 p-3 rounded-md bg-well border border-line" aria-labelledby="question-review-attempt-title">
               <h4 id="question-review-attempt-title" class="text-[12px] font-medium text-fg-2">我的本次作答</h4>
@@ -912,7 +1172,7 @@ onBeforeUnmount(() => {
             </div>
 
             <p class="eyebrow">{{ vocabularyReviewFacetLabels[current.facet] }} · 答案</p>
-            <h4 class="text-[19px] font-semibold leading-snug text-fg">{{ currentCanTypeAnswer ? currentExpectedWordAnswer : current.sense.definition || '尚未填写释义' }}</h4>
+            <h4 class="text-[19px] font-semibold leading-snug text-fg">{{ current.facet === 'comparison' ? current.sense.synonyms.join(' · ') || '尚未填写近义 / 易混词' : currentCanTypeAnswer ? currentExpectedWordAnswer : current.sense.definition || '尚未填写释义' }}</h4>
             <p v-if="current.sense.examples.length" class="text-[13px] leading-relaxed text-fg-2">{{ current.sense.examples.join(' · ') }}</p>
             <dl class="stack gap-1 text-[12px]">
               <div v-if="current.facet !== 'meaning' && current.sense.definition" class="row gap-2">
@@ -921,7 +1181,7 @@ onBeforeUnmount(() => {
               <div v-if="current.sense.collocations.length" class="row gap-2">
                 <dt class="shrink-0 w-20 text-fg-3">常用搭配</dt><dd class="m-0 min-w-0 text-fg-2">{{ current.sense.collocations.join(' · ') }}</dd>
               </div>
-              <div v-if="current.sense.synonyms.length" class="row gap-2">
+              <div v-if="current.sense.synonyms.length && current.facet !== 'comparison'" class="row gap-2">
                 <dt class="shrink-0 w-20 text-fg-3">近义 / 易混</dt><dd class="m-0 min-w-0 text-fg-2">{{ current.sense.synonyms.join(' · ') }}</dd>
               </div>
             </dl>
@@ -938,8 +1198,8 @@ onBeforeUnmount(() => {
           <button class="btn-default flex-1" @click="revealCurrent">暂不记录，直接揭晓</button>
           <button type="submit" form="question-review-form" class="btn-primary flex-1">对照答案<kbd class="kbd">Ctrl / ⌘ Enter</kbd></button>
         </div>
-        <button v-else-if="!revealed" class="btn-primary w-full" :disabled="questionLoading" @click="revealCurrent">
-          {{ current.type === 'word' ? '查看答案' : questionLoading ? '正在读取题目…' : current.facet === 'error' ? '先回想错因，再看复盘' : '先想一想，再看解法' }}
+        <button v-else-if="!revealed" class="btn-primary w-full" :disabled="questionLoading || wordLoading" @click="revealCurrent">
+          {{ current.type === 'word' ? wordLoading ? '正在读取词义…' : '查看答案' : questionLoading ? '正在读取题目…' : current.facet === 'error' ? '先回想错因，再看复盘' : '先想一想，再看解法' }}
         </button>
 
         <template v-else>
@@ -956,7 +1216,7 @@ onBeforeUnmount(() => {
               :key="item.rating"
               class="stack items-center justify-center gap-0.5 h-13 rounded-sm border bg-surface transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
               :class="ratingTone[item.rating]"
-              :disabled="ratingInProgress || questionLoading"
+              :disabled="ratingInProgress || questionLoading || wordLoading"
               :aria-label="`${item.shortcut}，${item.label}；下次复习 ${ratingIntervals[item.rating] || '正在估算'}`"
               @click="rate(item.rating)"
             >
@@ -971,6 +1231,14 @@ onBeforeUnmount(() => {
           <span v-if="currentCanTypeAnswer && !revealed">Enter 检查 · </span><span v-if="currentCanDraftAnswer && !revealed">Ctrl/⌘ Enter 对照 · </span>Space 翻面 · 1–4 评分 · D 稍后再看<span v-if="currentWordAnswerVisible"> · P 朗读</span><span v-if="currentCanRetryAnswer && revealed"> · R 重答</span> · Ctrl/⌘ Z 撤销 · Shift+F10 打开菜单
         </small>
       </footer>
+    </section>
+
+    <section v-else-if="nativeReviewLoading && store.desktopVaultActive && !nativeReviewReady" class="panel stack items-center justify-center gap-3 min-h-80 px-6 py-12 text-center" role="status" aria-live="polite">
+      <span class="center w-13 h-13 rounded-lg bg-accent-soft text-accent">
+        <AppIcon name="refresh" :size="24" class="animate-spin" />
+      </span>
+      <b class="text-[17px] font-semibold text-fg">正在读取本机复习队列</b>
+      <p class="max-w-120 text-[13px] leading-relaxed text-fg-2">只加载到期卡片的轻量索引；题目正文会在翻到对应卡片时再读取。</p>
     </section>
 
     <section v-else class="panel stack items-center justify-center gap-3 min-h-80 px-6 py-12 text-center">
@@ -1002,6 +1270,60 @@ onBeforeUnmount(() => {
         <template v-else>
           <RouterLink class="btn-primary" to="/library">去收集资料</RouterLink>
         </template>
+      </div>
+    </section>
+
+    <section v-if="nativeReviewAnalytics?.totalReviews" class="panel mt-4 p-4" aria-labelledby="review-rhythm-title">
+      <header class="row-between gap-4 mb-3">
+        <div class="stack gap-0.5 min-w-0">
+          <h3 id="review-rhythm-title" class="text-[14px] font-semibold text-fg">复习节奏</h3>
+          <p class="text-[12px] text-fg-3">只统计未撤销的原生评分 · 累计 {{ nativeReviewAnalytics.totalReviews }} 次</p>
+        </div>
+        <small class="shrink-0 text-[11px] text-fg-3 tabular-nums">近 365 天最长连续 {{ nativeReviewAnalytics.longestStreak365Days }} 天</small>
+      </header>
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
+        <div v-for="metric in analyticsMetrics" :key="metric.label" class="stack gap-1 p-3 rounded-md bg-surface-2 border border-line">
+          <small class="text-[11px] text-fg-3">{{ metric.label }}</small>
+          <span class="row items-baseline gap-1 tabular-nums">
+            <b class="text-[19px] font-semibold text-fg">{{ metric.value }}</b>
+            <small class="text-[11px] text-fg-3">{{ metric.suffix }}</small>
+          </span>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_15rem] gap-4">
+        <div class="stack gap-2 min-w-0">
+          <div class="row-between gap-3">
+            <small class="text-[11px] font-medium text-fg-2">最近 14 天</small>
+            <small class="text-[10px] text-fg-3">柱高表示当天完成卡数</small>
+          </div>
+          <div class="grid grid-cols-[repeat(14,minmax(0,1fr))] gap-1.5 h-18 items-end" aria-label="最近十四天复习次数">
+            <div
+              v-for="(day, dayIndex) in nativeReviewAnalytics.daily14Days"
+              :key="day.date"
+              class="stack items-center justify-end gap-1 h-full min-w-0"
+              :title="`${day.date} · ${day.count} 张`"
+            >
+              <i
+                class="block w-full max-w-5 rounded-t-sm transition-[height] duration-300"
+                :class="day.count ? 'bg-accent' : 'bg-surface-3'"
+                :style="{ height: day.count ? `${Math.max(10, Math.round((day.count / analyticsDailyMax) * 100))}%` : '2px' }"
+              />
+              <small class="h-3 text-[9px] text-fg-3 tabular-nums">{{ dayIndex % 2 === 1 || dayIndex === nativeReviewAnalytics.daily14Days.length - 1 ? shortReviewDate(day.date) : '' }}</small>
+            </div>
+          </div>
+        </div>
+        <div class="stack gap-2 lg:border-l lg:border-line lg:pl-4">
+          <div class="row-between gap-3">
+            <small class="text-[11px] font-medium text-fg-2">近 30 天评分</small>
+            <small class="text-[10px] text-fg-3 tabular-nums">{{ analyticsRatingTotal }} 次</small>
+          </div>
+          <div class="grid grid-cols-2 gap-1.5 text-[11px] tabular-nums">
+            <span class="row-between gap-2 px-2.5 py-2 rounded-sm bg-surface-2 text-danger"><span>重来</span><b>{{ nativeReviewAnalytics.again30Days }}</b></span>
+            <span class="row-between gap-2 px-2.5 py-2 rounded-sm bg-surface-2 text-warn"><span>费劲</span><b>{{ nativeReviewAnalytics.hard30Days }}</b></span>
+            <span class="row-between gap-2 px-2.5 py-2 rounded-sm bg-surface-2 text-accent"><span>刚好</span><b>{{ nativeReviewAnalytics.good30Days }}</b></span>
+            <span class="row-between gap-2 px-2.5 py-2 rounded-sm bg-surface-2 text-success"><span>轻松</span><b>{{ nativeReviewAnalytics.easy30Days }}</b></span>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -1061,11 +1383,53 @@ onBeforeUnmount(() => {
         <button v-if="current.type === 'word' && currentWordAnswerVisible" class="nav-item w-full" role="menuitem" @click="speakCurrentWord">{{ speakingEntryId === current.entry.id ? '停止朗读' : '朗读单词' }}<kbd class="kbd ml-auto">P</kbd></button>
         <button v-if="!revealed && currentHasDraftAnswer" class="nav-item w-full" role="menuitem" @click="clearCurrentAnswer">清空本次作答</button>
         <button v-if="revealed && currentCanRetryAnswer" class="nav-item w-full" role="menuitem" @click="retryCurrentAnswer">重新作答<kbd class="kbd ml-auto">R</kbd></button>
-        <button class="nav-item w-full" role="menuitem" :disabled="questionLoading || (current.type === 'question' && !questionFrontAvailable)" @click="copyCurrentReviewCard">{{ current.type === 'word' ? revealed ? '复制完整单词 Markdown' : '复制当前题面 Markdown' : revealed ? '复制当前卡片 Markdown' : '复制题目 Markdown' }}</button>
+        <button class="nav-item w-full" role="menuitem" :disabled="questionLoading || wordLoading || (current.type === 'question' && !questionFrontAvailable)" @click="copyCurrentReviewCard">{{ current.type === 'word' ? revealed ? '复制完整单词 Markdown' : '复制当前题面 Markdown' : revealed ? '复制当前卡片 Markdown' : '复制题目 Markdown' }}</button>
+        <button v-if="current.nativeCard" class="nav-item w-full" role="menuitem" @click="openCurrentReviewHistory">查看评分记录</button>
         <button v-if="canUndoLastRating" class="nav-item w-full" role="menuitem" :disabled="ratingInProgress" @click="undoLastRating">撤销上一评分<kbd class="kbd ml-auto">Ctrl / ⌘ Z</kbd></button>
         <button class="nav-item w-full" role="menuitem" @click="deferCurrent">本轮稍后再看<kbd class="kbd ml-auto">D</kbd></button>
         <button class="nav-item w-full" role="menuitem" @click="closeReviewMenu(true)">继续复习</button>
       </section>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="reviewHistoryOpen"
+        class="fixed inset-0 z-150 center px-4 bg-[var(--scrim)] backdrop-blur-[3px]"
+        @click.self="closeReviewHistory"
+        @keydown.esc.prevent="closeReviewHistory"
+      >
+        <section ref="reviewHistoryElement" class="stack w-full max-w-160 max-h-[78vh] panel shadow-lg overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="review-history-title" tabindex="-1">
+          <header class="row-between gap-4 px-5 py-4 border-b border-line">
+            <div class="stack gap-0.5 min-w-0">
+              <h3 id="review-history-title" class="text-[15px] font-semibold text-fg">评分记录</h3>
+              <p class="text-[12px] text-fg-3 truncate">{{ reviewHistoryTitle }}</p>
+            </div>
+            <button class="btn-ghost btn-sm shrink-0" aria-label="关闭评分记录" @click="closeReviewHistory">
+              <AppIcon name="close" :size="15" />
+            </button>
+          </header>
+          <div class="min-h-40 overflow-auto p-4">
+            <div v-if="reviewHistoryLoading" class="center min-h-36 text-[13px] text-fg-3" role="status">正在读取本机评分记录…</div>
+            <p v-else-if="reviewHistoryError" class="p-3 rounded-md border border-danger bg-danger-soft text-[12px] text-danger" role="alert">{{ reviewHistoryError }}</p>
+            <div v-else-if="reviewHistoryEntries.length" class="stack gap-2">
+              <article v-for="entry in reviewHistoryEntries" :key="entry.id" class="row-between gap-4 p-3 rounded-md bg-surface-2 border border-line">
+                <div class="stack gap-1 min-w-0">
+                  <span class="row gap-2">
+                    <b class="text-[13px] font-medium text-fg">{{ reviewRatingLabel(entry.rating) }}</b>
+                    <small v-if="entry.undoneAt" class="px-1.5 py-0.5 rounded-sm bg-surface-3 text-[10px] text-fg-3">已撤销</small>
+                  </span>
+                  <small class="text-[11px] text-fg-3 tabular-nums">{{ formatReviewHistoryTime(entry.reviewedAt) }}</small>
+                </div>
+                <div class="stack items-end gap-0.5 shrink-0 text-right">
+                  <small class="text-[11px] text-fg-3">下次复习</small>
+                  <span class="text-[12px] text-fg-2 tabular-nums">{{ formatReviewHistoryTime(entry.nextReview.due) }}</span>
+                </div>
+              </article>
+            </div>
+            <div v-else class="center min-h-36 text-[13px] text-fg-3">这张卡还没有评分记录。</div>
+          </div>
+        </section>
+      </div>
     </Teleport>
   </div>
 </template>

@@ -34,11 +34,13 @@ describe('word review answer boundary', () => {
     expect(vocabularyReviewHeading('run', 'meaning', false)).toBe('run')
   })
 
-  it('masks spelling and cloze answers until reveal', () => {
+  it('masks spelling and cloze answers while keeping comparison prompts readable', () => {
     expect(vocabularyReviewHeading('run', 'spelling', false)).toBe('根据释义拼写')
     expect(vocabularyReviewHeading('run', 'example', false)).toBe('补全例句')
     expect(isVocabularyAnswerVisible('spelling', false)).toBe(false)
     expect(vocabularyReviewHeading('run', 'spelling', true)).toBe('run')
+    expect(isVocabularyAnswerVisible('comparison', false)).toBe(true)
+    expect(vocabularyReviewHeading('run', 'comparison', false)).toBe('run')
   })
 
   it('normalizes harmless case, width, spacing and punctuation differences', () => {

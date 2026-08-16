@@ -39,17 +39,18 @@ describe('vocabulary batch import', () => {
     expect(merged.entries[0].senses[1].reviewEnabled).toBe(true)
   })
 
-  it('creates the selected review directions and omits invalid example cards', () => {
-    const rows = parseVocabularyImport('单词\t释义\t例句\nrun\t运行\tThe app runs.\ncompile\t编译\t').rows
-    const prepared = prepareVocabularyImport(rows, [], 'merge', ['meaning', 'spelling', 'example'], ids(), '2026-08-10T00:00:00.000Z')
+  it('creates selected directions and omits cards whose source material is missing', () => {
+    const rows = parseVocabularyImport('单词\t释义\t例句\t易混词\nrun\t运行\tThe app runs.\toperate\ncompile\t编译\t\t').rows
+    const prepared = prepareVocabularyImport(rows, [], 'merge', ['meaning', 'spelling', 'example', 'comparison'], ids(), '2026-08-10T00:00:00.000Z')
 
-    expect(prepared).toMatchObject({ newCount: 2, addedSenseCount: 2, reviewCardCount: 5, skippedReviewCardCount: 1 })
+    expect(prepared).toMatchObject({ newCount: 2, addedSenseCount: 2, reviewCardCount: 6, skippedReviewCardCount: 2 })
     expect(prepared.entries[0].senses[0]).toMatchObject({
       reviewEnabled: true,
       review: { due: '2026-08-10T00:00:00.000Z' },
       reviewFacets: {
         spelling: { due: '2026-08-10T00:00:00.000Z' },
         example: { due: '2026-08-10T00:00:00.000Z' },
+        comparison: { due: '2026-08-10T00:00:00.000Z' },
       },
     })
     expect(prepared.entries[1].senses[0].reviewFacets).toEqual({

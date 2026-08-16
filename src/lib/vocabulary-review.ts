@@ -5,12 +5,13 @@ export interface VocabularyReviewCard {
   review: ReviewState
 }
 
-export const vocabularyReviewFacetOrder: readonly VocabularyReviewFacet[] = ['meaning', 'spelling', 'example']
+export const vocabularyReviewFacetOrder: readonly VocabularyReviewFacet[] = ['meaning', 'spelling', 'example', 'comparison']
 
 export const vocabularyReviewFacetLabels: Record<VocabularyReviewFacet, string> = {
   meaning: '词义',
   spelling: '拼写',
-  example: '例句填空'
+  example: '例句填空',
+  comparison: '近义 / 易混'
 }
 
 /** Old Vault entries only have `review`; that is deliberately interpreted as

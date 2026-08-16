@@ -37,8 +37,8 @@ export interface VocabularyImportPreparation {
   /** Number of genuinely new FSRS cards created by this import. Existing
    * schedules are never counted or reset. */
   reviewCardCount: number
-  /** Selected card directions that could not be created. At present this is
-   * limited to example-cloze cards whose sense has no example sentence. */
+  /** Selected card directions that could not be created because their source
+   * material (an example or comparison term) is missing. */
   skippedReviewCardCount: number
 }
 
@@ -158,7 +158,9 @@ function selectedReviewFacets(selection: VocabularyImportReviewSelection) {
 }
 
 function canCreateReviewFacet(sense: VocabularySense, facet: VocabularyReviewFacet) {
-  return facet !== 'example' || sense.examples.some((example) => example.trim())
+  if (facet === 'example') return sense.examples.some((example) => example.trim())
+  if (facet === 'comparison') return sense.synonyms.some((synonym) => synonym.trim())
+  return true
 }
 
 /** Add only missing directions. This preserves every existing due date and

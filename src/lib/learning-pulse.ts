@@ -20,8 +20,8 @@ function isDue(review: ReviewState, now: number) {
 
 /**
  * The dashboard and Review space deliberately count the same atomic cards.
- * A vocabulary sense can produce meaning, spelling and cloze cards, while a
- * question can produce answer and error-reflection cards. Keeping that
+ * A vocabulary sense can produce meaning, spelling, cloze and comparison
+ * cards, while a question can produce answer and error-reflection cards. Keeping that
  * distinction here prevents the
  * dashboard from presenting a falsely empty review queue.
  */

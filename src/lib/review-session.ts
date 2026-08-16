@@ -31,15 +31,16 @@ export function countReviewKinds(items: readonly { type: 'question' | 'word'; fa
   return { all: question + word, question, error, word }
 }
 
-/** Meaning cards intentionally show the lemma as the prompt. Spelling and
- * cloze cards must not leak it through the header, menu or accessible name. */
+/** Meaning and comparison cards intentionally show the lemma as the prompt.
+ * Spelling and cloze cards must not leak it through the header, menu or
+ * accessible name. */
 export function isVocabularyAnswerVisible(facet: VocabularyReviewFacet, revealed: boolean) {
-  return facet === 'meaning' || revealed
+  return facet === 'meaning' || facet === 'comparison' || revealed
 }
 
 export function vocabularyReviewHeading(lemma: string, facet: VocabularyReviewFacet, revealed: boolean) {
   if (isVocabularyAnswerVisible(facet, revealed)) return lemma.trim() || '未命名单词'
-  return facet === 'spelling' ? '根据释义拼写' : '补全例句'
+  return facet === 'spelling' ? '根据释义拼写' : facet === 'example' ? '补全例句' : '回想近义 / 易混词'
 }
 
 export function normalizeVocabularyReviewAnswer(value: string) {

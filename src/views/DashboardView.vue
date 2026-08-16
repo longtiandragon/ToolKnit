@@ -87,7 +87,18 @@ const completedToday = computed(() => {
 })
 const localItemCount = computed(() => store.sources.length + store.documents.length)
 const noteCount = computed(() => store.documents.reduce((count, document) => count + (document.kind === 'note' ? 1 : 0), 0))
-const learningPulse = computed(() => calculateLearningPulse(store.documents, store.vocabulary))
+const learningPulse = computed(() => {
+  const browser = calculateLearningPulse(store.documents, store.vocabulary)
+  const native = store.desktopReviewSummary
+  if (!store.desktopVaultActive || !native) return browser
+  return {
+    ...browser,
+    dueCount: native.dueCount,
+    reviewableCount: native.scheduledCount,
+    reviewedCount: native.reviewedCount,
+    coveragePercent: native.scheduledCount ? Math.round((native.reviewedCount / native.scheduledCount) * 100) : 0,
+  }
+})
 
 /* The day's counters, minus the ones that read zero. On a quiet morning this
    strip was 「进行中 0 · 今日完成 0」 taking half the row to say nothing had
