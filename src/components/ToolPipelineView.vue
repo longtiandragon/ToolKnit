@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import type { FileReference, ToolPipelineRecipe, ToolPipelineStep, ToolPipelineErrorPolicy } from '@/types'
+import type { TextPipelineStepResult } from '@/lib/tool-platform'
 import { cleanOutputName } from '@/lib/file-tools'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
 import { createPipelineStep, getToolDefinition, listToolDefinitions, runTextPipelineAsync, suggestToolDefinitions, ToolPipelineCancelledError, validatePipelineSteps } from '@/lib/tool-platform'
@@ -32,8 +33,11 @@ const recipeTitle = ref('')
 const activeRecipeId = ref<string>()
 const recipeFormOpen = ref(false)
 const recipeFileInput = ref<HTMLInputElement>()
+const previewingIndex = ref<number>()
+const stepPreviews = ref<Record<string, Pick<TextPipelineStepResult, 'content' | 'extension' | 'skipped'>>>({})
 let cancellationRequested = false
 let readToken = 0
+let previewToken = 0
 
 const PIPELINE_RECIPE_MAX_BYTES = 256 * 1024
 
@@ -50,6 +54,40 @@ function cloneSteps(value: readonly ToolPipelineStep[]) {
 
 function stepDefinition(step: ToolPipelineStep) {
   return getToolDefinition(step.toolId)
+}
+
+function clearStepPreviews() {
+  previewToken += 1
+  stepPreviews.value = {}
+  previewingIndex.value = undefined
+}
+
+function stepPreviewText(step: ToolPipelineStep) {
+  const value = stepPreviews.value[step.id]?.content ?? ''
+  return value.length > 800 ? `${value.slice(0, 800)}\n…` : value
+}
+
+async function previewStep(index: number) {
+  if (running.value || previewingIndex.value !== undefined || !input.value.trim()) return
+  const token = ++previewToken
+  previewingIndex.value = index
+  try {
+    const result = await runTextPipelineAsync(input.value, steps.value.slice(0, index + 1), {
+      shouldCancel: () => token !== previewToken,
+    })
+    if (token !== previewToken) return
+    const step = steps.value[index]
+    const output = result.steps[result.steps.length - 1]
+    if (!step || !output) return
+    stepPreviews.value = { ...stepPreviews.value, [step.id]: { content: output.content, extension: output.extension, ...(output.skipped ? { skipped: true } : {}) } }
+    message.value = `第 ${index + 1} 步预览已更新。`
+  } catch (error) {
+    if (token === previewToken && !(error instanceof ToolPipelineCancelledError)) {
+      ui.toast('预览失败', error instanceof Error ? error.message : '无法预览这一步。', 'error')
+    }
+  } finally {
+    if (token === previewToken) previewingIndex.value = undefined
+  }
 }
 
 function addStep(toolId = selectedTool.value) {
@@ -186,6 +224,8 @@ async function chooseInputFiles(next: File[]) {
 }
 
 watch(files, (next) => { void chooseInputFiles(next) })
+watch(input, clearStepPreviews)
+watch(steps, clearStepPreviews, { deep: true })
 
 function loadStagedInput() {
   const stagedText = store.consumeIntakeText()
@@ -289,6 +329,7 @@ function removeOutput(item: FileReference) {
 
 onBeforeUnmount(() => {
   cancellationRequested = true
+  previewToken += 1
 })
 </script>
 
@@ -397,6 +438,16 @@ onBeforeUnmount(() => {
                   <option value="skip">跳过（保留）</option>
                   <option value="retry">重试 2 次</option>
                 </select>
+                <button class="btn-default btn-sm shrink-0 text-[11px]" :disabled="running || previewingIndex !== undefined || !input.trim()" @click="previewStep(index)">
+                  {{ previewingIndex === index ? '预览中…' : '预览' }}
+                </button>
+              </div>
+              <div v-if="stepPreviews[step.id]" class="ml-7 rounded-sm border border-line bg-surface-1 p-2 stack gap-1" aria-live="polite">
+                <div class="row-between gap-2 text-[11px] text-fg-3">
+                  <span>{{ stepPreviews[step.id].skipped ? '已跳过，保留上一步输出' : '步骤输出预览' }}</span>
+                  <span class="uppercase">.{{ stepPreviews[step.id].extension }}</span>
+                </div>
+                <pre class="m-0 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px] font-mono leading-relaxed text-fg-2">{{ stepPreviewText(step) || '（空输出）' }}</pre>
               </div>
             </li>
           </ol>
@@ -406,7 +457,7 @@ onBeforeUnmount(() => {
             </select>
             <button class="btn-default btn-sm shrink-0" :disabled="running || steps.length >= 12" @click="addStep()">添加</button>
           </div>
-          <p class="text-[11px] text-fg-3 leading-snug">步骤按顺序执行；输出会自动交给下一步。失败策略仅用于文本步骤。</p>
+          <p class="text-[11px] text-fg-3 leading-snug">步骤按顺序执行；可先预览任一步，再运行并导出。失败策略仅用于文本步骤。</p>
         </section>
 
         <section class="panel p-4 stack gap-3">
