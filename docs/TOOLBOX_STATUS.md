@@ -57,7 +57,7 @@
 
 - JSON、JSONPath、JSON Schema、JSON/YAML、CSV/JSON、XML、HTML 实体、SQL。
 - JSON 样例类型生成：在本地生成 TypeScript、Java、C# 或 Go 的接口/类/结构体；只根据样例推断，不执行代码、不连接网络。
-- Base64、Base32、Base58、Hex、URL 编解码；JWT 查看、SHA-256、UUID/ULID、时间戳、整数进制、正则、文本 Diff。
+- Base64、Base32、Base58、Hex、URL 编解码；JWT 查看、SHA-256、UUID/ULID、安全随机密码、时间戳、整数进制、正则、文本 Diff。
 - IPv4 CIDR、颜色转换、Cron 解释、日期计算、二维码生成/识别。
 - GZip/Deflate 与 Base64 载体互转；压缩工具只处理 UTF-8 文本，设置 2 MB 文本和 8 MB 流上限，不宣称支持 Brotli。
 

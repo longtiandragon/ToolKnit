@@ -1417,6 +1417,46 @@ export function generateUlids(count = 1, now = Date.now()) {
   return Array.from({ length: count }, () => `${encodeUlidBase32(timestamp, 10)}${encodeUlidBase32(randomBigInt(10), 16)}`).join('\n')
 }
 
+export interface RandomStringOptions {
+  length?: number
+  count?: number
+  lowercase?: boolean
+  uppercase?: boolean
+  numbers?: boolean
+  symbols?: boolean
+}
+
+const RANDOM_LOWERCASE = 'abcdefghijklmnopqrstuvwxyz'
+const RANDOM_UPPERCASE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+const RANDOM_NUMBERS = '0123456789'
+const RANDOM_SYMBOLS = '!@#$%^&*()-_=+[]{}:,.?'
+
+function randomByteBelow(max: number) {
+  const limit = 256 - (256 % max)
+  const byte = new Uint8Array(1)
+  do crypto.getRandomValues(byte)
+  while (byte[0] >= limit)
+  return byte[0] % max
+}
+
+/** Generates passwords or temporary tokens using rejection sampling so that
+ * every selected character is equally likely. The alphabet is fixed and
+ * audited rather than accepted from callers. */
+export function generateRandomStrings(options: RandomStringOptions = {}) {
+  const length = Number(options.length ?? 24)
+  const count = Number(options.count ?? 1)
+  if (!Number.isInteger(length) || length < 1 || length > 256) throw new Error('随机字符串长度需要在 1 到 256 之间。')
+  if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error('随机字符串数量需要在 1 到 100 之间。')
+  const alphabet = [
+    options.lowercase === false ? '' : RANDOM_LOWERCASE,
+    options.uppercase === false ? '' : RANDOM_UPPERCASE,
+    options.numbers === false ? '' : RANDOM_NUMBERS,
+    options.symbols === false ? '' : RANDOM_SYMBOLS,
+  ].join('')
+  if (!alphabet) throw new Error('至少保留一种字符类型。')
+  return Array.from({ length: count }, () => Array.from({ length }, () => alphabet[randomByteBelow(alphabet.length)]).join('')).join('\n')
+}
+
 function digitValue(character: string) {
   const code = character.toLowerCase().charCodeAt(0)
   return code >= 48 && code <= 57 ? code - 48 : code >= 97 && code <= 122 ? code - 87 : -1

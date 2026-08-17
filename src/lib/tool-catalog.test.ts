@@ -21,6 +21,7 @@ describe('tool catalog', () => {
     expect(searchTools('二维码')[0]?.to.query?.tool).toBe('qrcode')
     expect(searchTools('日期间隔')[0]?.to.query?.tool).toBe('datecalc')
     expect(searchTools('ulid')[0]?.id).toBe('developer-uuid')
+    expect(searchTools('random')[0]?.id).toBe('developer-uuid')
     expect(searchTools('剪贴板')[0]?.id).toBe('clipboard-history')
     expect(searchTools('任务记录')[0]?.id).toBe('job-history')
     expect(searchTools('裁剪视频')[0]?.id).toBe('media-clip')
