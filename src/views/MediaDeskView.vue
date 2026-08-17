@@ -6,6 +6,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { firstAvailableMediaOperation, isSupportedMediaPath, mediaOperationAvailable, mediaOperationUnavailableReason, mediaOperations, mediaOutputMime, routeMediaOperation, type MediaOperation } from '@/lib/media-operation'
 import { cancelDesktopMediaTranscode, getMediaEngineStatus, inspectDesktopMedia, isDesktop, listenDesktopEvent, listenWindowFileDrops, revealDesktopFile, saveOutputAs, transcodeDesktopMedia, type MediaEngineStatus, type MediaFileInfo, type MediaOutput, type MediaTranscodeProgress } from '@/lib/native'
+import { analyzeDesktopMedia, type MediaDetectionReport } from '@/lib/media-native'
 import { newId } from '@/lib/id'
 import { chooseOutputDirectory } from '@/lib/output'
 import { useWorkbenchStore } from '@/stores/workbench'
@@ -35,6 +36,9 @@ const cancelling = ref(false)
 const mediaProgress = ref(0)
 const activeRunId = ref('')
 const activeJobId = ref('')
+const detectionRunning = ref<'silence' | 'black' | null>(null)
+const detectionReport = shallowRef<MediaDetectionReport>()
+const detectionError = ref('')
 const notice = ref(desktop ? '选择一份本地媒体文件；先读取信息，再生成新输出。' : '媒体转换仅在桌面端可用。')
 const sourceMenu = ref<{ x: number; y: number } | null>(null)
 const sourceMenuElement = ref<HTMLElement>()
@@ -65,6 +69,8 @@ const sourceSummary = computed(() => {
 })
 const outputDirectory = computed(() => qaPreview ? 'F:\\Knitspace\\Outputs' : store.settings.outputDirectory)
 const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !running.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)) && (operation.value !== 'add-subtitle' || Boolean(subtitlePath.value)))
+const canAnalyzeSilence = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.audioCodec) && !running.value && !detectionRunning.value)
+const canAnalyzeBlack = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.videoCodec) && !running.value && !detectionRunning.value)
 const outputDirectoryLabel = computed(() => outputDirectory.value ? outputDirectory.value.split(/[\\/]/).filter(Boolean).at(-1) || outputDirectory.value : '尚未选择')
 
 function formatSize(value?: number) {
@@ -81,6 +87,13 @@ function formatDuration(value?: number) {
   const minutes = Math.floor((total % 3600) / 60)
   const seconds = total % 60
   return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function formatDetectionTime(value?: number) {
+  if (!Number.isFinite(value)) return '文件结尾'
+  const seconds = Math.max(0, Number(value))
+  if (seconds < 60) return `${seconds.toFixed(1)} 秒`
+  return formatDuration(seconds)
 }
 
 function trackLabel(kind: string) {
@@ -115,6 +128,8 @@ async function inspectSource(path: string) {
   if (inspecting.value || running.value) return
   inspecting.value = true
   output.value = undefined
+  detectionReport.value = undefined
+  detectionError.value = ''
   try {
     source.value = await inspectDesktopMedia(path)
     clipStart.value = '0:00'
@@ -317,7 +332,36 @@ function handleSourceMenuKeydown(event: KeyboardEvent) {
 }
 async function revealSource() { if (source.value?.path) await revealDesktopFile(source.value.path); closeSourceMenu() }
 async function reInspect() { if (!running.value && source.value?.path) await inspectSource(source.value.path); closeSourceMenu(true) }
-function clearSource() { if (running.value) return; source.value = undefined; output.value = undefined; notice.value = '已清除当前媒体。选择另一份本地文件继续。'; closeSourceMenu(true) }
+function clearSource() {
+  if (running.value || detectionRunning.value) return
+  source.value = undefined
+  output.value = undefined
+  detectionReport.value = undefined
+  detectionError.value = ''
+  notice.value = '已清除当前媒体。选择另一份本地文件继续。'
+  closeSourceMenu(true)
+}
+
+async function analyze(kind: 'silence' | 'black') {
+  if (!source.value?.path || detectionRunning.value || running.value) return
+  if (kind === 'silence' && !canAnalyzeSilence.value) return
+  if (kind === 'black' && !canAnalyzeBlack.value) return
+  detectionRunning.value = kind
+  detectionReport.value = undefined
+  detectionError.value = ''
+  notice.value = kind === 'silence' ? '正在扫描静音区间；媒体只读，不会生成输出。' : '正在扫描黑场区间；媒体只读，不会生成输出。'
+  try {
+    detectionReport.value = await analyzeDesktopMedia(source.value.path, kind)
+    notice.value = detectionReport.value.segments.length
+      ? `检测完成：发现 ${detectionReport.value.segments.length} 个${kind === 'silence' ? '静音' : '黑场'}区间。`
+      : `检测完成：没有发现满足阈值的${kind === 'silence' ? '静音' : '黑场'}区间。`
+  } catch (error) {
+    detectionError.value = error instanceof Error ? error.message : '媒体检测失败。'
+    notice.value = detectionError.value
+  } finally {
+    detectionRunning.value = null
+  }
+}
 
 function showOutputMenu(x: number, y: number, trigger: HTMLElement) {
   if (!output.value) return
@@ -536,6 +580,49 @@ onBeforeUnmount(() => {
               <AppIcon name="arrow-right" :size="14" class="shrink-0 text-fg-3" />
             </button>
             <p class="text-[11px] leading-relaxed text-fg-3">原媒体与字幕文件保持不变；外部字幕会作为新的文字轨封装进 MKV。</p>
+          </section>
+
+          <section v-if="source" class="stack gap-2 p-3 rounded-md border border-line bg-well" aria-label="媒体内容检测">
+            <header class="row-between gap-2">
+              <span class="stack gap-0.5 min-w-0">
+                <b class="text-[12px] font-medium text-fg">内容检测</b>
+                <small class="text-[11px] text-fg-3">只读分析，帮助定位剪辑和字幕空档</small>
+              </span>
+              <small class="font-mono text-[11px] text-fg-3">FFmpeg</small>
+            </header>
+            <div class="grid grid-cols-2 gap-2">
+              <button class="row gap-2 p-2 rounded-sm border border-line bg-surface text-left transition-colors duration-120 hover:not-disabled:border-line-strong disabled:opacity-45" :disabled="!canAnalyzeSilence" @click="analyze('silence')">
+                <AppIcon name="clock" :size="15" class="shrink-0 text-accent" />
+                <span class="stack gap-0.5 min-w-0">
+                  <b class="text-[11px] font-medium text-fg">{{ detectionRunning === 'silence' ? '扫描静音…' : '检测静音' }}</b>
+                  <small class="text-[10px] text-fg-3">−35 dB · 0.35 秒</small>
+                </span>
+              </button>
+              <button class="row gap-2 p-2 rounded-sm border border-line bg-surface text-left transition-colors duration-120 hover:not-disabled:border-line-strong disabled:opacity-45" :disabled="!canAnalyzeBlack" @click="analyze('black')">
+                <AppIcon name="image" :size="15" class="shrink-0 text-accent" />
+                <span class="stack gap-0.5 min-w-0">
+                  <b class="text-[11px] font-medium text-fg">{{ detectionRunning === 'black' ? '扫描黑场…' : '检测黑场' }}</b>
+                  <small class="text-[10px] text-fg-3">0.40 秒 · 10%</small>
+                </span>
+              </button>
+            </div>
+            <p v-if="detectionError" class="text-[11px] leading-relaxed text-danger" role="alert">{{ detectionError }}</p>
+            <div v-else-if="detectionReport" class="stack gap-1.5" role="status" aria-live="polite">
+              <div class="row-between gap-2 text-[11px] text-fg-3">
+                <span>{{ detectionReport.kind === 'silence' ? '静音区间' : '黑场区间' }} · {{ detectionReport.segments.length }} 段</span>
+                <span class="font-mono">{{ (detectionReport.elapsedMs / 1000).toFixed(1) }} 秒</span>
+              </div>
+              <ol v-if="detectionReport.segments.length" class="stack gap-1 max-h-36 overflow-y-auto m-0 p-0 list-none">
+                <li v-for="(segment, index) in detectionReport.segments" :key="`${segment.startSeconds}-${index}`" class="row-between gap-2 px-2 py-1 rounded-sm bg-surface font-mono text-[10px] text-fg-2">
+                  <span>#{{ index + 1 }}</span>
+                  <span>{{ formatDetectionTime(segment.startSeconds) }} → {{ formatDetectionTime(segment.endSeconds) }}</span>
+                  <span class="text-fg-3">{{ segment.durationSeconds === undefined ? '—' : `${segment.durationSeconds.toFixed(1)} 秒` }}</span>
+                </li>
+              </ol>
+              <small v-if="detectionReport.truncated" class="text-[10px] text-warn">结果超过 256 段，仅显示前 256 段。</small>
+              <small v-else class="text-[10px] text-fg-3">阈值固定用于快速定位，不等同于最终剪辑判断。</small>
+            </div>
+            <small v-else class="text-[11px] text-fg-3">选择上方检测后，结果会显示在这里；不会写入任务历史或修改源文件。</small>
           </section>
         </div>
 

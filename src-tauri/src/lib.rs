@@ -1792,6 +1792,26 @@ struct MediaOutput {
     elapsed_ms: u128,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaDetectionSegment {
+    start_seconds: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_seconds: Option<f64>,
+    closed: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaDetectionReport {
+    kind: String,
+    segments: Vec<MediaDetectionSegment>,
+    truncated: bool,
+    elapsed_ms: u128,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MediaProgress {
@@ -2043,10 +2063,9 @@ fn read_media_log<R: Read>(mut reader: R) -> String {
             Ok(0) | Err(_) => break,
             Ok(length) => {
                 let remaining = MAX_BYTES.saturating_sub(bytes.len());
-                if remaining == 0 {
-                    break;
+                if remaining > 0 {
+                    bytes.extend_from_slice(&buffer[..length.min(remaining)]);
                 }
-                bytes.extend_from_slice(&buffer[..length.min(remaining)]);
             }
         }
     }
@@ -2204,6 +2223,177 @@ async fn inspect_media_file(path: String) -> Result<MediaFileInfo, String> {
     })
     .await
     .map_err(|error| format!("媒体探测任务失败：{error}"))?
+}
+
+const MEDIA_DETECTION_MAX_SEGMENTS: usize = 256;
+const MEDIA_DETECTION_TIMEOUT: Duration = Duration::from_secs(120);
+
+fn parse_detection_number(line: &str, marker: &str) -> Option<f64> {
+    let start = line.find(marker)? + marker.len();
+    let value = line[start..]
+        .trim_start()
+        .split(|character: char| character.is_whitespace() || character == '|')
+        .next()?;
+    let number = value.trim().parse::<f64>().ok()?;
+    number.is_finite().then_some(number.max(0.0))
+}
+
+fn parse_detection_segments(
+    log: &str,
+    prefix: &str,
+    source_duration: Option<f64>,
+) -> (Vec<MediaDetectionSegment>, bool) {
+    let start_marker = format!("{prefix}_start:");
+    let end_marker = format!("{prefix}_end:");
+    let duration_marker = format!("{prefix}_duration:");
+    let mut segments = Vec::new();
+    let mut pending_start = None;
+    let mut truncated = false;
+
+    for line in log.lines() {
+        if let Some(start) = parse_detection_number(line, &start_marker) {
+            pending_start = Some(start);
+        }
+        let Some(start) = pending_start else {
+            continue;
+        };
+        let Some(end) = parse_detection_number(line, &end_marker) else {
+            continue;
+        };
+        let duration = parse_detection_number(line, &duration_marker)
+            .or_else(|| (end >= start).then_some(end - start));
+        if segments.len() < MEDIA_DETECTION_MAX_SEGMENTS {
+            segments.push(MediaDetectionSegment {
+                start_seconds: start,
+                end_seconds: Some(end.max(start)),
+                duration_seconds: duration,
+                closed: true,
+            });
+        } else {
+            truncated = true;
+        }
+        pending_start = None;
+    }
+
+    if let Some(start) = pending_start {
+        let end = source_duration.filter(|value| value.is_finite() && *value >= start);
+        let duration = end.map(|value| value - start);
+        if segments.len() < MEDIA_DETECTION_MAX_SEGMENTS {
+            segments.push(MediaDetectionSegment {
+                start_seconds: start,
+                end_seconds: end,
+                duration_seconds: duration,
+                closed: false,
+            });
+        } else {
+            truncated = true;
+        }
+    }
+
+    (segments, truncated)
+}
+
+fn run_media_detection(path: String, kind: &str) -> Result<MediaDetectionReport, String> {
+    let input = validated_media_input_path(&path)?;
+    require_media_engine()?;
+    let media_info = probe_media_file(input.clone())?;
+    let (required_track, filter, prefix, detail) = match kind {
+        "silence" => ("audio", "-af", "silence", "静音检测"),
+        "black" => ("video", "-vf", "black", "黑场检测"),
+        _ => return Err("不支持的媒体检测类型。".into()),
+    };
+    let has_required_track = match required_track {
+        "audio" => media_info.audio_codec.is_some(),
+        _ => media_info.video_codec.is_some(),
+    };
+    if !has_required_track {
+        return Err(if required_track == "audio" {
+            "当前文件没有可检测的音轨。"
+        } else {
+            "当前文件没有可检测的视频轨。"
+        }
+        .into());
+    }
+
+    let filter_value = if prefix == "silence" {
+        "silencedetect=noise=-35dB:d=0.35"
+    } else {
+        "blackdetect=d=0.40:pix_th=0.10"
+    };
+    let map = if prefix == "silence" {
+        "0:a:0"
+    } else {
+        "0:v:0"
+    };
+    let started = Instant::now();
+    let mut command = Command::new("ffmpeg");
+    command
+        .args(["-hide_banner", "-loglevel", "info", "-nostdin"])
+        .arg("-i")
+        .arg(&input)
+        .args(["-map", map, filter, filter_value, "-f", "null", "-"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("无法启动 FFmpeg 进行{detail}：{error}"))?;
+    let stderr = child.stderr.take().ok_or("无法读取 FFmpeg 检测日志。")?;
+    let stderr_reader = thread::spawn(move || read_media_log(stderr));
+    let status = loop {
+        if started.elapsed() >= MEDIA_DETECTION_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stderr_reader.join();
+            return Err(format!("{detail}超时，已停止本次只读分析。"));
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("无法检查 FFmpeg {detail}状态：{error}"))?
+        {
+            break status;
+        }
+        thread::sleep(Duration::from_millis(80));
+    };
+    let log = stderr_reader.join().unwrap_or_default();
+    if !status.success() {
+        let message = log
+            .lines()
+            .rev()
+            .take(5)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(if message.trim().is_empty() {
+            format!("FFmpeg 未能完成{detail}。")
+        } else {
+            message.chars().take(900).collect()
+        });
+    }
+
+    let (segments, truncated) = parse_detection_segments(&log, prefix, media_info.duration_seconds);
+    Ok(MediaDetectionReport {
+        kind: prefix.into(),
+        segments,
+        truncated,
+        elapsed_ms: started.elapsed().as_millis(),
+    })
+}
+
+#[tauri::command]
+async fn analyze_media_silence(path: String) -> Result<MediaDetectionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || run_media_detection(path, "silence"))
+        .await
+        .map_err(|error| format!("静音检测任务失败：{error}"))?
+}
+
+#[tauri::command]
+async fn analyze_media_black(path: String) -> Result<MediaDetectionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || run_media_detection(path, "black"))
+        .await
+        .map_err(|error| format!("黑场检测任务失败：{error}"))?
 }
 
 fn required_media_track(operation: &str) -> Option<&'static str> {
@@ -4849,6 +5039,32 @@ mod external_markdown_tests {
     }
 
     #[test]
+    fn media_detection_parser_handles_closed_and_trailing_segments() {
+        let log = "[silencedetect] silence_start: 1.250\n[silencedetect] silence_end: 2.500 | silence_duration: 1.250\n[silencedetect] silence_start: 8.000";
+        let (segments, truncated) = parse_detection_segments(log, "silence", Some(10.0));
+        assert!(!truncated);
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].start_seconds, 1.25);
+        assert_eq!(segments[0].end_seconds, Some(2.5));
+        assert_eq!(segments[0].duration_seconds, Some(1.25));
+        assert!(segments[0].closed);
+        assert_eq!(segments[1].end_seconds, Some(10.0));
+        assert_eq!(segments[1].duration_seconds, Some(2.0));
+        assert!(!segments[1].closed);
+    }
+
+    #[test]
+    fn media_detection_parser_reads_blackdetect_markers_on_one_line() {
+        let log = "[blackdetect] black_start:0 black_end:1.75 black_duration:1.75 black_ratio:0.5";
+        let (segments, truncated) = parse_detection_segments(log, "black", None);
+        assert!(!truncated);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start_seconds, 0.0);
+        assert_eq!(segments[0].end_seconds, Some(1.75));
+        assert!(segments[0].closed);
+    }
+
+    #[test]
     fn media_clip_ranges_reject_invalid_or_out_of_bounds_requests() {
         assert_eq!(
             validated_media_clip_range(Some(12.0), Some(18.0), Some(60.0)).unwrap(),
@@ -6082,6 +6298,8 @@ pub fn run() {
             cancel_private_tool_run,
             media_engine_status,
             inspect_media_file,
+            analyze_media_silence,
+            analyze_media_black,
             transcode_media_file,
             cancel_media_transcode,
             probe_transcription_engine,

@@ -84,7 +84,7 @@ export const toolCatalog: ToolCatalogItem[] = [
   imageTool('metadata', '元数据', 'EXIF', 'shield', []),
   { id: 'image-mosaic', title: '图片打码', description: '拖出区域，导出时渲染成真实马赛克', group: '图片', icon: 'mosaic', to: { path: '/visual', query: { annotation: 'mosaic' } }, keywords: ['打码', '马赛克', '遮挡', '隐私', 'pixelate'] },
   { id: 'image-doodle', title: '图片涂鸦', description: '自由画笔在图上涂色标记', group: '图片', icon: 'pen', to: { path: '/visual', query: { annotation: 'pen' } }, keywords: ['涂色', '涂鸦', '画笔', '画线', '标记', 'draw'] },
-  { id: 'media-desk', title: '音视频转换', description: '桌面端调用本机 FFmpeg，转换、提取和管理媒体轨道', group: '媒体', icon: 'play', to: { path: '/media' }, keywords: ['视频', '音频', 'mp3', 'mp4', 'm4a', 'ffmpeg', '提取音频', '移除音轨', '移除字幕', '加入字幕', '音量标准化'] },
+  { id: 'media-desk', title: '音视频转换', description: '桌面端调用本机 FFmpeg，转换、提取和管理媒体轨道', group: '媒体', icon: 'play', to: { path: '/media' }, keywords: ['视频', '音频', 'mp3', 'mp4', 'm4a', 'ffmpeg', '提取音频', '移除音轨', '移除字幕', '加入字幕', '音量标准化', '静音检测', '黑场检测'] },
   { id: 'media-clip', title: '截取音视频片段', description: '按开始与结束时间生成新的本地片段', group: '媒体', icon: 'cut', to: { path: '/media', query: { operation: 'clip' } }, keywords: ['剪辑', '裁剪视频', '截取音频', 'trim', 'clip', '录课片段'] },
   { id: 'media-speech-wav', title: '音频转语音 WAV', description: '生成适合本机转写和语音处理的 16 kHz 单声道 WAV', group: '媒体', icon: 'file-text', to: { path: '/media', query: { operation: 'transcode-wav' } }, keywords: ['wav', '16khz', '单声道', '语音预处理', '音频转码'] },
   { id: 'media-mute-video', title: '生成静音视频', description: '移除视频音轨并生成新的 H.264 MP4，原件保持不变', group: '媒体', icon: 'play', to: { path: '/media', query: { operation: 'mute-video' } }, keywords: ['视频静音', '去声音', '移除音轨', 'mute', 'silent video'] },
