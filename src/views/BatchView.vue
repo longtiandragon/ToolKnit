@@ -8,7 +8,7 @@ import type { PdfTaskOperation } from '@/lib/pdf-worker'
 import { buildRenamePreview, cleanOutputName, transformText, type TextTransformMode } from '@/lib/file-tools'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
 import { isDesktop } from '@/lib/native'
-import { optimizeDesktopPdf } from '@/lib/pdf-native'
+import { decryptDesktopPdf, optimizeDesktopPdf, protectDesktopPdf } from '@/lib/pdf-native'
 import { readDesktopOcrFont, recognizeDesktopImageBytes } from '@/lib/ocr-native'
 import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -50,6 +50,10 @@ const watermarkColor = ref('#8a8f98')
 const pageNumberStart = ref(1)
 const pageNumberPosition = ref<'bottom-center' | 'bottom-right'>('bottom-center')
 const redactTerms = ref('')
+const pdfPassword = ref('')
+const pdfAllowPrinting = ref(false)
+const pdfAllowCopying = ref(false)
+const pdfAllowModification = ref(false)
 const imageFormat = ref<'image/png' | 'image/jpeg' | 'image/webp'>('image/png')
 const pdfImageDpi = ref(150)
 const cropLeft = ref(0)
@@ -86,7 +90,7 @@ const groups: [ToolGroup, string, string, string][] = [
 ]
 
 const operationMap: Record<ToolGroup, ToolOption[]> = {
-  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本']],
+  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['protect', '密码保护 PDF'], ['decrypt', '移除 PDF 密码'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本']],
   image: [['convert', '转换图片'], ['resize', '缩放并压缩'], ['crop', '裁剪图片'], ['rotate', '旋转图片']],
   text: [['transform', '文本转换']],
   organize: [['rename-report', '命名预览'], ['dedupe-report', '哈希去重报告']]
@@ -110,6 +114,8 @@ const operationNotes: Record<string, string> = {
   'images-to-pdf': '把多张图片按顺序合成一份 PDF',
   'pdf-to-image': '把每一页渲染成图片,可选格式、分辨率与页码范围',
   compress: '桌面版调用本机 qpdf 重写对象流；浏览器使用 PDF 引擎优化结构，不改变页面内容',
+  protect: '使用本机 qpdf 生成 256 位 AES 加密副本，并按选择限制打印、复制和修改',
+  decrypt: '使用本机 qpdf 验证密码并移除 PDF 加密，原文件不会被覆盖',
   redact: '按文本匹配覆盖并栅格化页面，输出后无法恢复原文字层',
   ocr: '把扫描页面识别为本机文字，并生成可搜索的 PDF 副本',
   'extract-text': '导出 PDF 里已有的文字层,不做 OCR',
@@ -132,10 +138,12 @@ const accept = computed(() => group.value === 'pdf' && operation.value !== 'imag
       : group.value === 'text'
         ? '.txt,.md,.json,.js,.ts,.py,.java,.csv,text/*,application/json'
         : '*/*')
-const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'crop', 'watermark', 'page-number', 'rotate', 'split', 'text', 'pdf-to-image', 'compress', 'redact', 'ocr'].includes(operation.value))
+const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'crop', 'watermark', 'page-number', 'rotate', 'split', 'text', 'pdf-to-image', 'compress', 'protect', 'decrypt', 'redact', 'ocr'].includes(operation.value))
 const usesOutputName = computed(() => group.value === 'text' || group.value === 'organize' || (group.value === 'pdf' && ['merge', 'images-to-pdf'].includes(operation.value)))
 const canRun = computed(() => !running.value
   && (files.value.length > 0 || (group.value === 'text' && textInput.value.trim().length > 0))
+  && (!(group.value === 'pdf' && ['protect', 'decrypt'].includes(operation.value)) || (isDesktop() && pdfPassword.value.length > 0))
+  && (!(group.value === 'pdf' && operation.value === 'protect') || pdfPassword.value.length >= 8)
   && !(group.value === 'pdf' && operation.value === 'redact' && !redactTerms.value.trim())
   && !(group.value === 'pdf' && operation.value === 'ocr' && !isDesktop()))
 const outputHint = computed(() => {
@@ -143,6 +151,8 @@ const outputHint = computed(() => {
   if (group.value === 'pdf' && operation.value === 'split') return `将把 ${files.value.length} 份 PDF 拆成独立页面`
   if (group.value === 'pdf' && operation.value === 'redact') return '匹配到的页面会变成不可搜索的图片，并永久覆盖敏感文字'
   if (group.value === 'pdf' && operation.value === 'compress') return isDesktop() ? '使用本机 qpdf 重写对象流和压缩流；原文件不会被覆盖' : '仅重写 PDF 结构；图片型 PDF 体积可能变化不大'
+  if (group.value === 'pdf' && operation.value === 'protect') return isDesktop() ? '使用本机 qpdf 生成新的 256 位 AES 加密 PDF；密码不会写入任务历史' : 'PDF 密码保护需要 Windows 桌面版与本机 qpdf'
+  if (group.value === 'pdf' && operation.value === 'decrypt') return isDesktop() ? '使用本机 qpdf 校验密码并生成新的无密码 PDF；原文件不会被覆盖' : '移除 PDF 密码需要 Windows 桌面版与本机 qpdf'
   if (group.value === 'pdf' && operation.value === 'ocr') return isDesktop() ? '使用 Windows 本机 OCR，原文件不会上传；输出会保留页面图片并附加文字层' : 'OCR PDF 需要 Windows 桌面版与本机 OCR 语言包'
   if (group.value === 'organize') return '仅生成预览报告，不修改原文件'
   return `将为 ${Math.max(files.value.length, 1)} 个输入生成新输出`
@@ -212,6 +222,7 @@ function setGroup(next: ToolGroup) {
   rotation.value = defaultRotationFor(operation.value)
   outputName.value = defaultOutputNameFor(operation.value)
   activeRecipeId.value = undefined
+  pdfPassword.value = ''
   clearFiles()
   message.value = `已切换到${groups.find((item) => item[0] === next)?.[2] ?? ''}工具，选择输入后即可开始。`
 }
@@ -224,6 +235,7 @@ function setOperation(next: string) {
   // Extract/reorder start with "1" because they describe one selection; a
   // page-to-image export means the whole document unless a range is given.
   if (next === 'pdf-to-image' || next === 'ocr') pageRange.value = ''
+  pdfPassword.value = ''
   clearFiles()
   message.value = `已切换到「${operations.value.find((item) => item[0] === next)?.[1] ?? '新操作'}」，请重新选择输入。`
 }
@@ -249,7 +261,10 @@ function recipeParameters() {
     watermarkColor: watermarkColor.value, pageNumberStart: pageNumberStart.value,
     pageNumberPosition: pageNumberPosition.value, redactTerms: redactTerms.value, textMode: textMode.value, renamePrefix: renamePrefix.value,
     renameSuffix: renameSuffix.value, renameStart: renameStart.value, renameDigits: renameDigits.value,
-    renameSeparator: renameSeparator.value, renameKeepOriginal: renameKeepOriginal.value ? 1 : 0
+    renameSeparator: renameSeparator.value, renameKeepOriginal: renameKeepOriginal.value ? 1 : 0,
+    pdfAllowPrinting: pdfAllowPrinting.value ? 1 : 0,
+    pdfAllowCopying: pdfAllowCopying.value ? 1 : 0,
+    pdfAllowModification: pdfAllowModification.value ? 1 : 0,
   }
 }
 
@@ -274,6 +289,9 @@ function applyRecipe(recipe: ToolRecipe) {
   pageNumberStart.value = Number(params.pageNumberStart ?? pageNumberStart.value)
   pageNumberPosition.value = params.pageNumberPosition === 'bottom-right' ? 'bottom-right' : 'bottom-center'
   redactTerms.value = String(params.redactTerms ?? redactTerms.value)
+  pdfAllowPrinting.value = Number(params.pdfAllowPrinting ?? (pdfAllowPrinting.value ? 1 : 0)) === 1
+  pdfAllowCopying.value = Number(params.pdfAllowCopying ?? (pdfAllowCopying.value ? 1 : 0)) === 1
+  pdfAllowModification.value = Number(params.pdfAllowModification ?? (pdfAllowModification.value ? 1 : 0)) === 1
   const supportedTextModes: TextTransformMode[] = ['json', 'trim', 'markdown', 'dedupe-lines', 'sort-lines', 'extract-contacts', 'statistics']
   textMode.value = supportedTextModes.includes(params.textMode as TextTransformMode) ? params.textMode as TextTransformMode : textMode.value
   renamePrefix.value = String(params.renamePrefix ?? renamePrefix.value)
@@ -285,6 +303,7 @@ function applyRecipe(recipe: ToolRecipe) {
   recipeTitle.value = recipe.title
   activeRecipeId.value = recipe.id
   clearFiles()
+  pdfPassword.value = ''
   message.value = `已载入配方“${recipe.title}”。请选择本次输入文件。`
 }
 
@@ -340,6 +359,7 @@ watch(() => route.query, (query) => {
     : operationMap[requestedGroup][0][0]
   group.value = requestedGroup
   operation.value = requestedOperation
+  pdfPassword.value = ''
   rotation.value = defaultRotationFor(requestedOperation)
   outputName.value = defaultOutputNameFor(requestedOperation)
   if (requestedOperation === 'pdf-to-image' || requestedOperation === 'ocr') pageRange.value = ''
@@ -474,6 +494,33 @@ async function runPdf(onProgress?: (progress: number, detail: string) => void, o
     ? { data: await makeWatermarkPng(watermarkTextValue, watermarkColor.value), opacity: watermarkOpacity.value }
     : undefined
   throwIfCancelled()
+
+  if (operation.value === 'protect' || operation.value === 'decrypt') {
+    if (!isDesktop()) throw new Error(`${operation.value === 'protect' ? 'PDF 加密' : 'PDF 解密'}需要 Windows 桌面版与本机 qpdf。`)
+    if (!pdfPassword.value) throw new Error('请输入 PDF 密码；密码不会写入任务历史。')
+    if (operation.value === 'protect' && pdfPassword.value.length < 8) throw new Error('PDF 打开密码至少需要 8 个字符。')
+    const outputs: FileReference[] = []
+    for (let index = 0; index < inputs.length; index += 1) {
+      throwIfCancelled()
+      onProgress?.(12 + 80 * index / inputs.length, `正在用本机 qpdf 处理 ${index + 1}/${inputs.length} 份 PDF…`)
+      const secured = operation.value === 'protect'
+        ? await protectDesktopPdf(inputs[index].data, {
+          password: pdfPassword.value,
+          allowPrinting: pdfAllowPrinting.value,
+          allowCopying: pdfAllowCopying.value,
+          allowModification: pdfAllowModification.value,
+        })
+        : await decryptDesktopPdf(inputs[index].data, pdfPassword.value)
+      throwIfCancelled()
+      const suffix = operation.value === 'protect' ? 'protected' : 'decrypted'
+      const saved = await save(`${cleanOutputName(inputs[index].name)}-${suffix}.pdf`, secured, 'application/pdf')
+      outputs.push(saved)
+      onOutput?.(saved)
+      onProgress?.(12 + 80 * (index + 1) / inputs.length, `已完成 ${index + 1}/${inputs.length} 份 PDF。`)
+    }
+    pdfPassword.value = ''
+    return outputs
+  }
 
   if (operation.value === 'ocr') {
     if (!isDesktop()) throw new Error('OCR PDF 需要 Windows 桌面版。')
@@ -706,6 +753,7 @@ async function run() {
     running.value = false
     cancelling.value = false
     cancellationRequested = false
+    if (group.value === 'pdf' && ['protect', 'decrypt'].includes(operation.value)) pdfPassword.value = ''
     activeJobId.value = ''
   }
 }
@@ -964,6 +1012,20 @@ onBeforeUnmount(() => {
             <p v-if="operation === 'compress'" class="text-[12px] text-fg-3 leading-snug">
               {{ isDesktop() ? '桌面版会调用本机 qpdf：只重写对象流和压缩流，不降低图片分辨率或删除文字；未安装 qpdf 时会明确提示。' : '这是无损结构优化：不会降低图片分辨率或删除文字。图片型 PDF 若仍很大，下一步可用图片质量工具重建。' }}
             </p>
+
+            <template v-if="operation === 'protect' || operation === 'decrypt'">
+              <FieldRow :label="operation === 'protect' ? '打开密码' : '现有密码'" :hint="operation === 'protect' ? '至少 8 个字符；只在本次任务内使用' : '只在本次任务内使用，不会保存到历史'">
+                <input v-model="pdfPassword" type="password" autocomplete="new-password" minlength="8" maxlength="256" class="field w-full" :placeholder="operation === 'protect' ? '输入新的 PDF 密码' : '输入当前 PDF 密码'" />
+              </FieldRow>
+              <template v-if="operation === 'protect'">
+                <p class="eyebrow pt-1">打开后的权限</p>
+                <label class="row gap-2 text-[12px] text-fg-2"><input v-model="pdfAllowPrinting" type="checkbox" class="accent-accent" />允许打印</label>
+                <label class="row gap-2 text-[12px] text-fg-2"><input v-model="pdfAllowCopying" type="checkbox" class="accent-accent" />允许复制文字和图片</label>
+                <label class="row gap-2 text-[12px] text-fg-2"><input v-model="pdfAllowModification" type="checkbox" class="accent-accent" />允许修改、批注和页面整理</label>
+                <p class="text-[11px] text-warn leading-relaxed">PDF 权限是阅读器约束，不是 DRM；不同阅读器可能不完全执行。256 位 AES 加密与打开密码仍然有效。</p>
+              </template>
+              <p v-else class="text-[11px] text-warn leading-relaxed">只处理你有权打开和修改的文件。移除密码会使输出副本不再受原 PDF 加密保护。</p>
+            </template>
 
             <p v-if="operation === 'ocr'" class="text-[11px] text-fg-3 leading-relaxed">
               页面会先在本机渲染，再交给 Windows 已安装的 OCR 语言包识别。生成的 PDF 仍以页面图片为底，并附加可搜索文字；没有语言包时不会上传或生成远程结果。

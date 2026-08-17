@@ -5975,6 +5975,8 @@ pub fn run() {
             seven_zip_engine_status,
             engine_registry_status,
             pdf_tools::optimize_pdf_bytes,
+            pdf_tools::protect_pdf_bytes,
+            pdf_tools::decrypt_pdf_bytes,
             create_seven_zip_archive,
             list_seven_zip_archive,
             extract_seven_zip_archive,
