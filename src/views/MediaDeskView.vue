@@ -39,6 +39,7 @@ const activeJobId = ref('')
 const detectionRunning = ref<'silence' | 'black' | null>(null)
 const detectionReport = shallowRef<MediaDetectionReport>()
 const detectionError = ref('')
+const busy = computed(() => running.value || Boolean(detectionRunning.value))
 const notice = ref(desktop ? '选择一份本地媒体文件；先读取信息，再生成新输出。' : '媒体转换仅在桌面端可用。')
 const sourceMenu = ref<{ x: number; y: number } | null>(null)
 const sourceMenuElement = ref<HTMLElement>()
@@ -68,7 +69,7 @@ const sourceSummary = computed(() => {
   return parts.filter(Boolean).join(' · ') || '已读取本地文件'
 })
 const outputDirectory = computed(() => qaPreview ? 'F:\\Knitspace\\Outputs' : store.settings.outputDirectory)
-const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !running.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)) && (operation.value !== 'add-subtitle' || Boolean(subtitlePath.value)))
+const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !busy.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)) && (operation.value !== 'add-subtitle' || Boolean(subtitlePath.value)))
 const canAnalyzeSilence = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.audioCodec) && !running.value && !detectionRunning.value)
 const canAnalyzeBlack = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.videoCodec) && !running.value && !detectionRunning.value)
 const outputDirectoryLabel = computed(() => outputDirectory.value ? outputDirectory.value.split(/[\\/]/).filter(Boolean).at(-1) || outputDirectory.value : '尚未选择')
@@ -125,7 +126,7 @@ async function refreshEngine() {
 }
 
 async function inspectSource(path: string) {
-  if (inspecting.value || running.value) return
+  if (inspecting.value || busy.value) return
   inspecting.value = true
   output.value = undefined
   detectionReport.value = undefined
@@ -143,7 +144,7 @@ async function inspectSource(path: string) {
 }
 
 async function chooseSource() {
-  if (!desktop || selecting.value || running.value) return
+  if (!desktop || selecting.value || busy.value) return
   if (qaPreview) {
     source.value = { path: 'F:\\Recordings\\数据结构复习课.mp4', name: '数据结构复习课.mp4', size: 486_539_264, durationSeconds: 3_742, formatName: 'mov,mp4,m4a', audioCodec: 'aac', videoCodec: 'h264', width: 1920, height: 1080, bitRate: 3_824_000 }
     output.value = undefined
@@ -163,7 +164,7 @@ async function chooseSource() {
 }
 
 async function chooseOutput() {
-  if (!desktop || running.value) return
+  if (!desktop || busy.value) return
   if (qaPreview) {
     notice.value = 'QA 预览固定使用 Knitspace Outputs；没有写入真实设置。'
     return
@@ -177,7 +178,7 @@ async function chooseOutput() {
 }
 
 async function chooseSubtitle() {
-  if (!desktop || selecting.value || running.value) return
+  if (!desktop || selecting.value || busy.value) return
   if (qaPreview) {
     subtitlePath.value = 'F:\\Subtitles\\数据结构复习课.srt'
     notice.value = '已选择“数据结构复习课.srt”。生成时会封装为新的 MKV 字幕轨。'
@@ -199,6 +200,7 @@ async function chooseSubtitle() {
 }
 
 function selectOperation(nextOperation: MediaOperation) {
+  if (busy.value) return
   const definition = mediaOperations.find((item) => item.id === nextOperation)
   if (definition && !mediaOperationAvailable(definition, source.value)) return
   operation.value = nextOperation
@@ -218,7 +220,7 @@ function selectOperationFromSource(nextOperation: MediaOperation) {
 }
 
 function handleDroppedPaths(paths: string[]) {
-  if (running.value || inspecting.value) return
+  if (busy.value || inspecting.value) return
   const selected = paths.find(isSupportedMediaPath)
   if (!selected) {
     if (paths.length) ui.toast('没有可读取的媒体', '请拖入 MP4、MOV、MKV、MP3、WAV、M4A 等常见音视频文件。', 'warning')
@@ -307,7 +309,7 @@ function handleMediaProgress(payload: MediaTranscodeProgress) {
 }
 
 function showSourceMenu(x: number, y: number, trigger: HTMLElement) {
-  if (!source.value || running.value) return
+  if (!source.value || busy.value) return
   closeOutputMenu()
   sourceMenuTrigger = trigger
   const hasAudio = Boolean(source.value.audioCodec)
@@ -331,9 +333,9 @@ function handleSourceMenuKeydown(event: KeyboardEvent) {
   event.preventDefault(); items[next]?.focus()
 }
 async function revealSource() { if (source.value?.path) await revealDesktopFile(source.value.path); closeSourceMenu() }
-async function reInspect() { if (!running.value && source.value?.path) await inspectSource(source.value.path); closeSourceMenu(true) }
+async function reInspect() { if (!busy.value && source.value?.path) await inspectSource(source.value.path); closeSourceMenu(true) }
 function clearSource() {
-  if (running.value || detectionRunning.value) return
+  if (busy.value) return
   source.value = undefined
   output.value = undefined
   detectionReport.value = undefined
@@ -452,7 +454,7 @@ onBeforeUnmount(() => {
           <button
             v-if="!source"
             class="stack items-center justify-center gap-2 min-h-52 p-6 rounded-md border border-dashed border-line-strong bg-well text-center transition-colors duration-120 hover:not-disabled:border-accent hover:not-disabled:bg-accent-soft disabled:opacity-45 disabled:cursor-not-allowed"
-            :disabled="!desktop || selecting || running"
+            :disabled="!desktop || selecting || busy"
             @click="chooseSource"
           >
             <AppIcon name="play" :size="24" class="text-accent" />
@@ -464,13 +466,13 @@ onBeforeUnmount(() => {
           <article
             v-else
             class="stack gap-2 p-3 rounded-md border border-line bg-well"
-            :class="running ? 'cursor-wait opacity-80' : 'cursor-context-menu'"
+            :class="busy ? 'cursor-wait opacity-80' : 'cursor-context-menu'"
             tabindex="0"
             role="button"
             aria-haspopup="menu"
             :aria-expanded="Boolean(sourceMenu)"
-            :aria-disabled="running"
-            :aria-label="running ? `${source.name} 正在转换，媒体操作暂时锁定。` : `${source.name}，按右键或菜单键打开操作。`"
+            :aria-disabled="busy"
+            :aria-label="busy ? `${source.name} 正在处理，媒体操作暂时锁定。` : `${source.name}，按右键或菜单键打开操作。`"
             @click.stop
             @contextmenu="openSourceMenu"
             @keydown="handleSourceKeydown"
@@ -498,7 +500,7 @@ onBeforeUnmount(() => {
           </article>
 
           <p v-if="inspecting" class="row gap-1.5 text-[11px] text-fg-3"><AppIcon name="clock" :size="13" />正在读取编码、时长和轨道…</p>
-          <button v-else-if="source" class="btn-default btn-sm" :disabled="running" @click="chooseSource">更换文件</button>
+          <button v-else-if="source" class="btn-default btn-sm" :disabled="busy" @click="chooseSource">更换文件</button>
         </div>
       </aside>
 
@@ -519,7 +521,7 @@ onBeforeUnmount(() => {
               :class="operation === item.id
                 ? 'border-accent bg-accent-soft'
                 : 'border-line bg-well hover:not-disabled:border-line-strong hover:not-disabled:bg-surface-2'"
-              :disabled="running || !mediaOperationAvailable(item, source)"
+              :disabled="busy || !mediaOperationAvailable(item, source)"
               :aria-pressed="operation === item.id"
               :title="mediaOperationUnavailableReason(item, source) || item.detail"
               @click="selectOperation(item.id)"
@@ -571,7 +573,7 @@ onBeforeUnmount(() => {
               <b class="text-[12px] font-medium text-fg">加入字幕轨</b>
               <small class="font-mono text-[11px] text-accent">输出 MKV</small>
             </header>
-            <button class="row gap-2.5 p-2.5 rounded-md border border-line bg-well text-left transition-colors duration-120 hover:not-disabled:border-line-strong disabled:opacity-45" :disabled="running || selecting" @click="chooseSubtitle">
+            <button class="row gap-2.5 p-2.5 rounded-md border border-line bg-well text-left transition-colors duration-120 hover:not-disabled:border-line-strong disabled:opacity-45" :disabled="busy || selecting" @click="chooseSubtitle">
               <AppIcon name="file-text" :size="16" class="shrink-0 text-accent" />
               <span class="stack gap-0.5 min-w-0 flex-1">
                 <b class="text-[12px] font-medium truncate text-fg">{{ subtitleName || '选择字幕文件' }}</b>
@@ -640,7 +642,7 @@ onBeforeUnmount(() => {
         </header>
 
         <div class="flex-1 min-h-0 overflow-y-auto stack gap-2.5 p-3">
-          <button class="row gap-2.5 p-2.5 rounded-md border border-line bg-well text-left transition-colors duration-120 hover:not-disabled:border-line-strong disabled:opacity-45" :disabled="running" @click="chooseOutput">
+          <button class="row gap-2.5 p-2.5 rounded-md border border-line bg-well text-left transition-colors duration-120 hover:not-disabled:border-line-strong disabled:opacity-45" :disabled="busy" @click="chooseOutput">
             <AppIcon name="archive" :size="16" class="shrink-0 mt-0.5 text-accent" />
             <span class="stack gap-0.5 min-w-0 flex-1">
               <b class="text-[12px] font-medium truncate text-fg">{{ outputDirectoryLabel }}</b>
