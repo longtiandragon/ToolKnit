@@ -1779,6 +1779,7 @@ struct MediaTranscodeRequest {
     run_id: String,
     start_seconds: Option<f64>,
     duration_seconds: Option<f64>,
+    subtitle_path: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1860,6 +1861,8 @@ impl MediaTranscodeState {
 const SUPPORTED_MEDIA_EXTENSIONS: &[&str] = &[
     "mp4", "m4v", "mov", "mkv", "webm", "avi", "mp3", "m4a", "aac", "wav", "flac", "ogg", "opus",
 ];
+const SUPPORTED_SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt", "ass", "ssa", "sub", "smi"];
+const MAX_SUBTITLE_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MEDIA_PROGRESS_EVENT: &str = "toolknit://media-progress";
 
 fn media_engine_version() -> Option<String> {
@@ -1905,6 +1908,31 @@ fn validated_media_input_path(value: &str) -> Result<PathBuf, String> {
         return Err("仅支持常见本地音频或视频格式。".into());
     }
     Ok(path)
+}
+
+fn validated_subtitle_input_path(value: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(value);
+    if !path.is_absolute() {
+        return Err("字幕文件路径必须是本地绝对路径。".into());
+    }
+    let metadata = fs::metadata(&path).map_err(|_| "字幕文件不存在或无法读取。".to_string())?;
+    if !metadata.is_file() {
+        return Err("字幕路径不是普通文件。".into());
+    }
+    if metadata.len() > MAX_SUBTITLE_FILE_BYTES {
+        return Err("字幕文件过大，单个文件最多支持 5 MB。".into());
+    }
+    let extension = path
+        .extension()
+        .and_then(|item| item.to_str())
+        .map(|item| item.to_ascii_lowercase());
+    if !extension
+        .as_deref()
+        .is_some_and(|item| SUPPORTED_SUBTITLE_EXTENSIONS.contains(&item))
+    {
+        return Err("仅支持 SRT、VTT、ASS、SSA、SUB 或 SMI 字幕文件。".into());
+    }
+    fs::canonicalize(path).map_err(|error| format!("无法定位字幕文件：{error}"))
 }
 
 fn media_safe_stem(path: &Path) -> String {
@@ -2182,6 +2210,8 @@ fn required_media_track(operation: &str) -> Option<&'static str> {
         "extract-mp3" | "transcode-m4a" | "transcode-wav" => Some("audio"),
         "transcode-mp4" | "mute-video" | "remux-mp4" | "extract-cover" => Some("video"),
         "extract-subtitle" => Some("subtitle"),
+        "remove-audio" => Some("video"),
+        "remove-subtitles" | "add-subtitle" => Some("media"),
         "clean-metadata" => Some("media"),
         "trim-clip" | "lossless-clip" => Some("media"),
         _ => None,
@@ -2221,6 +2251,21 @@ fn transcode_media(
             .into());
         }
     }
+    let subtitle_input = if request.operation == "add-subtitle" {
+        let raw = request
+            .subtitle_path
+            .as_deref()
+            .ok_or("请选择要加入的字幕文件。")?;
+        let subtitle = validated_subtitle_input_path(raw)?;
+        let canonical_input = fs::canonicalize(&input)
+            .map_err(|error| format!("无法定位媒体文件：{error}"))?;
+        if subtitle == canonical_input {
+            return Err("字幕文件不能与输入媒体文件相同。".into());
+        }
+        Some(subtitle)
+    } else {
+        None
+    };
     let mut input_arguments = Vec::new();
     let (suffix, extension, arguments, progress_duration): (
         &str,
@@ -2306,6 +2351,54 @@ fn transcode_media(
                 "23",
                 "-movflags",
                 "+faststart",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            source_duration,
+        ),
+        "remove-audio" => (
+            "no-audio",
+            input
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("mkv")
+                .to_ascii_lowercase(),
+            [
+                "-map", "0:v?", "-map", "0:s?", "-map", "0:d?", "-map", "0:t?", "-c", "copy",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            source_duration,
+        ),
+        "remove-subtitles" => (
+            "no-subtitles",
+            input
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("mkv")
+                .to_ascii_lowercase(),
+            [
+                "-map", "0:v?", "-map", "0:a?", "-map", "0:d?", "-map", "0:t?", "-c", "copy",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            source_duration,
+        ),
+        "add-subtitle" => (
+            "subtitle-added",
+            "mkv".into(),
+            [
+                "-map",
+                "0",
+                "-map",
+                "1:0",
+                "-c",
+                "copy",
+                "-c:s",
+                "srt",
             ]
             .into_iter()
             .map(str::to_owned)
@@ -2412,7 +2505,8 @@ fn transcode_media(
         5,
         "正在启动本机 FFmpeg；媒体不会进入页面内存。",
     );
-    let mut child = Command::new("ffmpeg")
+    let mut command = Command::new("ffmpeg");
+    command
         .args([
             "-hide_banner",
             "-loglevel",
@@ -2424,7 +2518,11 @@ fn transcode_media(
         ])
         .args(input_arguments)
         .arg("-i")
-        .arg(&input)
+        .arg(&input);
+    if let Some(subtitle) = subtitle_input.as_ref() {
+        command.arg("-i").arg(subtitle);
+    }
+    let mut child = command
         .args(arguments)
         .arg("-n")
         .arg(&temporary_output)
@@ -4672,6 +4770,28 @@ mod external_markdown_tests {
     }
 
     #[test]
+    fn subtitle_input_validation_requires_a_small_supported_file() {
+        let folder = std::env::temp_dir().join(format!(
+            "knitspace-subtitle-input-{}",
+            uuid::Uuid::now_v7()
+        ));
+        fs::create_dir_all(&folder).unwrap();
+        let valid = folder.join("captions.SRT");
+        fs::write(&valid, "1\n00:00:00,000 --> 00:00:01,000\nHello\n").unwrap();
+        let canonical = validated_subtitle_input_path(&valid.to_string_lossy()).unwrap();
+        assert!(canonical.is_absolute());
+
+        let unsupported = folder.join("captions.md");
+        fs::write(&unsupported, "not subtitles").unwrap();
+        assert!(validated_subtitle_input_path(&unsupported.to_string_lossy()).is_err());
+
+        let oversized = folder.join("too-large.vtt");
+        fs::write(&oversized, vec![b'x'; (MAX_SUBTITLE_FILE_BYTES + 1) as usize]).unwrap();
+        assert!(validated_subtitle_input_path(&oversized.to_string_lossy()).is_err());
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
     fn media_progress_uses_ffmpeg_time_without_claiming_completion_early() {
         assert_eq!(media_progress_seconds("out_time_us=3000000"), Some(3.0));
         assert_eq!(media_progress_percent(3.0, Some(6.0)), Some(50));
@@ -4701,6 +4821,9 @@ mod external_markdown_tests {
         assert_eq!(required_media_track("remux-mp4"), Some("video"));
         assert_eq!(required_media_track("extract-subtitle"), Some("subtitle"));
         assert_eq!(required_media_track("extract-cover"), Some("video"));
+        assert_eq!(required_media_track("remove-audio"), Some("video"));
+        assert_eq!(required_media_track("remove-subtitles"), Some("media"));
+        assert_eq!(required_media_track("add-subtitle"), Some("media"));
         assert_eq!(required_media_track("clean-metadata"), Some("media"));
         assert_eq!(required_media_track("unsupported"), None);
     }

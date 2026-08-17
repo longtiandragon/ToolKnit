@@ -1104,7 +1104,7 @@ export async function inspectDesktopMedia(path: string) {
   if (!isDesktop()) throw new Error('媒体探测仅支持桌面模式。')
   return invoke<MediaFileInfo>('inspect_media_file', { path })
 }
-export async function transcodeDesktopMedia(request: { inputPath: string; outputDir: string; operation: 'extract-mp3' | 'transcode-m4a' | 'transcode-wav' | 'transcode-mp4' | 'mute-video' | 'trim-clip' | 'lossless-clip' | 'remux-mp4' | 'extract-subtitle' | 'extract-cover' | 'clean-metadata'; runId: string; startSeconds?: number; durationSeconds?: number }) {
+export async function transcodeDesktopMedia(request: { inputPath: string; outputDir: string; operation: 'extract-mp3' | 'transcode-m4a' | 'transcode-wav' | 'transcode-mp4' | 'mute-video' | 'remove-audio' | 'remove-subtitles' | 'add-subtitle' | 'trim-clip' | 'lossless-clip' | 'remux-mp4' | 'extract-subtitle' | 'extract-cover' | 'clean-metadata'; runId: string; startSeconds?: number; durationSeconds?: number; subtitlePath?: string }) {
   if (!isDesktop()) throw new Error('媒体转换仅支持桌面模式。')
   return invoke<MediaOutput>('transcode_media_file', { request })
 }

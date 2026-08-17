@@ -25,6 +25,7 @@ const output = shallowRef<MediaOutput>()
 const operation = ref<MediaOperation>(routeMediaOperation(route.query.operation))
 const clipStart = ref('0:00')
 const clipEnd = ref('1:00')
+const subtitlePath = ref('')
 const clipStartInput = ref<HTMLInputElement>()
 const selecting = ref(false)
 const inspecting = ref(false)
@@ -48,6 +49,7 @@ let lastProgressStoreWrite = 0
 
 const selectedOperation = computed(() => mediaOperations.find((item) => item.id === operation.value) ?? mediaOperations[0])
 const selectedOperationAvailable = computed(() => mediaOperationAvailable(selectedOperation.value, source.value))
+const subtitleName = computed(() => subtitlePath.value.split(/[\\/]/).filter(Boolean).at(-1) || '')
 const clipValidation = computed(() => validateMediaClipRange(clipStart.value, clipEnd.value, source.value?.durationSeconds))
 const clipTrackStyle = computed<Record<string, string>>(() => {
   const range = clipValidation.value.range
@@ -62,7 +64,7 @@ const sourceSummary = computed(() => {
   return parts.filter(Boolean).join(' · ') || '已读取本地文件'
 })
 const outputDirectory = computed(() => qaPreview ? 'F:\\Knitspace\\Outputs' : store.settings.outputDirectory)
-const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !running.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)))
+const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !running.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)) && (operation.value !== 'add-subtitle' || Boolean(subtitlePath.value)))
 const outputDirectoryLabel = computed(() => outputDirectory.value ? outputDirectory.value.split(/[\\/]/).filter(Boolean).at(-1) || outputDirectory.value : '尚未选择')
 
 function formatSize(value?: number) {
@@ -159,6 +161,28 @@ async function chooseOutput() {
   } catch (error) { notice.value = error instanceof Error ? error.message : '无法选择输出目录。' }
 }
 
+async function chooseSubtitle() {
+  if (!desktop || selecting.value || running.value) return
+  if (qaPreview) {
+    subtitlePath.value = 'F:\\Subtitles\\数据结构复习课.srt'
+    notice.value = '已选择“数据结构复习课.srt”。生成时会封装为新的 MKV 字幕轨。'
+    return
+  }
+  selecting.value = true
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      title: '选择要加入的字幕', multiple: false,
+      filters: [{ name: '字幕文件', extensions: ['srt', 'vtt', 'ass', 'ssa', 'sub', 'smi'] }],
+    })
+    if (typeof selected === 'string') {
+      subtitlePath.value = selected
+      notice.value = `已选择“${selected.split(/[\\/]/).filter(Boolean).at(-1) || selected}”；输出会生成新的 MKV 文件。`
+    }
+  } catch (error) { notice.value = error instanceof Error ? error.message : '无法打开字幕文件选择器。' }
+  finally { selecting.value = false }
+}
+
 function selectOperation(nextOperation: MediaOperation) {
   const definition = mediaOperations.find((item) => item.id === nextOperation)
   if (definition && !mediaOperationAvailable(definition, source.value)) return
@@ -175,6 +199,7 @@ function selectClipFromSource() {
 function selectOperationFromSource(nextOperation: MediaOperation) {
   selectOperation(nextOperation)
   closeSourceMenu(true)
+  if (nextOperation === 'add-subtitle') void chooseSubtitle()
 }
 
 function handleDroppedPaths(paths: string[]) {
@@ -193,7 +218,8 @@ async function run() {
   if (qaPreview) {
     running.value = true
     mediaProgress.value = 100
-    const extension = operation.value === 'extract-mp3' ? 'mp3' : operation.value === 'transcode-m4a' ? 'm4a' : operation.value === 'transcode-wav' ? 'wav' : operation.value === 'extract-subtitle' ? 'srt' : operation.value === 'extract-cover' ? 'jpg' : operation.value === 'clean-metadata' ? (source.value.name.split('.').at(-1) || 'mkv') : 'mp4'
+    const sourceExtension = source.value.name.split('.').at(-1) || 'mkv'
+    const extension = operation.value === 'extract-mp3' ? 'mp3' : operation.value === 'transcode-m4a' ? 'm4a' : operation.value === 'transcode-wav' ? 'wav' : operation.value === 'extract-subtitle' ? 'srt' : operation.value === 'extract-cover' ? 'jpg' : operation.value === 'add-subtitle' ? 'mkv' : ['remove-audio', 'remove-subtitles', 'clean-metadata'].includes(operation.value) ? sourceExtension : 'mp4'
     const name = `数据结构复习课-knitspace-${operation.value}.${extension}`
     output.value = { path: `F:\\Knitspace\\Outputs\\${name}`, name, size: 82_417_664, elapsedMs: 12_400 }
     notice.value = 'QA 输出已生成；预览没有运行 FFmpeg，也没有写入 Vault 或任务历史。'
@@ -212,13 +238,13 @@ async function run() {
   const task = store.addJob('media', `媒体 · ${selectedOperation.value.title}`, [source.value.name], {
     toolId: `media:${operation.value}`, route: '/media', retryable: true,
     inputs: [{ name: source.value.name, path: source.value.path, size: source.value.size }],
-    parameters: { operation: operation.value, outputDirectory: outputDirectory.value, runId, ...(clipRange ? { startSeconds: clipRange.startSeconds, durationSeconds: clipRange.durationSeconds } : {}) },
+    parameters: { operation: operation.value, outputDirectory: outputDirectory.value, runId, ...(subtitlePath.value ? { subtitlePath: subtitlePath.value } : {}), ...(clipRange ? { startSeconds: clipRange.startSeconds, durationSeconds: clipRange.durationSeconds } : {}) },
   })
   activeJobId.value = task.id
   store.updateJob(task.id, { status: 'running', progress: 5, detail: '正在启动本机 FFmpeg；媒体不会进入页面内存。' })
   notice.value = `正在处理“${source.value.name}”；可以随时停止，原文件不会被修改。`
   try {
-    const result = await transcodeDesktopMedia({ inputPath: source.value.path, outputDir: outputDirectory.value, operation: operation.value, runId, ...(clipRange ? { startSeconds: clipRange.startSeconds, durationSeconds: clipRange.durationSeconds } : {}) })
+    const result = await transcodeDesktopMedia({ inputPath: source.value.path, outputDir: outputDirectory.value, operation: operation.value, runId, ...(subtitlePath.value ? { subtitlePath: subtitlePath.value } : {}), ...(clipRange ? { startSeconds: clipRange.startSeconds, durationSeconds: clipRange.durationSeconds } : {}) })
     output.value = result
     store.updateJob(task.id, {
       status: 'succeeded', progress: 100, outputNames: [result.name],
@@ -269,7 +295,11 @@ function showSourceMenu(x: number, y: number, trigger: HTMLElement) {
   if (!source.value || running.value) return
   closeOutputMenu()
   sourceMenuTrigger = trigger
-  const quickActions = 4 + Number(Boolean(source.value.audioCodec)) * 2 + Number(Boolean(source.value.videoCodec))
+  const hasAudio = Boolean(source.value.audioCodec)
+  const hasVideo = Boolean(source.value.videoCodec)
+  const hasSubtitle = Boolean(source.value.tracks?.some((track) => track.kind === 'subtitle'))
+  const hasMedia = hasAudio || hasVideo
+  const quickActions = 1 + 3 + Number(hasAudio) * 2 + Number(hasVideo) * 3 + Number(hasSubtitle) * 2 + Number(hasMedia) * 2
   sourceMenu.value = clampMenuPosition(x, y, { menuWidth: 212, menuHeight: 35 + quickActions * 35 })
   void nextTick(() => sourceMenuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus())
 }
@@ -491,6 +521,22 @@ onBeforeUnmount(() => {
               {{ clipValidation.error || (operation === 'lossless-clip' ? '支持秒数、mm:ss 或 hh:mm:ss；使用原始轨道复制，速度快且不损失画质。' : '支持秒数、mm:ss 或 hh:mm:ss；输出会重新编码以获得稳定片段。') }}
             </p>
           </section>
+
+          <section v-if="operation === 'add-subtitle'" class="stack gap-2 p-3 rounded-md border border-accent bg-accent-soft" aria-label="加入外部字幕">
+            <header class="row-between gap-2">
+              <b class="text-[12px] font-medium text-fg">加入字幕轨</b>
+              <small class="font-mono text-[11px] text-accent">输出 MKV</small>
+            </header>
+            <button class="row gap-2.5 p-2.5 rounded-md border border-line bg-well text-left transition-colors duration-120 hover:not-disabled:border-line-strong disabled:opacity-45" :disabled="running || selecting" @click="chooseSubtitle">
+              <AppIcon name="file-text" :size="16" class="shrink-0 text-accent" />
+              <span class="stack gap-0.5 min-w-0 flex-1">
+                <b class="text-[12px] font-medium truncate text-fg">{{ subtitleName || '选择字幕文件' }}</b>
+                <small class="text-[11px] truncate text-fg-3">{{ subtitlePath || '支持 SRT、VTT、ASS、SSA、SUB、SMI，单个最多 5 MB' }}</small>
+              </span>
+              <AppIcon name="arrow-right" :size="14" class="shrink-0 text-fg-3" />
+            </button>
+            <p class="text-[11px] leading-relaxed text-fg-3">原媒体与字幕文件保持不变；外部字幕会作为新的文字轨封装进 MKV。</p>
+          </section>
         </div>
 
         <p class="row gap-2 shrink-0 px-3 py-2.5 border-t border-line text-[11px] leading-relaxed text-fg-3">
@@ -572,9 +618,12 @@ onBeforeUnmount(() => {
         <button v-if="source?.audioCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('extract-mp3')">提取音轨为 MP3</button>
         <button v-if="source?.audioCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('transcode-wav')">转为语音 WAV</button>
         <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('mute-video')">生成静音视频</button>
+        <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('remove-audio')">无损移除音轨</button>
         <button v-if="source?.tracks?.some((track) => track.kind === 'subtitle')" class="menu-item" role="menuitem" @click="selectOperationFromSource('extract-subtitle')">提取字幕为 SRT</button>
+        <button v-if="source?.tracks?.some((track) => track.kind === 'subtitle')" class="menu-item" role="menuitem" @click="selectOperationFromSource('remove-subtitles')">无损移除字幕轨</button>
         <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('extract-cover')">提取视频封面</button>
         <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('clean-metadata')">清除媒体元数据</button>
+        <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('add-subtitle')">加入外部字幕…</button>
         <button class="menu-item" role="menuitem" @click="selectClipFromSource">截取这段媒体…</button>
         <i class="menu-sep" aria-hidden="true" />
         <button class="menu-item" role="menuitem" @click="reInspect">重新读取信息</button>
