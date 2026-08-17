@@ -72,6 +72,18 @@ describe('local text compression', () => {
       expect(await decompressText(encoded, format)).toBe(source)
     }
   })
+
+  it('uses Brotli when the current WebView supports it, otherwise gives a capability error', async () => {
+    const source = 'Brotli 文本压缩：ToolKnit '.repeat(20)
+    try {
+      const encoded = await compressText(source, 'brotli')
+      expect(await decompressText(encoded, 'brotli')).toBe(source)
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toContain('Brotli')
+      expect((error as Error).message).toContain('WebView')
+    }
+  })
 })
 
 describe('hash and time utilities', () => {

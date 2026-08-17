@@ -20,7 +20,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
   { id: 'base64', icon: 'code', title: 'Base64', description: 'Unicode 文本编码与解码' },
   { id: 'base32', icon: 'code', title: 'Base32', description: 'RFC 4648 文本编码与解码' },
   { id: 'base58', icon: 'binary', title: 'Base58', description: 'Bitcoin 字符表编码与解码' },
-  { id: 'compress', icon: 'archive', title: 'GZip / Deflate', description: '文本压缩与解压' },
+  { id: 'compress', icon: 'archive', title: 'GZip / Deflate / Brotli', description: '文本压缩与解压' },
   { id: 'hex', icon: 'binary', title: 'Hex', description: 'UTF-8 文本与十六进制互转' },
   { id: 'url', icon: 'link', title: 'URL 编解码', description: '编解码并离线解析地址结构' },
   { id: 'json', icon: 'json', title: 'JSON', description: '格式化、压缩与语法检查' },
@@ -170,7 +170,7 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
     case 'compress':
       return {
         label: '压缩格式',
-        options: [{ id: 'gzip', label: 'GZip' }, { id: 'deflate', label: 'Deflate' }],
+        options: [{ id: 'gzip', label: 'GZip' }, { id: 'deflate', label: 'Deflate' }, { id: 'brotli', label: 'Brotli' }],
         value: compressionFormat.value,
         set: (id) => { compressionFormat.value = id as CompressionFormat; resetResult() },
       }
@@ -220,7 +220,7 @@ const emptyResultHint = computed(() => {
     case 'base32': return direction.value === 'encode' ? '把 UTF-8 文本转成 RFC 4648 Base32。' : '粘贴 Base32（可带或不带 = 补位）并还原 UTF-8 文本。'
     case 'base58': return direction.value === 'encode' ? '把 UTF-8 文本转成 Bitcoin Base58。' : '粘贴 Base58 字符串并还原 UTF-8 文本。'
     case 'url': return urlMode.value === 'inspect' ? '粘贴完整 URL；会离线拆分地址、查询参数和风险提示，不会访问该网站。' : urlMode.value === 'encode' ? '把文本转换为可放进 URL 参数的编码。' : '还原 URL 参数中的百分号编码。'
-    case 'compress': return direction.value === 'encode' ? '把文本压缩为 Base64 载体；内容只在本机处理。' : '粘贴压缩数据的 Base64 载体，在本机解压为 UTF-8 文本。'
+    case 'compress': return direction.value === 'encode' ? '把文本压缩为 Base64 载体；内容只在本机处理。Brotli 需要当前 WebView2 支持该格式。' : '粘贴压缩数据的 Base64 载体，在本机解压为 UTF-8 文本。Brotli 需要当前 WebView2 支持该格式。'
     case 'sql': return 'SQL 只会在本机做词法整理和缩进，不执行语句，也不会连接数据库。'
     case 'cidr': return '输入 IPv4 或 IPv6 CIDR，例如 192.168.1.25/24 或 2001:db8::1/64。'
     case 'headers': return '粘贴请求行、响应行和 Header 字段；只在本机解析，不会发送网络请求。'

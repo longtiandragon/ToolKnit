@@ -130,7 +130,7 @@ export type CsvMarkdownDirection = 'csv-to-markdown' | 'markdown-to-csv'
 export type HtmlEntityDirection = 'encode' | 'decode'
 export type JsonSchemaDirection = 'generate' | 'validate'
 export type GeneratedDataTypeLanguage = 'typescript' | 'java' | 'csharp' | 'go'
-export type CompressionFormat = 'gzip' | 'deflate'
+export type CompressionFormat = 'gzip' | 'deflate' | 'brotli'
 
 const STRUCTURED_TEXT_MAX_BYTES = 2 * 1024 * 1024
 
@@ -186,19 +186,55 @@ async function readStreamBytes(stream: ReadableStream<Uint8Array>, maxBytes: num
   return result
 }
 
+function compressionLabel(format: CompressionFormat) {
+  return format === 'gzip' ? 'GZip' : format === 'deflate' ? 'Deflate' : 'Brotli'
+}
+
+// TypeScript 5.8's DOM definitions predate Brotli's addition to Compression
+// Streams. The runtime still validates the supplied string, so cast only at
+// the browser boundary and report a clear capability error on older WebView2.
+type LegacyCompressionStreamFormat = 'gzip' | 'deflate' | 'deflate-raw'
+
+function createCompressionStream(format: CompressionFormat) {
+  if (typeof CompressionStream === 'undefined') throw new Error(`当前 WebView 不支持 ${compressionLabel(format)} 压缩。`)
+  try {
+    return new CompressionStream(format as LegacyCompressionStreamFormat)
+  } catch {
+    throw new Error(`当前 WebView 不支持 ${compressionLabel(format)} 压缩。请更新 WebView2 后重试，或使用 GZip / Deflate。`)
+  }
+}
+
+function createDecompressionStream(format: CompressionFormat) {
+  if (typeof DecompressionStream === 'undefined') throw new Error(`当前 WebView 不支持 ${compressionLabel(format)} 解压。`)
+  try {
+    return new DecompressionStream(format as LegacyCompressionStreamFormat)
+  } catch {
+    throw new Error(`当前 WebView 不支持 ${compressionLabel(format)} 解压。请更新 WebView2 后重试，或使用 GZip / Deflate。`)
+  }
+}
+
 export async function compressText(value: string, format: CompressionFormat = 'gzip') {
   assertStructuredTextSize(value)
-  if (typeof CompressionStream === 'undefined') throw new Error('当前 WebView 不支持 GZip / Deflate 压缩。')
-  const stream = new Blob([value]).stream().pipeThrough(new CompressionStream(format))
+  const stream = new Blob([value]).stream().pipeThrough(createCompressionStream(format))
   return bytesToBase64(await readStreamBytes(stream, 8 * 1024 * 1024))
 }
 
 export async function decompressText(value: string, format: CompressionFormat = 'gzip') {
   const bytes = base64ToBytes(value)
-  if (typeof DecompressionStream === 'undefined') throw new Error('当前 WebView 不支持 GZip / Deflate 解压。')
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format))
-  const result = await readStreamBytes(stream, 8 * 1024 * 1024)
-  const text = new TextDecoder('utf-8', { fatal: true }).decode(result)
+  const stream = new Blob([bytes]).stream().pipeThrough(createDecompressionStream(format))
+  let result: Uint8Array
+  try {
+    result = await readStreamBytes(stream, 8 * 1024 * 1024)
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('安全上限')) throw error
+    throw new Error(`${compressionLabel(format)} 解压失败：Base64 内容可能损坏，或压缩格式不匹配。`)
+  }
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(result)
+  } catch {
+    throw new Error(`${compressionLabel(format)} 解压完成，但结果不是有效的 UTF-8 文本。`)
+  }
   assertStructuredTextSize(text)
   return text
 }

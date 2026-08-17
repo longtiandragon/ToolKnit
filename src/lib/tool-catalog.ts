@@ -105,7 +105,7 @@ export const toolCatalog: ToolCatalogItem[] = [
   { id: 'developer-base64', title: 'Base64 编解码', description: 'Unicode 文本转换', group: '开发', icon: 'code', to: { path: '/developer-tools', query: { tool: 'base64' } }, keywords: ['base64', '编码', '解码'] },
   { id: 'developer-base32', title: 'Base32 编解码', description: 'RFC 4648 转换', group: '开发', icon: 'code', to: { path: '/developer-tools', query: { tool: 'base32' } }, keywords: ['base32', '编码', '解码'] },
   { id: 'developer-base58', title: 'Base58 编解码', description: 'Bitcoin Base58 转换', group: '开发', icon: 'binary', to: { path: '/developer-tools', query: { tool: 'base58' } }, keywords: ['base58', '编码', '解码'] },
-  { id: 'developer-compress', title: 'GZip / Deflate', description: '文本压缩与解压', group: '开发', icon: 'archive', to: { path: '/developer-tools', query: { tool: 'compress' } }, keywords: ['gzip', 'deflate', '压缩', '解压'] },
+  { id: 'developer-compress', title: 'GZip / Deflate / Brotli', description: '文本压缩与解压', group: '开发', icon: 'archive', to: { path: '/developer-tools', query: { tool: 'compress' } }, keywords: ['gzip', 'deflate', 'brotli', '压缩', '解压'] },
   { id: 'developer-url', title: 'URL 编解码', description: '处理 URL 特殊字符', group: '开发', icon: 'link', to: { path: '/developer-tools', query: { tool: 'url' } }, keywords: ['url', '百分号'] },
   { id: 'developer-json', title: 'JSON 格式化与压缩', description: 'JSON/JSONPath', group: '开发', icon: 'json', to: { path: '/developer-tools', query: { tool: 'json' } }, keywords: ['json', 'jsonpath'] },
   { id: 'developer-jwt', title: 'JWT 查看器', description: '本地读取载荷与过期时间', group: '开发', icon: 'shield', to: { path: '/developer-tools', query: { tool: 'jwt' } }, keywords: ['token', 'header', 'payload'] },
