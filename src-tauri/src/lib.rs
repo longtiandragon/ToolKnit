@@ -8,6 +8,7 @@ mod pdf_tools;
 mod photo_organizer;
 mod transcription;
 mod vault;
+mod web_fetch;
 mod windows_ocr;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -6750,6 +6751,8 @@ pub fn run() {
             seven_zip_engine_status,
             engine_registry_status,
             image_metadata::inspect_image_metadata,
+            web_fetch::fetch_web_page,
+            web_fetch::localize_web_article_images,
             photo_organizer::scan_photo_organization,
             photo_organizer::execute_photo_organization,
             photo_organizer::cancel_photo_organization,

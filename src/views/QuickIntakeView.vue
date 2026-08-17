@@ -8,7 +8,7 @@ import FileDropZone from '@/components/FileDropZone.vue'
 import { readClipboardPayload } from '@/lib/clipboard'
 import { detectIntake, intakeSummary, normalizeQuickIntakeDraft, type IntakeKind } from '@/lib/intake'
 import { stageLocalFileHandoff } from '@/lib/local-file-handoff'
-import { readDesktopInputFile } from '@/lib/native'
+import { isDesktop, readDesktopInputFile } from '@/lib/native'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { newId } from '@/lib/id'
 import { parseQuickQuestionCapture, parseQuickVocabularyCapture, type QuickVocabularyDraft } from '@/lib/quick-learning-capture'
@@ -41,6 +41,7 @@ function loadQuickDraft() {
 const text = ref(loadQuickDraft())
 const readingClipboard = ref(false)
 const articleHtml = ref('')
+const articleUrl = ref('')
 const actionMenu = ref<{ action: IntakeAction; x: number; y: number }>()
 const actionMenuElement = ref<HTMLElement>()
 let actionMenuTrigger: HTMLElement | undefined
@@ -142,7 +143,8 @@ const actions = computed<IntakeAction[]>(() => {
     { id: 'ai-summary', title: 'AI 解释代码', description: '使用摘要动作生成可确认草稿', icon: 'sparkle', to: { path: '/ai', query: { action: 'summarize' } } }
   ]
   if (kind.value === 'url') return [
-    { id: 'url', title: '解析 URL 编码', description: '查看查询参数和特殊字符', icon: 'link', to: { path: '/developer-tools', query: { tool: 'url' } }, primary: true },
+    { id: 'fetch-article', title: '抓取网页正文', description: '仅访问公开 HTTPS 页面，不执行脚本，预览后存为 Markdown', icon: 'file-text', primary: true },
+    { id: 'url', title: '解析 URL 编码', description: '查看查询参数和特殊字符', icon: 'link', to: { path: '/developer-tools', query: { tool: 'url' } } },
     { id: 'qrcode', title: '生成分享二维码', description: '生成可下载的高清 PNG', icon: 'qr-code', to: { path: '/developer-tools', query: { tool: 'qrcode' } } },
     { id: 'note', title: '保存链接笔记', description: '把链接留在本地笔记中', icon: 'book' },
     { id: 'snippet', title: '固定到剪贴板', description: '作为常用地址随时复制', icon: 'clipboard' }
@@ -167,6 +169,7 @@ function clearInput() {
   files.value = []
   text.value = ''
   articleHtml.value = ''
+  articleUrl.value = ''
   try { window.localStorage.removeItem(quickDraftKey) } catch { /* no-op */ }
 }
 
@@ -214,6 +217,16 @@ function noteTitle() {
 async function openAction(action: IntakeAction) {
   if (action.id === 'extract-article') {
     articleHtml.value = text.value
+    await nextTick()
+    document.getElementById('article-extract-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    return
+  }
+  if (action.id === 'fetch-article') {
+    if (!isDesktop()) {
+      ui.toast('请在桌面版抓取网页', '浏览器预览不会发出网络请求；仍可粘贴网页源码进行纯本地提取。', 'warning')
+      return
+    }
+    articleUrl.value = text.value.trim()
     await nextTick()
     document.getElementById('article-extract-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     return
@@ -512,7 +525,7 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <WebArticleExtractPanel v-if="articleHtml" :html="articleHtml" @close="articleHtml = ''" @saved="clearInput" />
+    <WebArticleExtractPanel v-if="articleHtml || articleUrl" :html="articleHtml || undefined" :url="articleUrl || undefined" @close="articleHtml = ''; articleUrl = ''" @saved="clearInput" />
 
     <section class="row gap-2 flex-wrap mt-4">
       <span class="row text-[12px] text-fg-3 pr-1">快速开始</span>

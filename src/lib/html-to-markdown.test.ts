@@ -80,4 +80,12 @@ describe('offline web article extraction', () => {
     expect(result.markdown).not.toContain('alert')
     expect(result.markdown).not.toContain('javascript')
   })
+
+  it('reports only safe unique article image candidates', () => {
+    const result = extractWebArticle('<article><h1>图文正文</h1><p>这是一段用于确认正文容器的文字内容，正文图片稍后可以由用户选择是否保存到本地。</p><img src="/cover.jpg" alt="封面"><img src="/cover.jpg"><img src="data:image/png;base64,AAAA"><img src="https://cdn.example.com/a(b).webp" alt="示意图"></article>')
+    expect(result.images).toEqual([
+      { source: '/cover.jpg', alt: '封面' },
+      { source: 'https://cdn.example.com/a(b).webp', alt: '示意图' },
+    ])
+  })
 })

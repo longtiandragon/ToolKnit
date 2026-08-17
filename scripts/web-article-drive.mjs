@@ -55,6 +55,14 @@ async function run() {
   }
 
   await page.goto(`${BASE}/quick`, { waitUntil: 'networkidle' })
+  await page.getByLabel('粘贴文字或代码').fill('https://example.com/article')
+  await page.getByText('识别为网页链接').waitFor()
+  check('URL input recommends restricted article fetch', await page.getByRole('button', { name: /抓取网页正文/ }).isVisible())
+  await page.getByRole('button', { name: /抓取网页正文/ }).click()
+  check('browser preview explains the desktop boundary', await page.getByText('浏览器预览不会发出网络请求').isVisible())
+  check('browser preview does not open a fake fetched result', await page.getByLabel('提取后的 Markdown').count() === 0)
+
+  await page.goto(`${BASE}/quick`, { waitUntil: 'networkidle' })
   await page.getByLabel('粘贴文字或代码').fill(SAMPLE)
   await page.getByText('识别为网页源码').waitFor()
   check('complete HTML is smart-detected', await page.getByRole('button', { name: /提取网页正文/ }).isVisible())

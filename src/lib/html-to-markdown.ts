@@ -19,6 +19,7 @@ export type WebArticleExtraction = {
   truncated: boolean
   removedBlocks: number
   sourceCharacters: number
+  images: Array<{ source: string; alt: string }>
 }
 
 type HtmlNode = { tag: string; attrs: Record<string, string>; children: HtmlNode[]; text?: string }
@@ -299,6 +300,15 @@ export function extractWebArticle(html: string): WebArticleExtraction {
   const outputTruncated = rendered.length > RICH_CLIPBOARD_MARKDOWN_LIMIT
   const markdown = rendered.slice(0, RICH_CLIPBOARD_MARKDOWN_LIMIT)
   const textLength = compactText(readable).length
+  const images: Array<{ source: string; alt: string }> = []
+  const imageSources = new Set<string>()
+  visitNodes(readable, node => {
+    if (images.length >= 20 || node.tag !== 'img') return
+    const source = safeTarget(node.attrs.src).replace(/\\([()])/g, '$1')
+    if (!source || imageSources.has(source)) return
+    imageSources.add(source)
+    images.push({ source, alt: metadataValue(node.attrs.alt ?? '').slice(0, 160) })
+  })
   const confidence: ArticleExtractionConfidence = winner
     ? winner.score >= 270 && textLength >= 500 ? 'high' : 'medium'
     : 'low'
@@ -312,6 +322,7 @@ export function extractWebArticle(html: string): WebArticleExtraction {
     truncated: sourceTruncated || parsed.nodeLimitReached || outputTruncated,
     removedBlocks: removed.count,
     sourceCharacters: html.length,
+    images,
   }
 }
 
