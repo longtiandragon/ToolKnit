@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type CompressionFormat, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
+import { calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type CompressionFormat, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type GeneratedDataTypeLanguage, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
 import { decodeQrImage, generateQrCode } from '@/lib/qr-tools'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import AppIcon from '@/components/AppIcon.vue'
@@ -9,7 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import FieldRow from '@/components/FieldRow.vue'
 import { useWorkbenchStore } from '@/stores/workbench'
 
-type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'base32' | 'base58' | 'compress' | 'hex' | 'url' | 'json' | 'json-yaml' | 'csv-json' | 'json-schema' | 'sql' | 'cidr' | 'color' | 'cron' | 'xml' | 'html-entities' | 'jwt' | 'hash' | 'uuid' | 'timestamp' | 'radix' | 'regex' | 'diff'
+type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'base32' | 'base58' | 'compress' | 'hex' | 'url' | 'json' | 'json-yaml' | 'csv-json' | 'json-schema' | 'type-gen' | 'sql' | 'cidr' | 'color' | 'cron' | 'xml' | 'html-entities' | 'jwt' | 'hash' | 'uuid' | 'timestamp' | 'radix' | 'regex' | 'diff'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,6 +27,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
   { id: 'json-yaml', icon: 'file-code', title: 'JSON ↔ YAML', description: '在 JSON 与 YAML 之间安全转换' },
   { id: 'csv-json', icon: 'table', title: 'CSV ↔ JSON', description: '转换表格数据并保留引号字段' },
   { id: 'json-schema', icon: 'json', title: 'JSON Schema', description: '从样例生成或校验数据结构' },
+  { id: 'type-gen', icon: 'code', title: '数据类型生成', description: '从 JSON 样例生成 TypeScript、Java、C# 或 Go 类型' },
   { id: 'sql', icon: 'terminal', title: 'SQL 格式化', description: '整理常见 SQL 语句的大小写与缩进' },
   { id: 'cidr', icon: 'binary', title: 'CIDR 计算', description: '计算 IPv4 子网范围和可用地址数' },
   { id: 'color', icon: 'palette', title: '颜色转换', description: 'Hex、RGB 与 HSL 互转' },
@@ -54,6 +55,8 @@ const jsonMode = ref<'pretty' | 'compact' | 'path'>('pretty')
 const jsonPath = ref('$.users[*].name')
 const entityDirection = ref<HtmlEntityDirection>('encode')
 const schemaDirection = ref<JsonSchemaDirection>('generate')
+const typeLanguage = ref<GeneratedDataTypeLanguage>('typescript')
+const typeRootName = ref('Root')
 const uuidCount = ref(5)
 const fromBase = ref(10)
 const toBase = ref(16)
@@ -96,7 +99,7 @@ const hasOutput = computed(() => processed.value)
  * amount of work that should not fire while you are still choosing.
  */
 const LIVE_TOOLS = new Set<DeveloperToolId>([
-  'base64', 'base32', 'base58', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'sql', 'cidr', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'timestamp', 'radix', 'regex', 'diff', 'datecalc',
+  'base64', 'base32', 'base58', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'type-gen', 'sql', 'cidr', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'timestamp', 'radix', 'regex', 'diff', 'datecalc',
 ])
 const isLive = computed(() => LIVE_TOOLS.has(tool.value) || (tool.value === 'qrcode' && qrMode.value === 'generate'))
 const hasInput = computed(() => {
@@ -120,11 +123,14 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
     case 'json-yaml':
     case 'csv-json':
     case 'json-schema':
+    case 'type-gen':
     case 'html-entities':
       return {
         label: '转换方向',
         options: tool.value === 'json-schema'
           ? [{ id: 'generate', label: '生成 Schema' }, { id: 'validate', label: '校验 JSON' }]
+          : tool.value === 'type-gen'
+            ? [{ id: 'typescript', label: 'TypeScript' }, { id: 'java', label: 'Java' }, { id: 'csharp', label: 'C#' }, { id: 'go', label: 'Go' }]
           : tool.value === 'json-yaml'
           ? [{ id: 'encode', label: 'JSON → YAML' }, { id: 'decode', label: 'YAML → JSON' }]
           : tool.value === 'csv-json'
@@ -132,9 +138,10 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
             : tool.value === 'html-entities'
               ? [{ id: 'encode', label: '编码' }, { id: 'decode', label: '解码' }]
             : [{ id: 'encode', label: '编码' }, { id: 'decode', label: '解码' }],
-        value: tool.value === 'json-schema' ? schemaDirection.value : tool.value === 'html-entities' ? entityDirection.value : direction.value,
+        value: tool.value === 'json-schema' ? schemaDirection.value : tool.value === 'type-gen' ? typeLanguage.value : tool.value === 'html-entities' ? entityDirection.value : direction.value,
         set: (id) => {
           if (tool.value === 'json-schema') schemaDirection.value = id as JsonSchemaDirection
+          else if (tool.value === 'type-gen') typeLanguage.value = id as GeneratedDataTypeLanguage
           else if (tool.value === 'html-entities') entityDirection.value = id as HtmlEntityDirection
           else direction.value = id as 'encode' | 'decode'
         },
@@ -186,6 +193,7 @@ const emptyResultHint = computed(() => {
     case 'json-yaml': return direction.value === 'encode' ? '粘贴 JSON，结果会转换为可读 YAML。' : '粘贴 YAML，结果会转换为严格 JSON。'
     case 'csv-json': return direction.value === 'encode' ? '首行作为字段名，把 CSV 转成对象数组。' : '粘贴对象数组，把 JSON 转成可直接保存的 CSV。'
     case 'json-schema': return schemaDirection.value === 'generate' ? '粘贴 JSON 样例，生成可编辑的 JSON Schema。' : '左侧放 JSON，下面放 Schema，结果会列出校验错误。'
+    case 'type-gen': return '粘贴 JSON 样例，输出可直接复制到项目中的类型定义；这里只根据样例推断，不连接网络。'
     case 'base32': return direction.value === 'encode' ? '把 UTF-8 文本转成 RFC 4648 Base32。' : '粘贴 Base32（可带或不带 = 补位）并还原 UTF-8 文本。'
     case 'base58': return direction.value === 'encode' ? '把 UTF-8 文本转成 Bitcoin Base58。' : '粘贴 Base58 字符串并还原 UTF-8 文本。'
     case 'compress': return direction.value === 'encode' ? '把文本压缩为 Base64 载体；内容只在本机处理。' : '粘贴压缩数据的 Base64 载体，在本机解压为 UTF-8 文本。'
@@ -251,6 +259,7 @@ async function run() {
     else if (tool.value === 'json-yaml') output.value = transformJsonYaml(input.value, direction.value === 'encode' ? 'json-to-yaml' : 'yaml-to-json')
     else if (tool.value === 'csv-json') output.value = transformCsvJson(input.value, direction.value === 'encode' ? 'csv-to-json' : 'json-to-csv')
     else if (tool.value === 'json-schema') output.value = transformJsonSchema(input.value, schemaDirection.value, secondaryInput.value)
+    else if (tool.value === 'type-gen') output.value = generateDataTypes(input.value, typeLanguage.value, typeRootName.value)
     else if (tool.value === 'sql') output.value = formatSql(input.value)
     else if (tool.value === 'cidr') output.value = JSON.stringify(calculateCidr(input.value), null, 2)
     else if (tool.value === 'color') output.value = JSON.stringify(convertColor(input.value), null, 2)
@@ -381,7 +390,7 @@ function closeResultMenuOnWindow() { closeResultMenu() }
 let liveTimer: ReturnType<typeof setTimeout> | undefined
 watch(
   [input, secondaryInput, pattern, flags, jsonCompact, jsonMode, jsonPath, direction, entityDirection, schemaDirection, compressionFormat, fromBase, toBase,
-    dateStart, dateEnd, dateAmount, dateUnit, dateMode, qrSize, qrMode, tool],
+    typeLanguage, typeRootName, dateStart, dateEnd, dateAmount, dateUnit, dateMode, qrSize, qrMode, tool],
   () => {
     clearTimeout(liveTimer)
     if (!isLive.value) return
@@ -466,6 +475,7 @@ onBeforeUnmount(() => {
               : tool === 'jwt' ? 'JWT Token'
               : tool === 'json' && jsonMode === 'path' ? 'JSON 文档'
               : tool === 'json-schema' ? (schemaDirection === 'generate' ? 'JSON 样例' : '待校验 JSON')
+              : tool === 'type-gen' ? 'JSON 样例'
               : tool === 'radix' ? '待转换整数'
                 : tool === 'json-yaml' ? (direction === 'encode' ? 'JSON 内容' : 'YAML 内容')
                   : tool === 'csv-json' ? (direction === 'encode' ? 'CSV 内容' : 'JSON 对象数组')
@@ -547,6 +557,12 @@ onBeforeUnmount(() => {
             <FieldRow label="目标进制"><input v-model.number="toBase" name="to-base" type="number" min="2" max="36" class="field w-full" /></FieldRow>
           </div>
 
+          <div v-else-if="tool === 'type-gen'" class="stack gap-3 p-3 border-b border-line">
+            <FieldRow label="根类型名称" hint="仅允许字母、数字、下划线和美元符号；非法字符会自动清理">
+              <input v-model="typeRootName" name="type-root-name" class="field w-full font-mono" maxlength="80" placeholder="Root" />
+            </FieldRow>
+          </div>
+
           <div v-else-if="tool === 'qrcode'" class="p-3 border-b border-line">
             <FieldRow label="图片尺寸" hint="生成标准 PNG，内容只在当前窗口转换">
               <template #value>{{ qrSize }} px</template>
@@ -563,7 +579,7 @@ onBeforeUnmount(() => {
               : tool === 'hex' ? '48656C6C6F 或 48 65 6C 6C 6F'
                 : tool === 'base32' ? 'JBSWY3DPEBLW64TMMQ======'
                   : tool === 'base58' ? 'StV1DL6CwTryKyV'
-                : tool === 'json' || tool === 'json-schema' || (tool === 'json-yaml' && direction === 'encode') ? '粘贴 JSON 内容…'
+                : tool === 'json' || tool === 'json-schema' || tool === 'type-gen' || (tool === 'json-yaml' && direction === 'encode') ? '粘贴 JSON 内容…'
                 : tool === 'json-yaml' ? '粘贴 YAML 内容…'
                   : tool === 'jwt' ? '粘贴 eyJ… 格式的 Token'
                     : tool === 'radix' ? '65535 或 FF_FF'
@@ -629,7 +645,7 @@ onBeforeUnmount(() => {
         </div>
 
         <textarea
-          v-else-if="hasOutput && ['base64', 'base32', 'base58', 'compress', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'sql', 'cidr', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'uuid', 'radix'].includes(tool)"
+          v-else-if="hasOutput && ['base64', 'base32', 'base58', 'compress', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'type-gen', 'sql', 'cidr', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'uuid', 'radix'].includes(tool)"
           :value="output"
           readonly
           aria-label="处理结果"

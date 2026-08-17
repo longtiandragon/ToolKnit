@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
+import { calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -198,6 +198,30 @@ describe('JSON Schema generation and validation', () => {
     const report = JSON.parse(transformJsonSchema('{"ok":true}', 'validate', '{"type":"object","required":["ok"]}'))
     expect(report).toEqual({ valid: true, errorCount: 0, errors: [] })
     expect(() => transformJsonSchema('{}', 'validate', '[]')).toThrow('必须是对象')
+  })
+})
+
+describe('JSON data type generation', () => {
+  const sample = JSON.stringify({ user_name: 'Ada', age: 36, active: true, profile: { tags: ['admin'] } })
+
+  it('generates nested TypeScript interfaces with optional-safe names', () => {
+    const output = generateDataTypes(sample, 'typescript', 'UserResponse')
+    expect(output).toContain('export interface UserResponse')
+    expect(output).toContain('user_name: string;')
+    expect(output).toContain('profile: UserResponseProfile;')
+    expect(output).toContain('tags: Array<string>;')
+  })
+
+  it('supports Java, C# and Go output without executing input', () => {
+    expect(generateDataTypes(sample, 'java', 'UserResponse')).toContain('public static final class UserResponseProfile')
+    expect(generateDataTypes(sample, 'csharp', 'UserResponse')).toContain('public sealed class UserResponse')
+    expect(generateDataTypes(sample, 'go', 'UserResponse')).toContain('type UserResponse struct')
+    expect(() => generateDataTypes('{broken}', 'typescript')).toThrow('JSON 类型生成失败')
+  })
+
+  it('keeps an alias when the JSON root is an array', () => {
+    expect(generateDataTypes('[{"id":1}]', 'typescript', 'Users')).toContain('export type Users = Array<UsersItem>;')
+    expect(generateDataTypes('[{"id":1}]', 'go', 'Users')).toContain('type Users = []UsersItem')
   })
 })
 

@@ -89,6 +89,7 @@ export type JsonYamlDirection = 'json-to-yaml' | 'yaml-to-json'
 export type CsvJsonDirection = 'csv-to-json' | 'json-to-csv'
 export type HtmlEntityDirection = 'encode' | 'decode'
 export type JsonSchemaDirection = 'generate' | 'validate'
+export type GeneratedDataTypeLanguage = 'typescript' | 'java' | 'csharp' | 'go'
 export type CompressionFormat = 'gzip' | 'deflate'
 
 const STRUCTURED_TEXT_MAX_BYTES = 2 * 1024 * 1024
@@ -886,6 +887,147 @@ export function transformJsonSchema(value: string, direction: JsonSchemaDirectio
   } catch (reason) {
     const detail = reason instanceof Error ? reason.message : '语法错误'
     throw new Error(`${direction === 'generate' ? 'JSON 样例' : 'JSON / Schema'} 解析失败：${detail}`)
+  }
+}
+
+type GeneratedSchema = Record<string, unknown>
+type GeneratedModel = { name: string; schema: GeneratedSchema; fields: Array<{ key: string; type: string }> }
+
+const GENERATED_TYPES_MAX_MODELS = 128
+const GENERATED_TYPES_MAX_DEPTH = 32
+const GENERATED_TYPES_MAX_OUTPUT_BYTES = 256 * 1024
+
+function pascalIdentifier(value: string, fallback = 'Value') {
+  const words = value
+    .replace(/[^A-Za-z0-9_$]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  const result = words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join('') || fallback
+  return /^[A-Za-z_$]/.test(result) ? result.slice(0, 80) : `${fallback}${result}`.slice(0, 80)
+}
+
+function camelIdentifier(value: string, fallback = 'value') {
+  const pascal = pascalIdentifier(value, pascalIdentifier(fallback, 'Value'))
+  const result = `${pascal.charAt(0).toLowerCase()}${pascal.slice(1)}`
+  return ['class', 'const', 'default', 'function', 'interface', 'new', 'package', 'private', 'public', 'return', 'static', 'this', 'type', 'var'].includes(result) ? `${result}_` : result
+}
+
+function generatedObject(value: unknown): GeneratedSchema | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as GeneratedSchema : undefined
+}
+
+function generatedLiteral(value: unknown) {
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  if (typeof value === 'boolean') return String(value)
+  if (value === null) return 'null'
+  return undefined
+}
+
+function generatedTypeArray(schema: GeneratedSchema) {
+  if (Array.isArray(schema.type)) return schema.type.filter((value): value is string => typeof value === 'string')
+  return typeof schema.type === 'string' ? [schema.type] : []
+}
+
+function generatedUnion(values: string[], language: GeneratedDataTypeLanguage) {
+  const unique = [...new Set(values.filter(Boolean))]
+  if (!unique.length) return language === 'go' ? 'any' : language === 'java' ? 'Object' : language === 'csharp' ? 'object' : 'unknown'
+  if (unique.length === 1) return unique[0]
+  if (language === 'go') return 'any'
+  if (language === 'java') return 'Object'
+  if (language === 'csharp') return 'object'
+  return unique.join(' | ')
+}
+
+function generatedPropertyName(key: string, language: GeneratedDataTypeLanguage) {
+  if (language === 'typescript') return /^[A-Za-z_$][\w$]*$/.test(key) ? key : JSON.stringify(key)
+  if (language === 'go') return pascalIdentifier(key)
+  return language === 'csharp' ? pascalIdentifier(key) : camelIdentifier(key)
+}
+
+function generatedPrimitive(type: string, language: GeneratedDataTypeLanguage) {
+  if (language === 'typescript') return ({ string: 'string', number: 'number', integer: 'number', boolean: 'boolean', null: 'null' } as Record<string, string>)[type] ?? 'unknown'
+  if (language === 'java') return ({ string: 'String', number: 'double', integer: 'long', boolean: 'boolean', null: 'Object' } as Record<string, string>)[type] ?? 'Object'
+  if (language === 'csharp') return ({ string: 'string', number: 'double', integer: 'long', boolean: 'bool', null: 'object' } as Record<string, string>)[type] ?? 'object'
+  return ({ string: 'string', number: 'float64', integer: 'int64', boolean: 'bool', null: 'any' } as Record<string, string>)[type] ?? 'any'
+}
+
+function generatedSchemaType(schema: GeneratedSchema, language: GeneratedDataTypeLanguage, preferredName: string, state: { models: GeneratedModel[]; names: Set<string>; depth: number }): string {
+  if (state.depth > GENERATED_TYPES_MAX_DEPTH) throw new Error(`JSON 嵌套超过 ${GENERATED_TYPES_MAX_DEPTH} 层，无法生成类型。`)
+  const enumValues = Array.isArray(schema.enum) ? schema.enum.map(generatedLiteral).filter((value): value is string => Boolean(value)) : []
+  if (enumValues.length && language === 'typescript') return generatedUnion(enumValues, language)
+  if (Array.isArray(schema.anyOf)) return generatedUnion(schema.anyOf.map((candidate) => generatedObject(candidate) ? generatedSchemaType(generatedObject(candidate)!, language, preferredName, { ...state, depth: state.depth + 1 }) : '').filter(Boolean), language)
+  const types = generatedTypeArray(schema)
+  if (types.length > 1) return generatedUnion(types.map((type) => generatedPrimitive(type, language)), language)
+  const type = types[0]
+  if (type === 'object' || schema.properties) {
+    const base = pascalIdentifier(preferredName)
+    let name = base
+    let suffix = 2
+    while (state.names.has(name)) name = `${base}${suffix++}`
+    state.names.add(name)
+    const model: GeneratedModel = { name, schema, fields: [] }
+    state.models.push(model)
+    const properties = generatedObject(schema.properties) ?? {}
+    const required = new Set(Array.isArray(schema.required) ? schema.required.filter((key): key is string => typeof key === 'string') : [])
+    for (const [key, child] of Object.entries(properties)) {
+      const childSchema = generatedObject(child)
+      const childType = childSchema
+        ? generatedSchemaType(childSchema, language, `${name}${pascalIdentifier(key)}`, { ...state, depth: state.depth + 1 })
+        : generatedUnion([], language)
+      model.fields.push({ key: `${required.has(key) ? '' : '?'}${key}`, type: childType })
+    }
+    return name
+  }
+  if (type === 'array' || schema.items) {
+    const items = generatedObject(schema.items)
+    const itemType = items ? generatedSchemaType(items, language, `${preferredName}Item`, { ...state, depth: state.depth + 1 }) : generatedUnion([], language)
+    if (language === 'typescript') return `Array<${itemType}>`
+    if (language === 'java' || language === 'csharp') return `List<${itemType}>`
+    return `[]${itemType}`
+  }
+  return generatedPrimitive(type ?? '', language)
+}
+
+function renderGeneratedTypes(models: GeneratedModel[], rootType: string, rootName: string, language: GeneratedDataTypeLanguage) {
+  if (language === 'typescript') {
+    const declarations = models.map((model) => `export interface ${model.name} {\n${model.fields.map((field) => `  ${generatedPropertyName(field.key.startsWith('?') ? field.key.slice(1) : field.key, language)}${field.key.startsWith('?') ? '?' : ''}: ${field.type};`).join('\n')}\n}`).join('\n\n')
+    return `${declarations}${declarations && rootType !== rootName ? '\n\n' : ''}export type ${rootName} = ${rootType};`.trim()
+  }
+  if (language === 'java') {
+    const render = (model: GeneratedModel, indent = '') => `${indent}public static final class ${model.name} {\n${model.fields.map((field) => `${indent}  public ${field.type} ${generatedPropertyName(field.key.startsWith('?') ? field.key.slice(1) : field.key, language)};`).join('\n')}\n${indent}}`
+    const fieldName = (field: { key: string }) => generatedPropertyName(field.key.startsWith('?') ? field.key.slice(1) : field.key, language)
+    const rootModel = models[0]?.name === rootName ? models[0] : undefined
+    return `import java.util.List;\n\npublic final class ${rootName} {\n${rootModel?.fields.map((field) => `  public ${field.type} ${fieldName(field)};`).join('\n') ?? `  public ${rootType} value;`}\n${(rootModel ? models.slice(1) : models).map((model) => `\n  ${render(model, '  ').replace(/^  /gm, '  ')}`).join('')}\n}`
+  }
+  if (language === 'csharp') {
+    const render = (model: GeneratedModel, indent = '') => `${indent}public sealed class ${model.name}\n${indent}{\n${model.fields.map((field) => `${indent}    public ${field.type} ${generatedPropertyName(field.key.startsWith('?') ? field.key.slice(1) : field.key, language)} { get; set; }`).join('\n')}\n${indent}}`
+    const fieldName = (field: { key: string }) => generatedPropertyName(field.key.startsWith('?') ? field.key.slice(1) : field.key, language)
+    const rootModel = models[0]?.name === rootName ? models[0] : undefined
+    return `using System.Collections.Generic;\n\npublic sealed class ${rootName}\n{\n${rootModel?.fields.map((field) => `    public ${field.type} ${fieldName(field)} { get; set; }`).join('\n') ?? `    public ${rootType} Value { get; set; }`}\n${(rootModel ? models.slice(1) : models).map((model) => `\n${render(model, '    ').replace(/^    /gm, '    ')}`).join('')}\n}`
+  }
+  const render = (model: GeneratedModel) => `type ${model.name} struct {\n${model.fields.map((field) => { const key = field.key.startsWith('?') ? field.key.slice(1) : field.key; return `\t${generatedPropertyName(key, language)} ${field.type} \`json:"${key}\"\`` }).join('\n')}\n}`
+  const declarations = models.map(render).join('\n\n')
+  const alias = rootType === rootName ? '' : `type ${rootName} = ${rootType}`
+  return `${declarations}${declarations && alias ? '\n\n' : ''}${alias}`.trim()
+}
+
+export function generateDataTypes(value: string, language: GeneratedDataTypeLanguage, rootName = 'Root') {
+  if (!value.trim()) throw new Error('请输入用于生成类型的 JSON 样例。')
+  assertStructuredTextSize(value)
+  try {
+    const schema = JSON.parse(transformJsonSchema(value, 'generate')) as GeneratedSchema
+    const state = { models: [] as GeneratedModel[], names: new Set<string>(), depth: 0 }
+    const rootType = generatedSchemaType(schema, language, pascalIdentifier(rootName), state)
+    if (state.models.length > GENERATED_TYPES_MAX_MODELS) throw new Error(`对象类型超过 ${GENERATED_TYPES_MAX_MODELS} 个，无法安全生成。`)
+    const safeRootName = pascalIdentifier(rootName)
+    const result = `// Generated by ToolKnit from a JSON sample.\n\n${renderGeneratedTypes(state.models, rootType, safeRootName, language)}\n`
+    if (new TextEncoder().encode(result).byteLength > GENERATED_TYPES_MAX_OUTPUT_BYTES) throw new Error('生成的类型代码超过 256 KB，请先缩小样例。')
+    return result
+  } catch (reason) {
+    const detail = reason instanceof Error ? reason.message : '语法错误'
+    throw new Error(`JSON 类型生成失败：${detail}`)
   }
 }
 
