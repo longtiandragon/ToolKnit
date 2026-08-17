@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { analyzeHttpHeaders, calculateCidr, calculateDateDifference, calculateDateOffset, calculateIpv6Cidr, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
+import { analyzeHttpHeaders, calculateCidr, calculateDateDifference, calculateDateOffset, calculateIpv6Cidr, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, inspectUrl, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -26,6 +26,23 @@ describe('Base64 and URL transforms', () => {
     expect(encodeHex('你好 👋')).toBe('E4BDA0E5A5BD20F09F918B')
     expect(decodeHex(`0x${encodeHex('你好 👋')}`)).toBe('你好 👋')
     expect(() => decodeHex('ABC')).toThrow('偶数')
+  })
+})
+
+describe('URL inspection', () => {
+  it('parses decoded query parameters without fetching the URL', () => {
+    const result = inspectUrl('https://user:secret@example.com/search?q=%E5%B7%A5%E5%85%B7&q=two#results')
+    expect(result.href).toBe('https://user:***@example.com/search?q=%E5%B7%A5%E5%85%B7&q=two#results')
+    expect(result.parameters).toEqual([{ name: 'q', value: '工具' }, { name: 'q', value: 'two' }])
+    expect(result.duplicateNames).toEqual(['q'])
+    expect(result.hasCredentials).toBe(true)
+    expect(result.warnings.join('\n')).toContain('凭据')
+  })
+
+  it('flags insecure HTTP and rejects relative or malformed URLs', () => {
+    expect(inspectUrl('http://example.com/').warnings.join('\n')).toContain('明文 HTTP')
+    expect(() => inspectUrl('/relative/path')).toThrow('无法解析')
+    expect(() => inspectUrl('not a url')).toThrow('无法解析')
   })
 })
 

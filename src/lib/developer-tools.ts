@@ -22,6 +22,27 @@ export interface TimestampResult {
   local: string
 }
 
+export interface UrlParameter {
+  name: string
+  value: string
+}
+
+export interface UrlInspectionResult {
+  href: string
+  protocol: string
+  origin: string
+  username: string
+  hostname: string
+  port: string
+  pathname: string
+  search: string
+  hash: string
+  hasCredentials: boolean
+  parameters: UrlParameter[]
+  duplicateNames: string[]
+  warnings: string[]
+}
+
 export type DateOffsetUnit = 'days' | 'weeks' | 'months' | 'years'
 
 export interface DateDifferenceResult {
@@ -1683,6 +1704,47 @@ export function encodeUrl(value: string) {
 
 export function decodeUrl(value: string) {
   return decodeURIComponent(value)
+}
+
+/** Inspect an absolute URL locally; this never performs a fetch or DNS lookup. */
+export function inspectUrl(value: string): UrlInspectionResult {
+  const normalized = value.trim()
+  if (!normalized) throw new Error('请输入完整 URL，例如 https://example.com/search?q=工具箱。')
+  if (new TextEncoder().encode(normalized).byteLength > 16 * 1024) throw new Error('URL 超过 16 KB 安全上限，请先拆分参数。')
+  let url: URL
+  try {
+    url = new URL(normalized)
+  } catch {
+    throw new Error('URL 无法解析；请包含协议，例如 https://example.com/path。')
+  }
+  const safeUrl = new URL(url.toString())
+  const hasCredentials = Boolean(url.username || url.password)
+  if (url.password) safeUrl.password = '***'
+  const parameters = [...url.searchParams.entries()].map(([name, parameterValue]) => ({ name, value: parameterValue }))
+  const counts = new Map<string, number>()
+  for (const parameter of parameters) counts.set(parameter.name, (counts.get(parameter.name) ?? 0) + 1)
+  const duplicateNames = [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name)
+  const warnings: string[] = []
+  if (url.protocol === 'http:') warnings.push('当前 URL 使用明文 HTTP；登录或传输敏感数据时应优先使用 HTTPS。')
+  if (hasCredentials) warnings.push('URL 内包含用户名或密码；不要把带凭据的地址写入日志、任务历史或公开文档。')
+  if (url.hash) warnings.push('Fragment（# 后内容）通常只在浏览器端使用，不会随 HTTP 请求发送到服务器。')
+  if (duplicateNames.length) warnings.push(`发现重复查询参数：${duplicateNames.join('、')}；服务端可能按首个、最后一个或全部值处理。`)
+  if (url.protocol === 'file:') warnings.push('这是本地 file URL；跨应用打开前请确认路径和权限。')
+  return {
+    href: safeUrl.toString(),
+    protocol: url.protocol,
+    origin: url.origin,
+    username: url.username,
+    hostname: url.hostname,
+    port: url.port,
+    pathname: url.pathname,
+    search: url.search,
+    hash: url.hash,
+    hasCredentials,
+    parameters,
+    duplicateNames,
+    warnings,
+  }
 }
 
 export async function sha256(value: string) {

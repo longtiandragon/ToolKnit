@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { analyzeHttpHeaders, calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type CompressionFormat, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type GeneratedDataTypeLanguage, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
+import { analyzeHttpHeaders, calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, inspectUrl, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type CompressionFormat, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type GeneratedDataTypeLanguage, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
 import { decodeQrImage, generateQrCode } from '@/lib/qr-tools'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import AppIcon from '@/components/AppIcon.vue'
@@ -22,7 +22,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
   { id: 'base58', icon: 'binary', title: 'Base58', description: 'Bitcoin 字符表编码与解码' },
   { id: 'compress', icon: 'archive', title: 'GZip / Deflate', description: '文本压缩与解压' },
   { id: 'hex', icon: 'binary', title: 'Hex', description: 'UTF-8 文本与十六进制互转' },
-  { id: 'url', icon: 'link', title: 'URL 编解码', description: '处理查询参数与特殊字符' },
+  { id: 'url', icon: 'link', title: 'URL 编解码', description: '编解码并离线解析地址结构' },
   { id: 'json', icon: 'json', title: 'JSON', description: '格式化、压缩与语法检查' },
   { id: 'json-yaml', icon: 'file-code', title: 'JSON ↔ YAML', description: '在 JSON 与 YAML 之间安全转换' },
   { id: 'csv-json', icon: 'table', title: 'CSV ↔ JSON', description: '转换表格数据并保留引号字段' },
@@ -48,6 +48,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
 
 const tool = ref<DeveloperToolId>('base64')
 const direction = ref<'encode' | 'decode'>('encode')
+const urlMode = ref<'encode' | 'decode' | 'inspect'>('encode')
 const compressionFormat = ref<CompressionFormat>('gzip')
 const input = ref(store.consumeIntakeText())
 const secondaryInput = ref('')
@@ -128,7 +129,6 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
     case 'base32':
     case 'base58':
     case 'hex':
-    case 'url':
     case 'json-yaml':
     case 'csv-json':
     case 'json-schema':
@@ -154,6 +154,13 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
           else if (tool.value === 'html-entities') entityDirection.value = id as HtmlEntityDirection
           else direction.value = id as 'encode' | 'decode'
         },
+      }
+    case 'url':
+      return {
+        label: 'URL 操作',
+        options: [{ id: 'encode', label: '编码' }, { id: 'decode', label: '解码' }, { id: 'inspect', label: '解析' }],
+        value: urlMode.value,
+        set: (id) => { urlMode.value = id as typeof urlMode.value; resetResult() },
       }
     case 'compress':
       return {
@@ -207,6 +214,7 @@ const emptyResultHint = computed(() => {
     case 'type-gen': return '粘贴 JSON 样例，输出可直接复制到项目中的类型定义；这里只根据样例推断，不连接网络。'
     case 'base32': return direction.value === 'encode' ? '把 UTF-8 文本转成 RFC 4648 Base32。' : '粘贴 Base32（可带或不带 = 补位）并还原 UTF-8 文本。'
     case 'base58': return direction.value === 'encode' ? '把 UTF-8 文本转成 Bitcoin Base58。' : '粘贴 Base58 字符串并还原 UTF-8 文本。'
+    case 'url': return urlMode.value === 'inspect' ? '粘贴完整 URL；会离线拆分地址、查询参数和风险提示，不会访问该网站。' : urlMode.value === 'encode' ? '把文本转换为可放进 URL 参数的编码。' : '还原 URL 参数中的百分号编码。'
     case 'compress': return direction.value === 'encode' ? '把文本压缩为 Base64 载体；内容只在本机处理。' : '粘贴压缩数据的 Base64 载体，在本机解压为 UTF-8 文本。'
     case 'sql': return 'SQL 只会在本机做词法整理和缩进，不执行语句，也不会连接数据库。'
     case 'cidr': return '输入 IPv4 或 IPv6 CIDR，例如 192.168.1.25/24 或 2001:db8::1/64。'
@@ -253,7 +261,8 @@ function swapTransform() {
     input.value = output.value
     output.value = ''
   }
-  if (tool.value === 'html-entities') entityDirection.value = entityDirection.value === 'encode' ? 'decode' : 'encode'
+  if (tool.value === 'url') urlMode.value = urlMode.value === 'encode' ? 'decode' : 'encode'
+  else if (tool.value === 'html-entities') entityDirection.value = entityDirection.value === 'encode' ? 'decode' : 'encode'
   else direction.value = direction.value === 'encode' ? 'decode' : 'encode'
 }
 
@@ -266,7 +275,7 @@ async function run() {
     else if (tool.value === 'base58') output.value = direction.value === 'encode' ? encodeBase58(input.value) : decodeBase58(input.value)
     else if (tool.value === 'compress') output.value = direction.value === 'encode' ? await compressText(input.value, compressionFormat.value) : await decompressText(input.value, compressionFormat.value)
     else if (tool.value === 'hex') output.value = direction.value === 'encode' ? encodeHex(input.value) : decodeHex(input.value)
-    else if (tool.value === 'url') output.value = direction.value === 'encode' ? encodeUrl(input.value) : decodeUrl(input.value)
+    else if (tool.value === 'url') output.value = urlMode.value === 'inspect' ? JSON.stringify(inspectUrl(input.value), null, 2) : urlMode.value === 'encode' ? encodeUrl(input.value) : decodeUrl(input.value)
     else if (tool.value === 'json') output.value = jsonMode.value === 'path' ? transformJsonPath(input.value, jsonPath.value) : transformJson(input.value, jsonMode.value === 'compact')
     else if (tool.value === 'json-yaml') output.value = transformJsonYaml(input.value, direction.value === 'encode' ? 'json-to-yaml' : 'yaml-to-json')
     else if (tool.value === 'csv-json') output.value = transformCsvJson(input.value, direction.value === 'encode' ? 'csv-to-json' : 'json-to-csv')
@@ -404,7 +413,7 @@ function closeResultMenuOnWindow() { closeResultMenu() }
 // short enough that the result feels attached to the input.
 let liveTimer: ReturnType<typeof setTimeout> | undefined
 watch(
-  [input, secondaryInput, pattern, flags, jsonCompact, jsonMode, jsonPath, direction, entityDirection, schemaDirection, compressionFormat, fromBase, toBase,
+  [input, secondaryInput, pattern, flags, jsonCompact, jsonMode, jsonPath, direction, urlMode, entityDirection, schemaDirection, compressionFormat, fromBase, toBase,
     typeLanguage, typeRootName, dateStart, dateEnd, dateAmount, dateUnit, dateMode, qrSize, qrMode, tool],
   () => {
     clearTimeout(liveTimer)
@@ -616,6 +625,7 @@ onBeforeUnmount(() => {
                               : tool === 'xml' ? '<root><item /></root>'
                               : tool === 'sql' ? 'select id,name from users where active=1;'
                               : tool === 'cidr' ? '192.168.1.25/24'
+                              : tool === 'url' && urlMode === 'inspect' ? 'https://example.com/search?q=工具箱&q=two#results'
                               : tool === 'headers' ? 'HTTP/1.1 200 OK\nContent-Type: application/json\nX-Content-Type-Options: nosniff'
                               : tool === 'color' ? '#3B82F6 或 rgba(59 130 246 / 50%)'
                               : tool === 'cron' ? '0 9 * * 1-5'
@@ -657,7 +667,7 @@ onBeforeUnmount(() => {
             <span v-if="isLive && hasOutput" class="chip h-5 px-1.5 text-[11px] bg-success-soft text-success">实时</span>
           </p>
           <span class="row gap-1 shrink-0">
-            <button v-if="(tool === 'base64' || tool === 'base32' || tool === 'base58' || tool === 'compress' || tool === 'hex' || tool === 'url' || tool === 'html-entities') && hasOutput" class="btn-ghost btn-sm" @click="swapTransform">
+            <button v-if="(tool === 'base64' || tool === 'base32' || tool === 'base58' || tool === 'compress' || tool === 'hex' || tool === 'url' || tool === 'html-entities') && hasOutput && !(tool === 'url' && urlMode === 'inspect')" class="btn-ghost btn-sm" @click="swapTransform">
               交换并反向
             </button>
             <button v-if="resultClipboardText" class="btn-ghost btn-sm" @click="() => copyResult()">复制</button>
