@@ -5,8 +5,9 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import { assertPdfImageFits, cleanOutputName, parsePageIndexes, pdfImageOutputName, pdfImageScaleForDpi, type PdfImageFormat } from '@/lib/file-tools'
 import { calculatePdfCropBox } from '@/lib/pdf-crop'
-import type { PdfTaskOutput, PdfTaskRequest } from '@/lib/pdf-worker'
+import type { PdfTaskInput, PdfTaskOutput, PdfTaskRequest } from '@/lib/pdf-worker'
 import { parseRedactionTerms, redactionRectangle, type PdfTextItemForRedaction } from '@/lib/pdf-redaction'
+import { buildPdfCompareReport, comparePdfPageSnapshots, PDF_COMPARE_TEXT_LIMIT, type PdfComparePageSnapshot } from '@/lib/pdf-compare'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -89,6 +90,42 @@ async function extractText(taskId: string, source: ArrayBuffer, name: string, pr
   }
 }
 
+async function readComparePage(document: PDFDocumentProxy, pageIndex: number): Promise<PdfComparePageSnapshot> {
+  const page = await document.getPage(pageIndex + 1)
+  try {
+    const content = await page.getTextContent()
+    const text = content.items.map((item) => 'str' in item ? item.str : '').join(' ').slice(0, PDF_COMPARE_TEXT_LIMIT + 1)
+    const viewport = page.getViewport({ scale: 1 })
+    return { text, width: viewport.width, height: viewport.height }
+  } finally {
+    page.cleanup()
+  }
+}
+
+async function comparePdfFiles(taskId: string, leftFile: PdfTaskInput, rightFile: PdfTaskInput) {
+  const MAX_COMPARE_PAGES = 500
+  const [leftLoading, rightLoading] = [pdfjs.getDocument({ data: leftFile.data }), pdfjs.getDocument({ data: rightFile.data })]
+  const [leftDocument, rightDocument] = await Promise.all([leftLoading.promise, rightLoading.promise])
+  try {
+    const totalPages = Math.max(leftDocument.numPages, rightDocument.numPages)
+    if (totalPages > MAX_COMPARE_PAGES) throw new Error(`PDF 页面超过 ${MAX_COMPARE_PAGES} 页，暂不执行页面级差异报告。请先拆分文件。`)
+    const pages = []
+    for (let index = 0; index < totalPages; index += 1) {
+      const [left, right] = await Promise.all([
+        index < leftDocument.numPages ? readComparePage(leftDocument, index) : Promise.resolve(undefined),
+        index < rightDocument.numPages ? readComparePage(rightDocument, index) : Promise.resolve(undefined),
+      ])
+      pages.push({ page: index + 1, status: comparePdfPageSnapshots(left, right), left, right })
+      postProgress(taskId, 12 + 78 * (index + 1) / totalPages, `正在比较第 ${index + 1}/${totalPages} 页…`)
+    }
+    return buildPdfCompareReport(leftFile.name, rightFile.name, pages)
+  } finally {
+    leftDocument.cleanup()
+    rightDocument.cleanup()
+    await Promise.all([leftLoading.destroy(), rightLoading.destroy()])
+  }
+}
+
 async function runTask(taskId: string, request: PdfTaskRequest) {
   const files = request.files
   if (!files.length) throw new Error('请选择至少一份 PDF。')
@@ -96,6 +133,17 @@ async function runTask(taskId: string, request: PdfTaskRequest) {
   const publishPdf = async (name: string, document: PDFDocument) => {
     const data = toBuffer(await document.save())
     await publish(taskId, ++outputSequence, { name, data, mime: 'application/pdf' })
+  }
+
+  if (request.operation === 'compare') {
+    if (files.length !== 2) throw new Error('页面级差异报告需要恰好两份 PDF。')
+    const report = await comparePdfFiles(taskId, files[0], files[1])
+    await publish(taskId, ++outputSequence, {
+      name: `${cleanOutputName(files[0].name)}-vs-${cleanOutputName(files[1].name)}-diff.txt`,
+      data: toBuffer(new TextEncoder().encode(report)),
+      mime: 'text/plain;charset=utf-8',
+    })
+    return
   }
 
   if (request.operation === 'compress') {

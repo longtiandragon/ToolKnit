@@ -92,7 +92,7 @@ const groups: [ToolGroup, string, string, string][] = [
 ]
 
 const operationMap: Record<ToolGroup, ToolOption[]> = {
-  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['protect', '密码保护 PDF'], ['decrypt', '移除 PDF 密码'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本']],
+  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['compare', '比较 PDF'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['protect', '密码保护 PDF'], ['decrypt', '移除 PDF 密码'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本']],
   image: [['convert', '转换图片'], ['resize', '缩放并压缩'], ['crop', '裁剪图片'], ['rotate', '旋转图片']],
   text: [['transform', '文本转换']],
   organize: [['rename-report', '命名预览'], ['dedupe-report', '哈希去重报告']]
@@ -107,6 +107,7 @@ const operations = computed(() => operationMap[group.value])
 const operationNotes: Record<string, string> = {
   merge: '按你排列的顺序把多份 PDF 合成一份',
   split: '把每一页导出成独立的 PDF 文件',
+  compare: '按页比较两份 PDF 的文字层和页面尺寸，生成只读差异报告',
   rotate: '批量旋转页面方向,不重新编码内容',
   extract: '按页码范围导出成新的 PDF',
   reorder: '按你指定的页序重新组织后导出',
@@ -140,10 +141,11 @@ const accept = computed(() => group.value === 'pdf' && operation.value !== 'imag
       : group.value === 'text'
         ? '.txt,.md,.json,.js,.ts,.py,.java,.csv,text/*,application/json'
         : '*/*')
-const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'crop', 'watermark', 'page-number', 'rotate', 'split', 'text', 'pdf-to-image', 'compress', 'protect', 'decrypt', 'redact', 'ocr'].includes(operation.value))
+const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'crop', 'watermark', 'page-number', 'rotate', 'split', 'compare', 'text', 'pdf-to-image', 'compress', 'protect', 'decrypt', 'redact', 'ocr'].includes(operation.value))
 const usesOutputName = computed(() => group.value === 'text' || group.value === 'organize' || (group.value === 'pdf' && ['merge', 'images-to-pdf'].includes(operation.value)))
 const canRun = computed(() => !running.value
   && (files.value.length > 0 || (group.value === 'text' && textInput.value.trim().length > 0))
+  && (!(group.value === 'pdf' && operation.value === 'compare') || files.value.length === 2)
   && (!(group.value === 'pdf' && ['protect', 'decrypt'].includes(operation.value)) || (isDesktop() && pdfPassword.value.length > 0))
   && (!(group.value === 'pdf' && operation.value === 'protect') || pdfPassword.value.length >= 8)
   && !(group.value === 'pdf' && operation.value === 'redact' && !redactTerms.value.trim())
@@ -151,6 +153,7 @@ const canRun = computed(() => !running.value
 const outputHint = computed(() => {
   if (!files.value.length && !(group.value === 'text' && textInput.value.trim())) return '等待输入内容'
   if (group.value === 'pdf' && operation.value === 'split') return `将把 ${files.value.length} 份 PDF 拆成独立页面`
+  if (group.value === 'pdf' && operation.value === 'compare') return files.value.length === 2 ? '将按页生成文字层与尺寸差异报告；扫描页会标记为未验证' : '请选择恰好两份 PDF 进行比较'
   if (group.value === 'pdf' && operation.value === 'redact') return '匹配到的页面会变成不可搜索的图片，并永久覆盖敏感文字'
   if (group.value === 'pdf' && operation.value === 'compress') return isDesktop() ? '使用本机 qpdf 重写对象流和压缩流；原文件不会被覆盖' : '仅重写 PDF 结构；图片型 PDF 体积可能变化不大'
   if (group.value === 'pdf' && operation.value === 'protect') return isDesktop() ? '使用本机 qpdf 生成新的 256 位 AES 加密 PDF；密码不会写入任务历史' : 'PDF 密码保护需要 Windows 桌面版与本机 qpdf'
@@ -531,6 +534,7 @@ async function runPdf(onProgress?: (progress: number, detail: string) => void, o
 
   const pdfs = files.value.filter((file) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))
   if (!pdfs.length) throw new Error('请选择至少一份 PDF。')
+  if (operation.value === 'compare' && pdfs.length !== 2) throw new Error('页面级差异报告需要恰好两份 PDF。')
   const inputs: { name: string; data: ArrayBuffer }[] = []
   for (let index = 0; index < pdfs.length; index += 1) {
     throwIfCancelled()
@@ -991,7 +995,8 @@ onBeforeUnmount(() => {
           :max-file-bytes="inputFileLimit"
           :max-total-bytes="inputTotalLimit"
           :title="group === 'pdf' && operation === 'images-to-pdf' ? '拖入要合成的图片' : '拖入要处理的文件'"
-          :hint="`本次最多载入 ${formatSize(inputTotalLimit)}；处理后生成新文件，原件保持不变`"
+          :max-files="group === 'pdf' && operation === 'compare' ? 2 : 100"
+          :hint="operation === 'compare' ? '需要恰好两份 PDF；只读比较文字层和页面尺寸，原件保持不变' : `本次最多载入 ${formatSize(inputTotalLimit)}；处理后生成新文件，原件保持不变`"
           @error="ui.toast($event, '', 'error')"
         />
 
@@ -1137,6 +1142,9 @@ onBeforeUnmount(() => {
 
             <p v-if="operation === 'split'" class="text-[12px] text-fg-3 leading-snug">
               每一页会生成一份独立 PDF，文件名带上原来的页码。这个操作没有需要设置的参数。
+            </p>
+            <p v-if="operation === 'compare'" class="text-[12px] text-fg-3 leading-snug">
+              需要按顺序选择两份 PDF。报告比较每页文字层和页面尺寸；扫描件没有文字层时会标为“未验证”，不会修改或覆盖原文件。
             </p>
             <div v-if="operation === 'text'" class="text-[12px] text-fg-3 leading-snug">
               <span class="block mb-2">选择要读取的内容；两种模式都只读原 PDF，不会填写或提交表单。</span>
