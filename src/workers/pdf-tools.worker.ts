@@ -9,6 +9,7 @@ import type { PdfTaskInput, PdfTaskOutput, PdfTaskRequest } from '@/lib/pdf-work
 import { parseRedactionTerms, redactionRectangle, type PdfTextItemForRedaction } from '@/lib/pdf-redaction'
 import { buildPdfCompareReport, comparePdfPageSnapshots, PDF_COMPARE_TEXT_LIMIT, type PdfComparePageSnapshot } from '@/lib/pdf-compare'
 import { PDF_ATTACHMENT_MAX_BYTES, PDF_ATTACHMENT_MAX_COUNT, PDF_ATTACHMENT_MAX_TOTAL_BYTES, pdfAttachmentMime, pdfAttachmentOutputName } from '@/lib/pdf-attachments'
+import { buildPdfOutlineReport, pdfOutlineOutputName } from '@/lib/pdf-outline'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -187,6 +188,28 @@ async function runTask(taskId: string, request: PdfTaskRequest) {
       }
     }
     if (!extracted) throw new Error('所选 PDF 没有可提取的嵌入附件。')
+    return
+  }
+
+  if (request.operation === 'bookmarks') {
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index]
+      const loading = pdfjs.getDocument({ data: file.data })
+      const document = await loading.promise
+      try {
+        const outline = await document.getOutline()
+        const report = buildPdfOutlineReport(file.name, outline)
+        await publish(taskId, ++outputSequence, {
+          name: pdfOutlineOutputName(file.name),
+          data: toBuffer(new TextEncoder().encode(report)),
+          mime: 'application/json',
+        })
+        postProgress(taskId, 10 + 84 * (index + 1) / files.length, `已导出“${file.name}”的书签目录。`)
+      } finally {
+        document.cleanup()
+        await loading.destroy()
+      }
+    }
     return
   }
 

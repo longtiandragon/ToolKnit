@@ -92,7 +92,7 @@ const groups: [ToolGroup, string, string, string][] = [
 ]
 
 const operationMap: Record<ToolGroup, ToolOption[]> = {
-  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['compare', '比较 PDF'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['protect', '密码保护 PDF'], ['decrypt', '移除 PDF 密码'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本'], ['attachments', '提取附件']],
+  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['compare', '比较 PDF'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['protect', '密码保护 PDF'], ['decrypt', '移除 PDF 密码'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本'], ['attachments', '提取附件'], ['bookmarks', '导出书签']],
   image: [['convert', '转换图片'], ['resize', '缩放并压缩'], ['crop', '裁剪图片'], ['rotate', '旋转图片']],
   text: [['transform', '文本转换']],
   organize: [['rename-report', '命名预览'], ['dedupe-report', '哈希去重报告']]
@@ -123,6 +123,7 @@ const operationNotes: Record<string, string> = {
   ocr: '把扫描页面识别为本机文字，并生成可搜索的 PDF 副本',
   text: '导出 PDF 文字层，或查看 AcroForm 表单字段',
   attachments: '提取 PDF 内嵌附件；每个附件会写成独立新文件',
+  bookmarks: '导出 PDF 书签树为 JSON；只读，不改动原 PDF',
   convert: '在 PNG、JPG 与 WebP 之间转换',
   resize: '限制最大宽度并调整压缩质量',
   'image-crop': '按选区裁剪并批量导出',
@@ -161,6 +162,7 @@ const outputHint = computed(() => {
   if (group.value === 'pdf' && operation.value === 'decrypt') return isDesktop() ? '使用本机 qpdf 校验密码并生成新的无密码 PDF；原文件不会被覆盖' : '移除 PDF 密码需要 Windows 桌面版与本机 qpdf'
   if (group.value === 'pdf' && operation.value === 'ocr') return isDesktop() ? '使用 Windows 本机 OCR，原文件不会上传；输出会保留页面图片并附加文字层' : 'OCR PDF 需要 Windows 桌面版与本机 OCR 语言包'
   if (group.value === 'pdf' && operation.value === 'attachments') return '提取 PDF 内嵌附件为独立文件；单份 PDF 最多 128 个、单个 16 MB、总计 64 MB'
+  if (group.value === 'pdf' && operation.value === 'bookmarks') return '导出书签标题、层级、链接和目标存在性；超深或超大书签树会被安全截断'
   if (group.value === 'organize') return '仅生成预览报告，不修改原文件'
   return `将为 ${Math.max(files.value.length, 1)} 个输入生成新输出`
 })

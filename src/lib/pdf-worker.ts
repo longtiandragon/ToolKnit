@@ -1,6 +1,6 @@
 import type { PdfAttachmentMime } from './pdf-attachments'
 
-export type PdfTaskOperation = 'merge' | 'split' | 'compare' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'crop' | 'text' | 'attachments' | 'pdf-to-image' | 'compress' | 'redact' | 'ocr'
+export type PdfTaskOperation = 'merge' | 'split' | 'compare' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'crop' | 'text' | 'attachments' | 'bookmarks' | 'pdf-to-image' | 'compress' | 'redact' | 'ocr'
 
 export interface PdfTaskInput { name: string; data: ArrayBuffer }
 
