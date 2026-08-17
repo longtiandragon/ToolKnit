@@ -98,7 +98,7 @@ export const toolCatalog: ToolCatalogItem[] = [
   fileTool('transform', '自然排序文本行', '按中文、数字和字母顺序整理清单', 'text', 'sort', ['排序', '名单', '自然排序'], { mode: 'sort-lines' }),
   fileTool('transform', '提取链接与邮箱', '从长文本中汇总网址和邮箱地址', 'text', 'link', ['网址', 'url', 'email', '邮箱'], { mode: 'extract-contacts' }),
   fileTool('transform', '统计字数与段落', '本地统计字符、词语、段落和行数', 'text', 'number', ['字数', '字符', '段落', '统计'], { mode: 'statistics' }),
-  fileTool('rename-report', '批量命名预览', '生成安全的重命名结果清单', 'organize', 'rename', ['rename', '编号']),
+  fileTool('rename-report', '照片日期整理', 'EXIF 年月归档，可撤销', 'organize', 'rename', ['EXIF'], { mode: 'photo-organizer' }),
   { id: 'organize-dedupe-report', title: '文件去重扫描', description: '精确重复、相似图片、健康与目录对比', group: '整理', icon: 'search', to: { path: '/tools', query: { mode: 'file-health' } }, keywords: ['查重', '去重', '相似图片', '图片相似', '对比', 'Czkawka'] },
   { id: 'utility-qrcode', title: '二维码生成与识别', description: '生成/识别二维码', group: '表达', icon: 'qr-code', to: { path: '/developer-tools', query: { tool: 'qrcode' } }, keywords: ['二维码', 'QR', '扫码', '网址分享'] },
   { id: 'utility-datecalc', title: '日期计算器', description: '日期间隔与偏移', group: '整理', icon: 'calendar', to: { path: '/developer-tools', query: { tool: 'datecalc' } }, keywords: ['日期', '天数', '倒计时', '间隔', '月末'] },

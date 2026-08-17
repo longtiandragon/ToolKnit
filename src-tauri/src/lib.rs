@@ -5,6 +5,7 @@ mod engine_registry;
 mod file_health;
 mod image_metadata;
 mod pdf_tools;
+mod photo_organizer;
 mod transcription;
 mod vault;
 mod windows_ocr;
@@ -6669,6 +6670,7 @@ pub fn run() {
     let builder = builder.manage(PrivateToolRunState::default());
     builder
         .manage(MediaTranscodeState::default())
+        .manage(photo_organizer::PhotoOrganizerRunState::default())
         .manage(TranscriptionState::default())
         .manage(ExternalMarkdownWatchState::default())
         .manage(PendingOpenFiles(Mutex::new(launch_paths)))
@@ -6748,6 +6750,11 @@ pub fn run() {
             seven_zip_engine_status,
             engine_registry_status,
             image_metadata::inspect_image_metadata,
+            photo_organizer::scan_photo_organization,
+            photo_organizer::execute_photo_organization,
+            photo_organizer::cancel_photo_organization,
+            photo_organizer::undo_photo_organization,
+            photo_organizer::list_photo_organization_receipts,
             pdf_tools::optimize_pdf_bytes,
             pdf_tools::protect_pdf_bytes,
             pdf_tools::decrypt_pdf_bytes,

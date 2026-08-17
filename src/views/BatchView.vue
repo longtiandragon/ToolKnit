@@ -20,6 +20,7 @@ import OutputList from '@/components/OutputList.vue'
 import ToolPipelineView from '@/components/ToolPipelineView.vue'
 import ArchiveView from '@/views/ArchiveView.vue'
 import FileHealthView from '@/views/FileHealthView.vue'
+import PhotoOrganizerView from '@/views/PhotoOrganizerView.vue'
 
 type ToolGroup = 'pdf' | 'image' | 'text' | 'organize'
 type ToolOption = [id: string, label: string]
@@ -31,6 +32,7 @@ const router = useRouter()
 const pipelineMode = computed(() => route.query.mode === 'pipeline')
 const archiveMode = computed(() => route.query.mode === 'archive')
 const fileHealthMode = computed(() => route.query.mode === 'file-health')
+const photoOrganizerMode = computed(() => route.query.mode === 'photo-organizer')
 const group = ref<ToolGroup>('pdf')
 const operation = ref('merge')
 const files = ref<File[]>([])
@@ -963,6 +965,7 @@ onBeforeUnmount(() => {
   <ToolPipelineView v-if="pipelineMode" />
   <ArchiveView v-else-if="archiveMode" />
   <FileHealthView v-else-if="fileHealthMode" />
+  <PhotoOrganizerView v-else-if="photoOrganizerMode" />
   <div v-else class="page-enter mx-auto w-full max-w-320 px-8 py-6">
     <PageHeader :title="activeOperationLabel" :subtitle="activeOperationNote">
       <template #actions>

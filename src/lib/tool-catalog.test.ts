@@ -36,6 +36,7 @@ describe('tool catalog', () => {
     expect(searchTools('黑场检测')[0]?.id).toBe('media-desk')
     expect(searchTools('GPS')[0]?.id).toBe('image-metadata')
     expect(searchTools('XMP')[0]?.id).toBe('image-metadata')
+    expect(searchTools('照片日期整理')[0]?.to.query?.mode).toBe('photo-organizer')
     expect(searchTools('whisper')[0]?.id).toBe('local-transcription')
     expect(searchTools('把 PDF 转成图片')[0]?.id).toBe('pdf-pdf-to-image')
     expect(searchTools('多张图片拼成一张长图')[0]?.id).toBe('image-concat')
