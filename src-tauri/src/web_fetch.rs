@@ -233,6 +233,16 @@ fn validate_identity_encoding(response: &Response) -> Result<(), String> {
     }
 }
 
+fn unsuccessful_status_message(status: u16) -> String {
+    if matches!(status, 401 | 403 | 418 | 429 | 521) {
+        format!(
+            "网页返回 HTTP {status}；站点可能要求登录、验证码或浏览器验证，Knitspace 不会绕过。"
+        )
+    } else {
+        format!("网页返回 HTTP {status}。")
+    }
+}
+
 async fn read_bounded(mut response: Response, limit: usize) -> Result<Vec<u8>, String> {
     if response
         .content_length()
@@ -266,7 +276,8 @@ async fn request_target(target: &PinnedTarget, accept: &str) -> Result<Response,
         return Err("网页返回了重定向；为防止 SSRF 绕过，请复制最终 HTTPS 地址后重试。".into());
     }
     if !response.status().is_success() {
-        return Err(format!("网页返回 HTTP {}。", response.status().as_u16()));
+        let status = response.status().as_u16();
+        return Err(unsuccessful_status_message(status));
     }
     validate_identity_encoding(&response)?;
     Ok(response)
@@ -482,5 +493,15 @@ mod tests {
         assert_eq!(image_extension("image/png").unwrap().0, "png");
         assert!(image_extension("image/svg+xml").is_none());
         assert!(image_extension("text/html").is_none());
+    }
+
+    #[test]
+    fn protected_site_statuses_explain_the_browser_boundary() {
+        for status in [401, 403, 418, 429, 521] {
+            let message = unsuccessful_status_message(status);
+            assert!(message.contains(&format!("HTTP {status}")));
+            assert!(message.contains("不会绕过"));
+        }
+        assert_eq!(unsuccessful_status_message(500), "网页返回 HTTP 500。");
     }
 }

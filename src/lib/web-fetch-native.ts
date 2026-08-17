@@ -29,6 +29,12 @@ export function canFetchWebPages() {
   return isDesktop()
 }
 
+export function readableNativeError(cause: unknown, fallback: string) {
+  if (cause instanceof Error && cause.message.trim()) return cause.message
+  if (typeof cause === 'string' && cause.trim()) return cause.trim()
+  return fallback
+}
+
 export async function fetchDesktopWebPage(url: string) {
   if (!isDesktop()) throw new Error('受限网页抓取仅在 Knitspace 桌面版可用。')
   return invoke<FetchedWebPage>('fetch_web_page', { request: { url } })

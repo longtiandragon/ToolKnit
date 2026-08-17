@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import { extractWebArticleAsync } from '@/lib/article-extract-worker'
 import type { WebArticleExtraction } from '@/lib/html-to-markdown'
-import { fetchDesktopWebPage, localizeDesktopWebArticleImages } from '@/lib/web-fetch-native'
+import { fetchDesktopWebPage, localizeDesktopWebArticleImages, readableNativeError } from '@/lib/web-fetch-native'
 import { useUiStore } from '@/stores/ui'
 import { useWorkbenchStore } from '@/stores/workbench'
 
@@ -93,7 +93,7 @@ watch(() => [props.html ?? '', props.url ?? ''] as const, async ([html, url], _p
     title.value = extracted.title
     markdown.value = baseUrl ? resolveArticleImages(extracted.markdown, extracted, baseUrl) : extracted.markdown
   } catch (cause) {
-    if (version === extractionVersion && !controller.signal.aborted) error.value = cause instanceof Error ? cause.message : '网页正文提取失败。'
+    if (version === extractionVersion && !controller.signal.aborted) error.value = readableNativeError(cause, '网页正文提取失败。')
   } finally {
     if (version === extractionVersion) busy.value = false
   }
@@ -145,7 +145,7 @@ async function saveAsNote() {
     const imageStatus = localizeImages.value ? `；${localizedCount} 张图片已本地化${failedCount ? `，${failedCount} 张失败并保留远程地址` : ''}` : ''
     ui.toast('已存为 Markdown 笔记', `网页源码未写入 Vault，只保存了你确认的正文${imageStatus}。`, failedCount ? 'warning' : 'success')
   } catch (cause) {
-    ui.toast('保存网页摘录失败', cause instanceof Error ? cause.message : '本地资料库暂不可用。', 'error')
+    ui.toast('保存网页摘录失败', readableNativeError(cause, '本地资料库暂不可用。'), 'error')
   } finally {
     busy.value = false
   }
@@ -166,7 +166,11 @@ async function saveAsNote() {
       <AppIcon name="refresh" :size="22" class="animate-spin" />
       <p class="text-[12px]">{{ remoteMode ? '正在校验地址并受限抓取，再由 Worker 识别正文…' : '正在 Worker 中识别正文与模板噪声…' }}</p>
     </div>
-    <div v-else-if="error" class="m-4 p-4 rounded-md bg-danger-soft text-danger" role="alert">{{ error }}</div>
+    <div v-else-if="error" class="m-4 p-4 stack gap-1 rounded-md bg-danger-soft text-danger" role="alert">
+      <strong class="text-[13px]">网页正文提取失败</strong>
+      <p class="text-[12px] leading-relaxed">{{ error }}</p>
+      <small v-if="remoteMode" class="text-[11px] leading-relaxed opacity-80">如果站点要求登录、验证码或 JavaScript，请在浏览器中打开页面，复制网页源码后回到这里使用离线提取；Knitspace 不会绕过站点验证。</small>
+    </div>
     <div v-else-if="result" class="grid grid-cols-1 xl:grid-cols-[minmax(0,0.38fr)_minmax(0,0.62fr)] gap-4 p-4">
       <aside class="stack gap-3 min-w-0">
         <label class="stack gap-1 text-[12px] text-fg-2">笔记标题<input v-model="title" class="field w-full" maxlength="100" /></label>
