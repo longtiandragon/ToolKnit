@@ -7,6 +7,8 @@ export type MediaOperation =
   | 'normalize-audio'
   | 'denoise-audio'
   | 'transcode-mp4'
+  | 'make-gif'
+  | 'make-webp'
   | 'mute-video'
   | 'remove-audio'
   | 'remove-subtitles'
@@ -36,6 +38,8 @@ export const mediaOperations: readonly MediaOperationDefinition[] = [
   { id: 'normalize-audio', title: '标准化音量', description: '统一语音响度并保留原始视频画面', detail: 'FFmpeg loudnorm · 音频重新编码', extension: 'M4A / MKV', requiredTrack: 'audio' },
   { id: 'denoise-audio', title: '音频降噪', description: '降低持续的背景噪声', detail: 'FFmpeg afftdn · 音频重新编码', extension: 'M4A / MKV', requiredTrack: 'audio' },
   { id: 'transcode-mp4', title: '转为 MP4', description: '统一为便于播放的 H.264', detail: 'AAC 音频 · 快速播放', extension: 'MP4', requiredTrack: 'video' },
+  { id: 'make-gif', title: '生成 GIF 动图', description: '把视频片段导出为轻量 GIF', detail: '12 fps · 最长 30 秒 · 无音频', extension: 'GIF', requiredTrack: 'video' },
+  { id: 'make-webp', title: '生成 WebP 动图', description: '把视频片段导出为高效 WebP 动图', detail: '12 fps · 最长 30 秒 · 无音频', extension: 'WebP', requiredTrack: 'video' },
   { id: 'mute-video', title: '生成静音视频', description: '移除音轨并保留画面', detail: '适合演示与无声素材', extension: '静音 MP4', requiredTrack: 'video' },
   { id: 'remove-audio', title: '无损移除音轨', description: '复制画面、字幕与附件并移除所有音频', detail: '不重新编码 · 原容器输出', extension: '无音频', requiredTrack: 'video' },
   { id: 'remove-subtitles', title: '无损移除字幕轨', description: '复制画面与音频并移除内嵌字幕', detail: '不重新编码 · 原容器输出', extension: '无字幕', requiredTrack: 'media' },
@@ -83,6 +87,8 @@ export function mediaOutputMime(name: string) {
   const lower = name.toLocaleLowerCase('en-US')
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
   if (lower.endsWith('.png')) return 'image/png'
+  if (lower.endsWith('.gif')) return 'image/gif'
+  if (lower.endsWith('.webp')) return 'image/webp'
   if (lower.endsWith('.mp4') || lower.endsWith('.m4v')) return 'video/mp4'
   if (lower.endsWith('.mov')) return 'video/quicktime'
   if (lower.endsWith('.mkv')) return 'video/x-matroska'

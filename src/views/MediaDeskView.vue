@@ -53,6 +53,7 @@ let removeProgressListener: (() => void) | undefined
 let removeFileDropListener: (() => void) | undefined
 let lastPersistedProgress = 0
 let lastProgressStoreWrite = 0
+const clipOperations = new Set<MediaOperation>(['trim-clip', 'lossless-clip', 'make-gif', 'make-webp'])
 
 const selectedOperation = computed(() => mediaOperations.find((item) => item.id === operation.value) ?? mediaOperations[0])
 const selectedOperationAvailable = computed(() => mediaOperationAvailable(selectedOperation.value, source.value))
@@ -81,7 +82,12 @@ const chaptersJsonError = computed(() => {
     return ''
   } catch { return '章节 JSON 格式不正确。' }
 })
-const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !busy.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)) && (!['add-subtitle', 'burn-subtitle'].includes(operation.value) || Boolean(subtitlePath.value)) && !chaptersJsonError.value)
+const animationRangeError = computed(() => {
+  if (!['make-gif', 'make-webp'].includes(operation.value)) return ''
+  const duration = clipValidation.value.range?.durationSeconds
+  return duration !== undefined && duration > 30 ? '动图区间最多 30 秒，请缩短结束时间。' : ''
+})
+const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !busy.value && selectedOperationAvailable.value && (!clipOperations.has(operation.value) || (Boolean(clipValidation.value.range) && !animationRangeError.value)) && (!['add-subtitle', 'burn-subtitle'].includes(operation.value) || Boolean(subtitlePath.value)) && !chaptersJsonError.value)
 const canAnalyzeSilence = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.audioCodec) && !running.value && !detectionRunning.value)
 const canAnalyzeBlack = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.videoCodec) && !running.value && !detectionRunning.value)
 const canAnalyzeWaveform = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.audioCodec) && !running.value && !detectionRunning.value)
@@ -161,7 +167,8 @@ async function inspectSource(path: string) {
     source.value = await inspectDesktopMedia(path)
     chaptersJson.value = JSON.stringify((source.value.chapters ?? []).map((chapter) => ({ startSeconds: chapter.startSeconds, endSeconds: chapter.endSeconds, title: chapter.title ?? '' })), null, 2)
     clipStart.value = '0:00'
-    clipEnd.value = formatMediaTimecode(Math.min(source.value.durationSeconds ?? 60, 60))
+    const clipLimit = ['make-gif', 'make-webp'].includes(operation.value) ? 30 : 60
+    clipEnd.value = formatMediaTimecode(Math.min(source.value.durationSeconds ?? clipLimit, clipLimit))
     if (!mediaOperationAvailable(selectedOperation.value, source.value)) selectOperation(firstAvailableMediaOperation(source.value))
     notice.value = `已读取“${source.value.name}”。选择一个明确的输出任务即可开始。`
   } catch (error) {
@@ -174,6 +181,7 @@ async function chooseSource() {
   if (!desktop || selecting.value || busy.value) return
   if (qaPreview) {
     source.value = { path: 'F:\\Recordings\\数据结构复习课.mp4', name: '数据结构复习课.mp4', size: 486_539_264, durationSeconds: 3_742, formatName: 'mov,mp4,m4a', audioCodec: 'aac', videoCodec: 'h264', width: 1920, height: 1080, bitRate: 3_824_000 }
+    clipEnd.value = formatMediaTimecode(['make-gif', 'make-webp'].includes(operation.value) ? 30 : 60)
     chaptersJson.value = '[]'
     output.value = undefined
     notice.value = '已读取“数据结构复习课.mp4”。选择一个明确的输出任务即可开始。'
@@ -234,6 +242,9 @@ function selectOperation(nextOperation: MediaOperation) {
   const definition = mediaOperations.find((item) => item.id === nextOperation)
   if (definition && !mediaOperationAvailable(definition, source.value)) return
   operation.value = nextOperation
+  if (['make-gif', 'make-webp'].includes(nextOperation) && source.value) {
+    clipEnd.value = formatMediaTimecode(Math.min(source.value.durationSeconds ?? 30, 30))
+  }
   void router.replace({ query: { ...route.query, operation: nextOperation === 'trim-clip' ? 'clip' : nextOperation } })
 }
 
@@ -266,7 +277,7 @@ async function run() {
     running.value = true
     mediaProgress.value = 100
     const sourceExtension = source.value.name.split('.').at(-1) || 'mkv'
-    const extension = operation.value === 'extract-mp3' ? 'mp3' : operation.value === 'transcode-m4a' ? 'm4a' : operation.value === 'transcode-wav' ? 'wav' : ['normalize-audio', 'denoise-audio'].includes(operation.value) ? (source.value.videoCodec ? 'mkv' : 'm4a') : operation.value === 'extract-subtitle' ? 'srt' : operation.value === 'extract-cover' ? 'jpg' : operation.value === 'add-subtitle' ? 'mkv' : ['remove-audio', 'remove-subtitles', 'clean-metadata', 'edit-chapters'].includes(operation.value) ? sourceExtension : 'mp4'
+    const extension = operation.value === 'extract-mp3' ? 'mp3' : operation.value === 'transcode-m4a' ? 'm4a' : operation.value === 'transcode-wav' ? 'wav' : ['normalize-audio', 'denoise-audio'].includes(operation.value) ? (source.value.videoCodec ? 'mkv' : 'm4a') : operation.value === 'make-gif' ? 'gif' : operation.value === 'make-webp' ? 'webp' : operation.value === 'extract-subtitle' ? 'srt' : operation.value === 'extract-cover' ? 'jpg' : operation.value === 'add-subtitle' ? 'mkv' : ['remove-audio', 'remove-subtitles', 'clean-metadata', 'edit-chapters'].includes(operation.value) ? sourceExtension : 'mp4'
     const name = `数据结构复习课-knitspace-${operation.value}.${extension}`
     output.value = { path: `F:\\Knitspace\\Outputs\\${name}`, name, size: 82_417_664, elapsedMs: 12_400 }
     notice.value = 'QA 输出已生成；预览没有运行 FFmpeg，也没有写入 Vault 或任务历史。'
@@ -274,8 +285,8 @@ async function run() {
     return
   }
   const runId = newId()
-  const clipRange = ['trim-clip', 'lossless-clip'].includes(operation.value) ? clipValidation.value.range : undefined
-  if (['trim-clip', 'lossless-clip'].includes(operation.value) && !clipRange) return
+  const clipRange = clipOperations.has(operation.value) ? clipValidation.value.range : undefined
+  if (clipOperations.has(operation.value) && !clipRange) return
   activeRunId.value = runId
   running.value = true
   cancelling.value = false
@@ -346,7 +357,7 @@ function showSourceMenu(x: number, y: number, trigger: HTMLElement) {
   const hasVideo = Boolean(source.value.videoCodec)
   const hasSubtitle = Boolean(source.value.tracks?.some((track) => track.kind === 'subtitle'))
   const hasMedia = hasAudio || hasVideo
-  const quickActions = 1 + 3 + Number(hasAudio) * 3 + Number(hasVideo) * 3 + Number(hasSubtitle) * 2 + Number(hasMedia) * 4
+  const quickActions = 1 + 3 + Number(hasAudio) * 3 + Number(hasVideo) * 5 + Number(hasSubtitle) * 2 + Number(hasMedia) * 4
   sourceMenu.value = clampMenuPosition(x, y, { menuWidth: 212, menuHeight: 35 + quickActions * 35 })
   void nextTick(() => sourceMenuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus())
 }
@@ -592,9 +603,9 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <section v-if="operation === 'trim-clip' || operation === 'lossless-clip'" class="stack gap-2 p-3 rounded-md border border-accent bg-accent-soft" aria-label="媒体截取区间">
+          <section v-if="clipOperations.has(operation)" class="stack gap-2 p-3 rounded-md border border-accent bg-accent-soft" aria-label="媒体截取区间">
             <header class="row-between gap-2">
-              <b class="text-[12px] font-medium text-fg">截取区间</b>
+              <b class="text-[12px] font-medium text-fg">{{ operation === 'make-gif' ? 'GIF 动图区间' : operation === 'make-webp' ? 'WebP 动图区间' : '截取区间' }}</b>
               <small class="font-mono text-[11px] tabular-nums text-accent">{{ clipValidation.range ? `共 ${formatDuration(clipValidation.range.durationSeconds)}` : '等待有效时间' }}</small>
             </header>
             <div class="row items-end gap-2">
@@ -611,8 +622,8 @@ onBeforeUnmount(() => {
             <figure class="relative h-1.5 m-0 rounded-full bg-surface-2" :style="clipTrackStyle" aria-hidden="true">
               <span class="absolute inset-y-0 min-w-1 rounded-full bg-accent-solid left-[var(--clip-start)] right-[calc(100%_-_var(--clip-end))]" />
             </figure>
-            <p class="text-[11px] leading-relaxed" :class="clipValidation.error ? 'text-danger' : 'text-fg-3'" role="status">
-              {{ clipValidation.error || (operation === 'lossless-clip' ? '支持秒数、mm:ss 或 hh:mm:ss；使用原始轨道复制，速度快且不损失画质。' : '支持秒数、mm:ss 或 hh:mm:ss；输出会重新编码以获得稳定片段。') }}
+            <p class="text-[11px] leading-relaxed" :class="clipValidation.error || animationRangeError ? 'text-danger' : 'text-fg-3'" role="status">
+              {{ clipValidation.error || animationRangeError || (operation === 'lossless-clip' ? '支持秒数、mm:ss 或 hh:mm:ss；使用原始轨道复制，速度快且不损失画质。' : operation === 'make-gif' || operation === 'make-webp' ? '支持秒数、mm:ss 或 hh:mm:ss；动图固定 12 fps、最长 30 秒且不包含音频。' : '支持秒数、mm:ss 或 hh:mm:ss；输出会重新编码以获得稳定片段。') }}
             </p>
           </section>
 
@@ -790,6 +801,8 @@ onBeforeUnmount(() => {
         <button v-if="source?.tracks?.some((track) => track.kind === 'subtitle')" class="menu-item" role="menuitem" @click="selectOperationFromSource('extract-subtitle')">提取字幕为 SRT</button>
         <button v-if="source?.tracks?.some((track) => track.kind === 'subtitle')" class="menu-item" role="menuitem" @click="selectOperationFromSource('remove-subtitles')">无损移除字幕轨</button>
         <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('extract-cover')">提取视频封面</button>
+        <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('make-gif')">生成 GIF 动图…</button>
+        <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('make-webp')">生成 WebP 动图…</button>
         <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('clean-metadata')">清除媒体元数据</button>
         <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('edit-chapters')">编辑媒体章节…</button>
         <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('add-subtitle')">加入外部字幕…</button>

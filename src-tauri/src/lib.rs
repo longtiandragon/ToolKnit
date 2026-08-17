@@ -2488,6 +2488,7 @@ async fn inspect_media_file(path: String) -> Result<MediaFileInfo, String> {
 
 const MEDIA_DETECTION_MAX_SEGMENTS: usize = 256;
 const MEDIA_DETECTION_TIMEOUT: Duration = Duration::from_secs(120);
+const MEDIA_ANIMATION_MAX_SECONDS: f64 = 30.0;
 
 fn parse_detection_number(line: &str, marker: &str) -> Option<f64> {
     let start = line.find(marker)? + marker.len();
@@ -2732,7 +2733,7 @@ async fn analyze_media_waveform(path: String) -> Result<MediaWaveformReport, Str
 fn required_media_track(operation: &str) -> Option<&'static str> {
     match operation {
         "extract-mp3" | "transcode-m4a" | "transcode-wav" | "normalize-audio" | "denoise-audio" => Some("audio"),
-        "transcode-mp4" | "mute-video" | "remux-mp4" | "extract-cover" => Some("video"),
+        "transcode-mp4" | "make-gif" | "make-webp" | "mute-video" | "remux-mp4" | "extract-cover" => Some("video"),
         "extract-subtitle" => Some("subtitle"),
         "remove-audio" => Some("video"),
         "remove-subtitles" | "add-subtitle" | "edit-chapters" => Some("media"),
@@ -2973,6 +2974,67 @@ fn transcode_media(
             .collect(),
             source_duration,
         ),
+        "make-gif" | "make-webp" => {
+            let clip_info = media_info
+                .as_ref()
+                .ok_or("无法读取视频轨道，不能安全生成动图。")?;
+            if clip_info.video_codec.is_none() {
+                return Err("当前文件没有可处理的视频轨。".into());
+            }
+            let (start, duration) = validated_media_clip_range(
+                request.start_seconds,
+                request.duration_seconds,
+                source_duration,
+            )?;
+            if duration > MEDIA_ANIMATION_MAX_SECONDS {
+                return Err(format!("动图区间不能超过 {MEDIA_ANIMATION_MAX_SECONDS:.0} 秒。"));
+            }
+            input_arguments = vec![
+                "-ss".into(),
+                format!("{start:.3}"),
+                "-t".into(),
+                format!("{duration:.3}"),
+            ];
+            let is_gif = request.operation == "make-gif";
+            let filter = if is_gif {
+                "fps=12,scale=960:-2:force_original_aspect_ratio=decrease,split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse=dither=sierra2_4a"
+            } else {
+                "fps=12,scale=960:-2:force_original_aspect_ratio=decrease"
+            };
+            let arguments = if is_gif {
+                vec![
+                    "-map".into(),
+                    "0:v:0".into(),
+                    "-an".into(),
+                    "-vf".into(),
+                    filter.into(),
+                    "-loop".into(),
+                    "0".into(),
+                ]
+            } else {
+                vec![
+                    "-map".into(),
+                    "0:v:0".into(),
+                    "-an".into(),
+                    "-vf".into(),
+                    filter.into(),
+                    "-c:v".into(),
+                    "libwebp".into(),
+                    "-q:v".into(),
+                    "75".into(),
+                    "-compression_level".into(),
+                    "4".into(),
+                    "-loop".into(),
+                    "0".into(),
+                ]
+            };
+            (
+                if is_gif { "animation-gif" } else { "animation-webp" },
+                if is_gif { "gif".into() } else { "webp".into() },
+                arguments,
+                Some(duration),
+            )
+        }
         "mute-video" => (
             "muted",
             "mp4".into(),
@@ -5572,6 +5634,8 @@ mod external_markdown_tests {
         assert_eq!(required_media_track("mute-video"), Some("video"));
         assert_eq!(required_media_track("normalize-audio"), Some("audio"));
         assert_eq!(required_media_track("denoise-audio"), Some("audio"));
+        assert_eq!(required_media_track("make-gif"), Some("video"));
+        assert_eq!(required_media_track("make-webp"), Some("video"));
         assert_eq!(required_media_track("trim-clip"), Some("media"));
         assert_eq!(required_media_track("lossless-clip"), Some("media"));
         assert_eq!(required_media_track("remux-mp4"), Some("video"));
