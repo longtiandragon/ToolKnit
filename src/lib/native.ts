@@ -1060,6 +1060,12 @@ export interface MediaTrackInfo {
   width?: number
   height?: number
 }
+export interface MediaChapterInfo {
+  id: number
+  startSeconds: number
+  endSeconds: number
+  title?: string
+}
 export interface MediaFileInfo {
   path: string
   name: string
@@ -1072,6 +1078,7 @@ export interface MediaFileInfo {
   height?: number
   bitRate?: number
   tracks?: MediaTrackInfo[]
+  chapters?: MediaChapterInfo[]
 }
 export interface MediaOutput { path: string; name: string; size: number; elapsedMs: number }
 export interface MediaTranscodeProgress { runId: string; progress: number; detail: string }
@@ -1104,7 +1111,7 @@ export async function inspectDesktopMedia(path: string) {
   if (!isDesktop()) throw new Error('媒体探测仅支持桌面模式。')
   return invoke<MediaFileInfo>('inspect_media_file', { path })
 }
-export async function transcodeDesktopMedia(request: { inputPath: string; outputDir: string; operation: 'extract-mp3' | 'transcode-m4a' | 'transcode-wav' | 'normalize-audio' | 'transcode-mp4' | 'mute-video' | 'remove-audio' | 'remove-subtitles' | 'add-subtitle' | 'trim-clip' | 'lossless-clip' | 'remux-mp4' | 'extract-subtitle' | 'extract-cover' | 'clean-metadata'; runId: string; startSeconds?: number; durationSeconds?: number; subtitlePath?: string }) {
+export async function transcodeDesktopMedia(request: { inputPath: string; outputDir: string; operation: 'extract-mp3' | 'transcode-m4a' | 'transcode-wav' | 'normalize-audio' | 'transcode-mp4' | 'mute-video' | 'remove-audio' | 'remove-subtitles' | 'add-subtitle' | 'trim-clip' | 'lossless-clip' | 'remux-mp4' | 'extract-subtitle' | 'extract-cover' | 'clean-metadata' | 'edit-chapters'; runId: string; startSeconds?: number; durationSeconds?: number; subtitlePath?: string; chaptersJson?: string }) {
   if (!isDesktop()) throw new Error('媒体转换仅支持桌面模式。')
   return invoke<MediaOutput>('transcode_media_file', { request })
 }

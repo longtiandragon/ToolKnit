@@ -27,6 +27,7 @@ const operation = ref<MediaOperation>(routeMediaOperation(route.query.operation)
 const clipStart = ref('0:00')
 const clipEnd = ref('1:00')
 const subtitlePath = ref('')
+const chaptersJson = ref('[]')
 const clipStartInput = ref<HTMLInputElement>()
 const selecting = ref(false)
 const inspecting = ref(false)
@@ -70,7 +71,17 @@ const sourceSummary = computed(() => {
   return parts.filter(Boolean).join(' · ') || '已读取本地文件'
 })
 const outputDirectory = computed(() => qaPreview ? 'F:\\Knitspace\\Outputs' : store.settings.outputDirectory)
-const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !busy.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)) && (operation.value !== 'add-subtitle' || Boolean(subtitlePath.value)))
+const chaptersJsonError = computed(() => {
+  if (operation.value !== 'edit-chapters') return ''
+  if (!chaptersJson.value.trim()) return '请输入 JSON 数组；使用 [] 可清空章节。'
+  try {
+    const value: unknown = JSON.parse(chaptersJson.value)
+    if (!Array.isArray(value)) return '章节内容必须是 JSON 数组。'
+    if (value.length > 1000) return '章节数量不能超过 1,000 条。'
+    return ''
+  } catch { return '章节 JSON 格式不正确。' }
+})
+const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !busy.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)) && (operation.value !== 'add-subtitle' || Boolean(subtitlePath.value)) && !chaptersJsonError.value)
 const canAnalyzeSilence = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.audioCodec) && !running.value && !detectionRunning.value)
 const canAnalyzeBlack = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.videoCodec) && !running.value && !detectionRunning.value)
 const canAnalyzeWaveform = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.audioCodec) && !running.value && !detectionRunning.value)
@@ -106,6 +117,10 @@ function formatDetectionTime(value?: number) {
   return formatDuration(seconds)
 }
 
+function formatChapterTime(value: number) {
+  return formatDuration(value)
+}
+
 function trackLabel(kind: string) {
   return kind === 'video' ? '视频' : kind === 'audio' ? '音频' : kind === 'subtitle' ? '字幕' : kind
 }
@@ -138,11 +153,13 @@ async function inspectSource(path: string) {
   if (inspecting.value || busy.value) return
   inspecting.value = true
   output.value = undefined
+  chaptersJson.value = '[]'
   detectionReport.value = undefined
   waveformReport.value = undefined
   detectionError.value = ''
   try {
     source.value = await inspectDesktopMedia(path)
+    chaptersJson.value = JSON.stringify((source.value.chapters ?? []).map((chapter) => ({ startSeconds: chapter.startSeconds, endSeconds: chapter.endSeconds, title: chapter.title ?? '' })), null, 2)
     clipStart.value = '0:00'
     clipEnd.value = formatMediaTimecode(Math.min(source.value.durationSeconds ?? 60, 60))
     if (!mediaOperationAvailable(selectedOperation.value, source.value)) selectOperation(firstAvailableMediaOperation(source.value))
@@ -157,6 +174,7 @@ async function chooseSource() {
   if (!desktop || selecting.value || busy.value) return
   if (qaPreview) {
     source.value = { path: 'F:\\Recordings\\数据结构复习课.mp4', name: '数据结构复习课.mp4', size: 486_539_264, durationSeconds: 3_742, formatName: 'mov,mp4,m4a', audioCodec: 'aac', videoCodec: 'h264', width: 1920, height: 1080, bitRate: 3_824_000 }
+    chaptersJson.value = '[]'
     output.value = undefined
     notice.value = '已读取“数据结构复习课.mp4”。选择一个明确的输出任务即可开始。'
     return
@@ -246,7 +264,7 @@ async function run() {
     running.value = true
     mediaProgress.value = 100
     const sourceExtension = source.value.name.split('.').at(-1) || 'mkv'
-    const extension = operation.value === 'extract-mp3' ? 'mp3' : operation.value === 'transcode-m4a' ? 'm4a' : operation.value === 'transcode-wav' ? 'wav' : operation.value === 'normalize-audio' ? (source.value.videoCodec ? 'mkv' : 'm4a') : operation.value === 'extract-subtitle' ? 'srt' : operation.value === 'extract-cover' ? 'jpg' : operation.value === 'add-subtitle' ? 'mkv' : ['remove-audio', 'remove-subtitles', 'clean-metadata'].includes(operation.value) ? sourceExtension : 'mp4'
+    const extension = operation.value === 'extract-mp3' ? 'mp3' : operation.value === 'transcode-m4a' ? 'm4a' : operation.value === 'transcode-wav' ? 'wav' : operation.value === 'normalize-audio' ? (source.value.videoCodec ? 'mkv' : 'm4a') : operation.value === 'extract-subtitle' ? 'srt' : operation.value === 'extract-cover' ? 'jpg' : operation.value === 'add-subtitle' ? 'mkv' : ['remove-audio', 'remove-subtitles', 'clean-metadata', 'edit-chapters'].includes(operation.value) ? sourceExtension : 'mp4'
     const name = `数据结构复习课-knitspace-${operation.value}.${extension}`
     output.value = { path: `F:\\Knitspace\\Outputs\\${name}`, name, size: 82_417_664, elapsedMs: 12_400 }
     notice.value = 'QA 输出已生成；预览没有运行 FFmpeg，也没有写入 Vault 或任务历史。'
@@ -265,13 +283,13 @@ async function run() {
   const task = store.addJob('media', `媒体 · ${selectedOperation.value.title}`, [source.value.name], {
     toolId: `media:${operation.value}`, route: '/media', retryable: true,
     inputs: [{ name: source.value.name, path: source.value.path, size: source.value.size }],
-    parameters: { operation: operation.value, outputDirectory: outputDirectory.value, runId, ...(subtitlePath.value ? { subtitlePath: subtitlePath.value } : {}), ...(clipRange ? { startSeconds: clipRange.startSeconds, durationSeconds: clipRange.durationSeconds } : {}) },
+    parameters: { operation: operation.value, outputDirectory: outputDirectory.value, runId, ...(subtitlePath.value ? { subtitlePath: subtitlePath.value } : {}), ...(operation.value === 'edit-chapters' ? { chaptersJson: chaptersJson.value } : {}), ...(clipRange ? { startSeconds: clipRange.startSeconds, durationSeconds: clipRange.durationSeconds } : {}) },
   })
   activeJobId.value = task.id
   store.updateJob(task.id, { status: 'running', progress: 5, detail: '正在启动本机 FFmpeg；媒体不会进入页面内存。' })
   notice.value = `正在处理“${source.value.name}”；可以随时停止，原文件不会被修改。`
   try {
-    const result = await transcodeDesktopMedia({ inputPath: source.value.path, outputDir: outputDirectory.value, operation: operation.value, runId, ...(subtitlePath.value ? { subtitlePath: subtitlePath.value } : {}), ...(clipRange ? { startSeconds: clipRange.startSeconds, durationSeconds: clipRange.durationSeconds } : {}) })
+    const result = await transcodeDesktopMedia({ inputPath: source.value.path, outputDir: outputDirectory.value, operation: operation.value, runId, ...(subtitlePath.value ? { subtitlePath: subtitlePath.value } : {}), ...(operation.value === 'edit-chapters' ? { chaptersJson: chaptersJson.value } : {}), ...(clipRange ? { startSeconds: clipRange.startSeconds, durationSeconds: clipRange.durationSeconds } : {}) })
     output.value = result
     store.updateJob(task.id, {
       status: 'succeeded', progress: 100, outputNames: [result.name],
@@ -326,7 +344,7 @@ function showSourceMenu(x: number, y: number, trigger: HTMLElement) {
   const hasVideo = Boolean(source.value.videoCodec)
   const hasSubtitle = Boolean(source.value.tracks?.some((track) => track.kind === 'subtitle'))
   const hasMedia = hasAudio || hasVideo
-  const quickActions = 1 + 3 + Number(hasAudio) * 2 + Number(hasVideo) * 3 + Number(hasSubtitle) * 2 + Number(hasMedia) * 2
+  const quickActions = 1 + 3 + Number(hasAudio) * 2 + Number(hasVideo) * 3 + Number(hasSubtitle) * 2 + Number(hasMedia) * 3
   sourceMenu.value = clampMenuPosition(x, y, { menuWidth: 212, menuHeight: 35 + quickActions * 35 })
   void nextTick(() => sourceMenuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus())
 }
@@ -348,6 +366,7 @@ function clearSource() {
   if (busy.value) return
   source.value = undefined
   output.value = undefined
+  chaptersJson.value = '[]'
   detectionReport.value = undefined
   waveformReport.value = undefined
   detectionError.value = ''
@@ -430,6 +449,7 @@ watch(() => route.query.operation, (value) => {
 onMounted(() => {
   if (qaPreview) {
     source.value = { path: 'F:\\Recordings\\数据结构复习课.mp4', name: '数据结构复习课.mp4', size: 486_539_264, durationSeconds: 3_742, formatName: 'mov,mp4,m4a', audioCodec: 'aac', videoCodec: 'h264', width: 1920, height: 1080, bitRate: 3_824_000 }
+    chaptersJson.value = '[]'
   }
   void refreshEngine()
   if (runtimeDesktop) {
@@ -515,6 +535,14 @@ onBeforeUnmount(() => {
                 <span class="min-w-0 truncate" :title="trackDetail(track)">{{ trackDetail(track) }}</span>
               </li>
             </ul>
+            <div v-if="source.chapters?.length" class="stack gap-1 pt-2 border-t border-line">
+              <span class="row-between gap-2 text-[11px] text-fg-2"><span>章节</span><span>{{ source.chapters.length }} 条</span></span>
+              <span v-for="chapter in source.chapters.slice(0, 5)" :key="chapter.id" class="row gap-2 min-w-0 text-[10px] text-fg-3">
+                <span class="font-mono tabular-nums shrink-0">{{ formatChapterTime(chapter.startSeconds) }}</span>
+                <span class="truncate">{{ chapter.title || '未命名章节' }}</span>
+              </span>
+              <small v-if="source.chapters.length > 5" class="text-[10px] text-fg-3">还有 {{ source.chapters.length - 5 }} 条章节</small>
+            </div>
           </article>
 
           <p v-if="inspecting" class="row gap-1.5 text-[11px] text-fg-3"><AppIcon name="clock" :size="13" />正在读取编码、时长和轨道…</p>
@@ -600,6 +628,17 @@ onBeforeUnmount(() => {
               <AppIcon name="arrow-right" :size="14" class="shrink-0 text-fg-3" />
             </button>
             <p class="text-[11px] leading-relaxed text-fg-3">原媒体与字幕文件保持不变；外部字幕会作为新的文字轨封装进 MKV。</p>
+          </section>
+
+          <section v-if="operation === 'edit-chapters'" class="stack gap-2 p-3 rounded-md border border-accent bg-accent-soft" aria-label="编辑媒体章节">
+            <header class="row-between gap-2">
+              <b class="text-[12px] font-medium text-fg">编辑章节</b>
+              <small class="font-mono text-[11px] text-accent">JSON · 新文件</small>
+            </header>
+            <textarea v-model="chaptersJson" class="field-area min-h-40 font-mono text-[11px] leading-relaxed" spellcheck="false" aria-label="媒体章节 JSON" placeholder='[{\n  "startSeconds": 0,\n  "endSeconds": 60,\n  "title": "开场"\n}]' />
+            <p class="text-[11px] leading-relaxed" :class="chaptersJsonError ? 'text-danger' : 'text-fg-3'" role="status">
+              {{ chaptersJsonError || '按开始时间填写 startSeconds、endSeconds 和 title；使用 [] 可清空全部章节。只复制原轨道，不改原文件。' }}
+            </p>
           </section>
 
           <section v-if="source" class="stack gap-2 p-3 rounded-md border border-line bg-well" aria-label="媒体内容检测">
@@ -749,6 +788,7 @@ onBeforeUnmount(() => {
         <button v-if="source?.tracks?.some((track) => track.kind === 'subtitle')" class="menu-item" role="menuitem" @click="selectOperationFromSource('remove-subtitles')">无损移除字幕轨</button>
         <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('extract-cover')">提取视频封面</button>
         <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('clean-metadata')">清除媒体元数据</button>
+        <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('edit-chapters')">编辑媒体章节…</button>
         <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('add-subtitle')">加入外部字幕…</button>
         <button class="menu-item" role="menuitem" @click="selectClipFromSource">截取这段媒体…</button>
         <i class="menu-sep" aria-hidden="true" />

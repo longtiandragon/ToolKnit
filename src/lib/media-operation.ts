@@ -16,6 +16,7 @@ export type MediaOperation =
   | 'extract-subtitle'
   | 'extract-cover'
   | 'clean-metadata'
+  | 'edit-chapters'
 
 export interface MediaOperationDefinition {
   id: MediaOperation
@@ -42,6 +43,7 @@ export const mediaOperations: readonly MediaOperationDefinition[] = [
   { id: 'extract-subtitle', title: '提取字幕为 SRT', description: '把第一条文字字幕导出为通用格式', detail: '保留时间轴 · 位图字幕需先转码', extension: 'SRT', requiredTrack: 'subtitle' },
   { id: 'extract-cover', title: '提取视频封面', description: '从视频第一条画面导出一张 JPG', detail: '单帧封面 · 不修改原视频', extension: 'JPG', requiredTrack: 'video' },
   { id: 'clean-metadata', title: '清除媒体元数据', description: '移除标题、设备和位置等容器元数据', detail: '只复制轨道 · 原文件保持完整', extension: '清理', requiredTrack: 'media' },
+  { id: 'edit-chapters', title: '编辑章节', description: '按 JSON 重建媒体章节', detail: '只复制轨道 · 空数组可清空', extension: '章节', requiredTrack: 'media' },
 ]
 
 const mediaExtensions = new Set(['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus'])

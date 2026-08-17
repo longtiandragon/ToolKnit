@@ -1756,6 +1756,15 @@ struct MediaTrackInfo {
     height: Option<u32>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaChapterInfo {
+    id: u32,
+    start_seconds: f64,
+    end_seconds: f64,
+    title: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MediaFileInfo {
@@ -1770,6 +1779,7 @@ struct MediaFileInfo {
     height: Option<u32>,
     bit_rate: Option<u64>,
     tracks: Vec<MediaTrackInfo>,
+    chapters: Vec<MediaChapterInfo>,
 }
 
 #[derive(Deserialize)]
@@ -1782,6 +1792,7 @@ struct MediaTranscodeRequest {
     start_seconds: Option<f64>,
     duration_seconds: Option<f64>,
     subtitle_path: Option<String>,
+    chapters_json: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1897,6 +1908,9 @@ const SUPPORTED_MEDIA_EXTENSIONS: &[&str] = &[
 const SUPPORTED_SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt", "ass", "ssa", "sub", "smi"];
 const MAX_SUBTITLE_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MEDIA_PROGRESS_EVENT: &str = "toolknit://media-progress";
+const MAX_MEDIA_CHAPTERS: usize = 1_000;
+const MAX_MEDIA_CHAPTER_JSON_BYTES: usize = 64 * 1024;
+const MAX_MEDIA_CHAPTER_TITLE_CHARS: usize = 256;
 const MEDIA_WAVEFORM_SAMPLE_RATE: u32 = 1_000;
 const MEDIA_WAVEFORM_MAX_POINTS: usize = 1_600;
 const MEDIA_WAVEFORM_MAX_BYTES: usize = 24 * 1024 * 1024;
@@ -2152,6 +2166,120 @@ fn summarize_media_waveform(
     })
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaChapterInput {
+    #[serde(alias = "start_seconds")]
+    start_seconds: f64,
+    #[serde(alias = "end_seconds")]
+    end_seconds: f64,
+    #[serde(default)]
+    title: String,
+}
+
+fn parse_media_chapter_json(
+    raw: &str,
+    source_duration_seconds: Option<f64>,
+) -> Result<Vec<MediaChapterInput>, String> {
+    if raw.len() > MAX_MEDIA_CHAPTER_JSON_BYTES {
+        return Err("章节 JSON 过大，最多支持 64 KB。".into());
+    }
+    let chapters: Vec<MediaChapterInput> = serde_json::from_str(raw)
+        .map_err(|error| format!("章节 JSON 无法解析：{error}"))?;
+    if chapters.len() > MAX_MEDIA_CHAPTERS {
+        return Err(format!("章节数量不能超过 {MAX_MEDIA_CHAPTERS} 条。"));
+    }
+    let source_duration = source_duration_seconds.filter(|value| value.is_finite() && *value > 0.0);
+    let mut previous_end = 0.0_f64;
+    for (index, chapter) in chapters.iter().enumerate() {
+        if !chapter.start_seconds.is_finite()
+            || !chapter.end_seconds.is_finite()
+            || chapter.start_seconds < 0.0
+            || chapter.end_seconds <= chapter.start_seconds
+            || chapter.end_seconds > 7.0 * 24.0 * 60.0 * 60.0
+        {
+            return Err(format!("第 {} 条章节的时间范围无效。", index + 1));
+        }
+        if let Some(duration) = source_duration {
+            if chapter.end_seconds > duration + 0.05 {
+                return Err(format!("第 {} 条章节超出了媒体时长。", index + 1));
+            }
+        }
+        if index > 0 && chapter.start_seconds < previous_end {
+            return Err(format!("第 {} 条章节与上一条重叠或未按时间排序。", index + 1));
+        }
+        if chapter.title.chars().count() > MAX_MEDIA_CHAPTER_TITLE_CHARS {
+            return Err(format!("第 {} 条章节标题不能超过 {MAX_MEDIA_CHAPTER_TITLE_CHARS} 个字符。", index + 1));
+        }
+        if chapter.title.chars().any(char::is_control) {
+            return Err(format!("第 {} 条章节标题包含不可用控制字符。", index + 1));
+        }
+        previous_end = chapter.end_seconds;
+    }
+    Ok(chapters)
+}
+
+fn escape_media_ffmetadata_value(value: &str) -> String {
+    value
+        .chars()
+        .filter_map(|character| match character {
+            '\\' => Some("\\\\".to_owned()),
+            '=' => Some("\\=".to_owned()),
+            ';' => Some("\\;".to_owned()),
+            '#' => Some("\\#".to_owned()),
+            '\n' | '\r' => Some(" ".to_owned()),
+            character if character.is_control() => None,
+            character => Some(character.to_string()),
+        })
+        .collect()
+}
+
+fn render_media_ffmetadata(chapters: &[MediaChapterInput]) -> String {
+    let mut output = String::from(";FFMETADATA1\n");
+    for chapter in chapters {
+        output.push_str("[CHAPTER]\nTIMEBASE=1/1000\n");
+        output.push_str(&format!("START={}\n", (chapter.start_seconds * 1_000.0).round() as i64));
+        output.push_str(&format!("END={}\n", (chapter.end_seconds * 1_000.0).round() as i64));
+        let title = chapter.title.trim();
+        if !title.is_empty() {
+            output.push_str("title=");
+            output.push_str(&escape_media_ffmetadata_value(title));
+            output.push('\n');
+        }
+        output.push('\n');
+    }
+    output
+}
+
+struct TemporaryMediaMetadata {
+    directory: PathBuf,
+    path: PathBuf,
+}
+
+impl Drop for TemporaryMediaMetadata {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+fn create_media_chapter_metadata(
+    raw: &str,
+    source_duration_seconds: Option<f64>,
+) -> Result<TemporaryMediaMetadata, String> {
+    let chapters = parse_media_chapter_json(raw, source_duration_seconds)?;
+    let directory = std::env::temp_dir().join(format!(
+        "knitspace-media-chapters-{}",
+        uuid::Uuid::now_v7()
+    ));
+    fs::create_dir_all(&directory).map_err(|error| format!("无法创建章节临时目录：{error}"))?;
+    let path = directory.join("metadata.txt");
+    if let Err(error) = fs::write(&path, render_media_ffmetadata(&chapters)) {
+        let _ = fs::remove_dir_all(&directory);
+        return Err(format!("无法写入章节临时文件：{error}"));
+    }
+    Ok(TemporaryMediaMetadata { directory, path })
+}
+
 fn emit_media_progress(
     app: &tauri::AppHandle,
     run_id: &str,
@@ -2171,7 +2299,7 @@ fn emit_media_progress(
 fn probe_media_file(path: PathBuf) -> Result<MediaFileInfo, String> {
     let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
     let output = Command::new("ffprobe")
-        .args(["-v", "error", "-show_entries", "format=duration,format_name,bit_rate,size:stream=index,codec_type,codec_name,width,height,bit_rate,channels,sample_rate:stream_tags=language,title", "-of", "json"])
+        .args(["-v", "error", "-show_entries", "format=duration,format_name,bit_rate,size:stream=index,codec_type,codec_name,width,height,bit_rate,channels,sample_rate:stream_tags=language,title:chapter=id,start_time,end_time:chapter_tags=title", "-of", "json"])
         .arg(&path)
         .output()
         .map_err(|error| format!("无法启动 FFprobe：{error}"))?;
@@ -2215,6 +2343,35 @@ fn probe_media_file(path: PathBuf) -> Result<MediaFileInfo, String> {
                 .or_else(|| item.as_u64())
         })
     };
+    let chapters = json
+        .get("chapters")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .take(MAX_MEDIA_CHAPTERS)
+                .filter_map(|chapter| {
+                    let start_seconds = parse_number(chapter.get("start_time"))?;
+                    let end_seconds = parse_number(chapter.get("end_time"))?;
+                    if !start_seconds.is_finite() || !end_seconds.is_finite() || end_seconds <= start_seconds {
+                        return None;
+                    }
+                    let title = chapter
+                        .get("tags")
+                        .and_then(|value| value.get("title"))
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.chars().take(MAX_MEDIA_CHAPTER_TITLE_CHARS).collect::<String>())
+                        .filter(|value| !value.trim().is_empty());
+                    Some(MediaChapterInfo {
+                        id: parse_integer(chapter.get("id"))?.try_into().ok()?,
+                        start_seconds: start_seconds.max(0.0),
+                        end_seconds,
+                        title,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let tracks = streams
         .iter()
         .filter_map(|stream| {
@@ -2275,6 +2432,7 @@ fn probe_media_file(path: PathBuf) -> Result<MediaFileInfo, String> {
             .and_then(|item| u32::try_from(item).ok()),
         bit_rate: parse_integer(format.and_then(|item| item.get("bit_rate"))),
         tracks,
+        chapters,
     })
 }
 
@@ -2554,7 +2712,7 @@ fn required_media_track(operation: &str) -> Option<&'static str> {
         "transcode-mp4" | "mute-video" | "remux-mp4" | "extract-cover" => Some("video"),
         "extract-subtitle" => Some("subtitle"),
         "remove-audio" => Some("video"),
-        "remove-subtitles" | "add-subtitle" => Some("media"),
+        "remove-subtitles" | "add-subtitle" | "edit-chapters" => Some("media"),
         "clean-metadata" => Some("media"),
         "trim-clip" | "lossless-clip" => Some("media"),
         _ => None,
@@ -2606,6 +2764,15 @@ fn transcode_media(
             return Err("字幕文件不能与输入媒体文件相同。".into());
         }
         Some(subtitle)
+    } else {
+        None
+    };
+    let chapter_metadata = if request.operation == "edit-chapters" {
+        let raw = request
+            .chapters_json
+            .as_deref()
+            .ok_or("请输入章节 JSON 数组。")?;
+        Some(create_media_chapter_metadata(raw, source_duration)?)
     } else {
         None
     };
@@ -2881,6 +3048,19 @@ fn transcode_media(
             ["-map", "0", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy"]
                 .into_iter()
                 .map(str::to_owned)
+            .collect(),
+            source_duration,
+        ),
+        "edit-chapters" => (
+            "chapters",
+            input
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("mkv")
+                .to_ascii_lowercase(),
+            ["-map", "0", "-map_metadata", "0", "-map_chapters", "1", "-c", "copy"]
+                .into_iter()
+                .map(str::to_owned)
                 .collect(),
             source_duration,
         ),
@@ -2911,6 +3091,12 @@ fn transcode_media(
         .arg(&input);
     if let Some(subtitle) = subtitle_input.as_ref() {
         command.arg("-i").arg(subtitle);
+    }
+    if let Some(metadata) = chapter_metadata.as_ref() {
+        command
+            .args(["-f", "ffmetadata"])
+            .arg("-i")
+            .arg(&metadata.path);
     }
     let mut child = command
         .args(arguments)
@@ -5229,6 +5415,24 @@ mod external_markdown_tests {
     }
 
     #[test]
+    fn media_chapter_json_is_bounded_and_escaped_for_ffmetadata() {
+        let chapters = parse_media_chapter_json(
+            r#"[{"startSeconds":0,"endSeconds":12.345,"title":"开场 = 100%; #1"}]"#,
+            Some(30.0),
+        )
+        .unwrap();
+        let metadata = render_media_ffmetadata(&chapters);
+        assert!(metadata.starts_with(";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=12345\n"));
+        assert!(metadata.contains(r#"title=开场 \= 100%\; \#1"#));
+        assert!(parse_media_chapter_json(
+            r#"[{"startSeconds":10,"endSeconds":12,"title":"后"},{"startSeconds":11,"endSeconds":14,"title":"重叠"}]"#,
+            Some(30.0),
+        )
+        .is_err());
+        assert!(parse_media_chapter_json("[]", Some(30.0)).unwrap().is_empty());
+    }
+
+    #[test]
     fn media_clip_ranges_reject_invalid_or_out_of_bounds_requests() {
         assert_eq!(
             validated_media_clip_range(Some(12.0), Some(18.0), Some(60.0)).unwrap(),
@@ -5254,6 +5458,7 @@ mod external_markdown_tests {
         assert_eq!(required_media_track("remove-subtitles"), Some("media"));
         assert_eq!(required_media_track("add-subtitle"), Some("media"));
         assert_eq!(required_media_track("clean-metadata"), Some("media"));
+        assert_eq!(required_media_track("edit-chapters"), Some("media"));
         assert_eq!(required_media_track("unsupported"), None);
     }
 
