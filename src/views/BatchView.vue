@@ -50,6 +50,7 @@ const watermarkColor = ref('#8a8f98')
 const signatureText = ref('')
 const signaturePosition = ref<'bottom-left' | 'bottom-center' | 'bottom-right'>('bottom-right')
 const signatureScale = ref(100)
+const bookmarkJson = ref('')
 const pageNumberStart = ref(1)
 const pageNumberPosition = ref<'bottom-center' | 'bottom-right'>('bottom-center')
 const redactTerms = ref('')
@@ -95,7 +96,7 @@ const groups: [ToolGroup, string, string, string][] = [
 ]
 
 const operationMap: Record<ToolGroup, ToolOption[]> = {
-  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['compare', '比较 PDF'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['signature', '放置签名'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['protect', '密码保护 PDF'], ['decrypt', '移除 PDF 密码'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本'], ['attachments', '提取附件'], ['bookmarks', '导出书签'], ['metadata', '导出元数据']],
+  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['compare', '比较 PDF'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['signature', '放置签名'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['protect', '密码保护 PDF'], ['decrypt', '移除 PDF 密码'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本'], ['attachments', '提取附件'], ['bookmarks', '导出书签'], ['edit-bookmarks', '编辑书签'], ['metadata', '导出元数据']],
   image: [['convert', '转换图片'], ['resize', '缩放并压缩'], ['crop', '裁剪图片'], ['rotate', '旋转图片']],
   text: [['transform', '文本转换']],
   organize: [['rename-report', '命名预览'], ['dedupe-report', '哈希去重报告']]
@@ -128,6 +129,7 @@ const operationNotes: Record<string, string> = {
   text: '导出 PDF 文字层，或查看 AcroForm 表单字段',
   attachments: '提取 PDF 内嵌附件；每个附件会写成独立新文件',
   bookmarks: '导出 PDF 书签树为 JSON；只读，不改动原 PDF',
+  'edit-bookmarks': '按受控 JSON 替换 PDF 书签树，可跳转到页码或安全网页链接',
   convert: '在 PNG、JPG 与 WebP 之间转换',
   resize: '限制最大宽度并调整压缩质量',
   'image-crop': '按选区裁剪并批量导出',
@@ -147,7 +149,7 @@ const accept = computed(() => group.value === 'pdf' && operation.value !== 'imag
       : group.value === 'text'
         ? '.txt,.md,.json,.js,.ts,.py,.java,.csv,text/*,application/json'
         : '*/*')
-const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'crop', 'watermark', 'signature', 'page-number', 'rotate', 'split', 'compare', 'text', 'pdf-to-image', 'compress', 'protect', 'decrypt', 'redact', 'ocr'].includes(operation.value))
+const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'crop', 'watermark', 'signature', 'edit-bookmarks', 'page-number', 'rotate', 'split', 'compare', 'text', 'pdf-to-image', 'compress', 'protect', 'decrypt', 'redact', 'ocr'].includes(operation.value))
 const usesOutputName = computed(() => group.value === 'text' || group.value === 'organize' || (group.value === 'pdf' && ['merge', 'images-to-pdf'].includes(operation.value)))
 const canRun = computed(() => !running.value
   && (files.value.length > 0 || (group.value === 'text' && textInput.value.trim().length > 0))
@@ -156,6 +158,7 @@ const canRun = computed(() => !running.value
   && (!(group.value === 'pdf' && operation.value === 'protect') || pdfPassword.value.length >= 8)
   && !(group.value === 'pdf' && operation.value === 'redact' && !redactTerms.value.trim())
   && !(group.value === 'pdf' && operation.value === 'signature' && !signatureText.value.trim())
+  && !(group.value === 'pdf' && operation.value === 'edit-bookmarks' && !bookmarkJson.value.trim())
   && !(group.value === 'pdf' && operation.value === 'ocr' && !isDesktop()))
 const outputHint = computed(() => {
   if (!files.value.length && !(group.value === 'text' && textInput.value.trim())) return '等待输入内容'
@@ -170,6 +173,7 @@ const outputHint = computed(() => {
   if (group.value === 'pdf' && operation.value === 'bookmarks') return '导出书签标题、层级、链接和目标存在性；超深或超大书签树会被安全截断'
   if (group.value === 'pdf' && operation.value === 'metadata') return '导出标题、作者、创建工具、权限、指纹和页面尺寸；只读且会限制字段与页数'
   if (group.value === 'pdf' && operation.value === 'signature') return '将手写风格签名绘制到每页底部，生成新副本；不会产生数字证书签名'
+  if (group.value === 'pdf' && operation.value === 'edit-bookmarks') return '按 JSON 替换书签树；只允许页码跳转和 http(s) 链接，原 PDF 不会被覆盖'
   if (group.value === 'organize') return '仅生成预览报告，不修改原文件'
   return `将为 ${Math.max(files.value.length, 1)} 个输入生成新输出`
 })
@@ -274,7 +278,7 @@ function recipeParameters() {
     imageFormat: imageFormat.value, pdfImageDpi: pdfImageDpi.value, cropLeft: cropLeft.value, cropTop: cropTop.value,
     cropWidth: cropWidth.value, cropHeight: cropHeight.value, maxWidth: maxWidth.value,
     quality: quality.value, watermarkText: watermarkText.value, watermarkOpacity: watermarkOpacity.value,
-    watermarkColor: watermarkColor.value, signatureText: signatureText.value, signaturePosition: signaturePosition.value, signatureScale: signatureScale.value, pageNumberStart: pageNumberStart.value,
+    watermarkColor: watermarkColor.value, signatureText: signatureText.value, signaturePosition: signaturePosition.value, signatureScale: signatureScale.value, bookmarkJson: bookmarkJson.value, pageNumberStart: pageNumberStart.value,
     pageNumberPosition: pageNumberPosition.value, redactTerms: redactTerms.value, textMode: textMode.value, renamePrefix: renamePrefix.value,
     renameSuffix: renameSuffix.value, renameStart: renameStart.value, renameDigits: renameDigits.value,
     renameSeparator: renameSeparator.value, renameKeepOriginal: renameKeepOriginal.value ? 1 : 0,
@@ -307,6 +311,7 @@ function applyRecipe(recipe: ToolRecipe) {
   signatureText.value = String(params.signatureText ?? signatureText.value)
   signaturePosition.value = params.signaturePosition === 'bottom-left' || params.signaturePosition === 'bottom-center' ? params.signaturePosition : 'bottom-right'
   signatureScale.value = Math.max(50, Math.min(180, Number(params.signatureScale ?? signatureScale.value)))
+  bookmarkJson.value = String(params.bookmarkJson ?? bookmarkJson.value)
   pageNumberStart.value = Number(params.pageNumberStart ?? pageNumberStart.value)
   pageNumberPosition.value = params.pageNumberPosition === 'bottom-right' ? 'bottom-right' : 'bottom-center'
   redactTerms.value = String(params.redactTerms ?? redactTerms.value)
@@ -636,6 +641,25 @@ async function runPdf(onProgress?: (progress: number, detail: string) => void, o
       outputs.push(saved)
       onOutput?.(saved)
       onProgress?.(12 + 82 * (index + 1) / inputs.length, `已放置 ${index + 1}/${inputs.length} 份 PDF 的签名。`)
+    }
+    return outputs
+  }
+  if (operation.value === 'edit-bookmarks') {
+    const source = bookmarkJson.value.trim()
+    if (!source) throw new Error('请输入书签 JSON。')
+    onProgress?.(12, '正在读取书签结构…')
+    const { PDFDocument } = await import('pdf-lib')
+    const { applyPdfBookmarkDocument } = await import('@/lib/pdf-bookmarks')
+    const outputs: FileReference[] = []
+    for (let index = 0; index < inputs.length; index += 1) {
+      throwIfCancelled()
+      const document = await PDFDocument.load(inputs[index].data)
+      applyPdfBookmarkDocument(document, source)
+      throwIfCancelled()
+      const saved = await save(`${cleanOutputName(inputs[index].name)}-bookmarked.pdf`, bytes(await document.save({ useObjectStreams: true })), 'application/pdf')
+      outputs.push(saved)
+      onOutput?.(saved)
+      onProgress?.(12 + 82 * (index + 1) / inputs.length, `已更新 ${index + 1}/${inputs.length} 份 PDF 的书签。`)
     }
     return outputs
   }
@@ -1150,6 +1174,20 @@ onBeforeUnmount(() => {
                 <input v-model.number="signatureScale" type="range" min="50" max="180" class="w-full accent-accent" />
               </FieldRow>
               <p class="text-[11px] text-warn leading-relaxed">这是可视签名图层，不是 PKI 数字签名；不会验证身份，也不会锁定 PDF。</p>
+            </template>
+
+            <template v-if="operation === 'edit-bookmarks'">
+              <FieldRow label="书签 JSON" hint="page 从 1 开始；items 可嵌套，url 仅允许 http(s)">
+                <textarea
+                  v-model="bookmarkJson"
+                  name="bookmark-json"
+                  rows="12"
+                  class="field w-full min-h-56 resize-y font-mono text-[11px] leading-relaxed"
+                  spellcheck="false"
+                  placeholder="{\n  &quot;items&quot;: [\n    { &quot;title&quot;: &quot;第一章&quot;, &quot;page&quot;: 1, &quot;items&quot;: [] },\n    { &quot;title&quot;: &quot;项目主页&quot;, &quot;url&quot;: &quot;https://example.com&quot; }\n  ]\n}"
+                />
+              </FieldRow>
+              <p class="text-[11px] text-warn leading-relaxed">执行后会替换原有书签并生成新 PDF；不会执行脚本、文件链接或任意 PDF Action。输入空 items 可以清除书签。</p>
             </template>
 
             <FieldRow v-if="operation === 'rotate'" label="旋转角度">
