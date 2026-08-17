@@ -92,7 +92,7 @@ const groups: [ToolGroup, string, string, string][] = [
 ]
 
 const operationMap: Record<ToolGroup, ToolOption[]> = {
-  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['compare', '比较 PDF'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['protect', '密码保护 PDF'], ['decrypt', '移除 PDF 密码'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本'], ['attachments', '提取附件'], ['bookmarks', '导出书签']],
+  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['compare', '比较 PDF'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['protect', '密码保护 PDF'], ['decrypt', '移除 PDF 密码'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本'], ['attachments', '提取附件'], ['bookmarks', '导出书签'], ['metadata', '导出元数据']],
   image: [['convert', '转换图片'], ['resize', '缩放并压缩'], ['crop', '裁剪图片'], ['rotate', '旋转图片']],
   text: [['transform', '文本转换']],
   organize: [['rename-report', '命名预览'], ['dedupe-report', '哈希去重报告']]
@@ -163,6 +163,7 @@ const outputHint = computed(() => {
   if (group.value === 'pdf' && operation.value === 'ocr') return isDesktop() ? '使用 Windows 本机 OCR，原文件不会上传；输出会保留页面图片并附加文字层' : 'OCR PDF 需要 Windows 桌面版与本机 OCR 语言包'
   if (group.value === 'pdf' && operation.value === 'attachments') return '提取 PDF 内嵌附件为独立文件；单份 PDF 最多 128 个、单个 16 MB、总计 64 MB'
   if (group.value === 'pdf' && operation.value === 'bookmarks') return '导出书签标题、层级、链接和目标存在性；超深或超大书签树会被安全截断'
+  if (group.value === 'pdf' && operation.value === 'metadata') return '导出标题、作者、创建工具、权限、指纹和页面尺寸；只读且会限制字段与页数'
   if (group.value === 'organize') return '仅生成预览报告，不修改原文件'
   return `将为 ${Math.max(files.value.length, 1)} 个输入生成新输出`
 })

@@ -10,6 +10,7 @@ import { parseRedactionTerms, redactionRectangle, type PdfTextItemForRedaction }
 import { buildPdfCompareReport, comparePdfPageSnapshots, PDF_COMPARE_TEXT_LIMIT, type PdfComparePageSnapshot } from '@/lib/pdf-compare'
 import { PDF_ATTACHMENT_MAX_BYTES, PDF_ATTACHMENT_MAX_COUNT, PDF_ATTACHMENT_MAX_TOTAL_BYTES, pdfAttachmentMime, pdfAttachmentOutputName } from '@/lib/pdf-attachments'
 import { buildPdfOutlineReport, pdfOutlineOutputName } from '@/lib/pdf-outline'
+import { PDF_METADATA_MAX_PAGES, buildPdfMetadataReport, pdfMetadataOutputName } from '@/lib/pdf-metadata'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -205,6 +206,54 @@ async function runTask(taskId: string, request: PdfTaskRequest) {
           mime: 'application/json',
         })
         postProgress(taskId, 10 + 84 * (index + 1) / files.length, `已导出“${file.name}”的书签目录。`)
+      } finally {
+        document.cleanup()
+        await loading.destroy()
+      }
+    }
+    return
+  }
+
+  if (request.operation === 'metadata') {
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index]
+      const loading = pdfjs.getDocument({ data: file.data })
+      const document = await loading.promise
+      try {
+        const metadataInfo = await document.getMetadata()
+        const permissions = await document.getPermissions()
+        const pages: Array<{ width: number; height: number; rotation: number }> = []
+        const pageLimit = Math.min(document.numPages, PDF_METADATA_MAX_PAGES)
+        for (let pageIndex = 1; pageIndex <= pageLimit; pageIndex += 1) {
+          const page = await document.getPage(pageIndex)
+          try {
+            const viewport = page.getViewport({ scale: 1 })
+            pages.push({ width: viewport.width, height: viewport.height, rotation: viewport.rotation })
+          } finally {
+            page.cleanup()
+          }
+          postProgress(taskId, 10 + 84 * (index + pageIndex / Math.max(1, pageLimit)) / files.length, `正在读取“${file.name}”第 ${pageIndex}/${document.numPages} 页信息…`)
+        }
+        const xmpMetadata = metadataInfo?.metadata
+          ? Object.fromEntries(Array.from(metadataInfo.metadata as unknown as Iterable<unknown>).flatMap((entry) => {
+            if (!Array.isArray(entry) || entry.length < 2 || typeof entry[0] !== 'string') return []
+            return [[entry[0], entry[1]] as const]
+          }))
+          : undefined
+        const report = buildPdfMetadataReport(file.name, {
+          pageCount: document.numPages,
+          fingerprints: document.fingerprints,
+          info: metadataInfo?.info,
+          metadata: xmpMetadata,
+          permissions,
+          pages,
+        })
+        await publish(taskId, ++outputSequence, {
+          name: pdfMetadataOutputName(file.name),
+          data: toBuffer(new TextEncoder().encode(report)),
+          mime: 'application/json',
+        })
+        postProgress(taskId, 10 + 84 * (index + 1) / files.length, `已导出“${file.name}”的元数据报告。`)
       } finally {
         document.cleanup()
         await loading.destroy()
