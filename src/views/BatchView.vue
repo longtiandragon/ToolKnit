@@ -50,7 +50,8 @@ const watermarkColor = ref('#8a8f98')
 const pageNumberStart = ref(1)
 const pageNumberPosition = ref<'bottom-center' | 'bottom-right'>('bottom-center')
 const redactTerms = ref('')
-const pdfTextMode = ref<'text' | 'form'>('text')
+const pdfTextMode = ref<'text' | 'form' | 'fill'>('text')
+const pdfFormValues = ref('')
 const pdfPassword = ref('')
 const pdfAllowPrinting = ref(false)
 const pdfAllowCopying = ref(false)
@@ -264,6 +265,7 @@ function recipeParameters() {
     renameSuffix: renameSuffix.value, renameStart: renameStart.value, renameDigits: renameDigits.value,
     renameSeparator: renameSeparator.value, renameKeepOriginal: renameKeepOriginal.value ? 1 : 0,
     pdfTextMode: pdfTextMode.value,
+    pdfFormValues: pdfFormValues.value,
     pdfAllowPrinting: pdfAllowPrinting.value ? 1 : 0,
     pdfAllowCopying: pdfAllowCopying.value ? 1 : 0,
     pdfAllowModification: pdfAllowModification.value ? 1 : 0,
@@ -291,7 +293,8 @@ function applyRecipe(recipe: ToolRecipe) {
   pageNumberStart.value = Number(params.pageNumberStart ?? pageNumberStart.value)
   pageNumberPosition.value = params.pageNumberPosition === 'bottom-right' ? 'bottom-right' : 'bottom-center'
   redactTerms.value = String(params.redactTerms ?? redactTerms.value)
-  pdfTextMode.value = params.pdfTextMode === 'form' ? 'form' : 'text'
+  pdfTextMode.value = params.pdfTextMode === 'form' || params.pdfTextMode === 'fill' ? params.pdfTextMode : 'text'
+  pdfFormValues.value = String(params.pdfFormValues ?? pdfFormValues.value)
   pdfAllowPrinting.value = Number(params.pdfAllowPrinting ?? (pdfAllowPrinting.value ? 1 : 0)) === 1
   pdfAllowCopying.value = Number(params.pdfAllowCopying ?? (pdfAllowCopying.value ? 1 : 0)) === 1
   pdfAllowModification.value = Number(params.pdfAllowModification ?? (pdfAllowModification.value ? 1 : 0)) === 1
@@ -366,7 +369,7 @@ watch(() => route.query, (query) => {
   rotation.value = defaultRotationFor(requestedOperation)
   outputName.value = defaultOutputNameFor(requestedOperation)
   if (requestedOperation === 'pdf-to-image' || requestedOperation === 'ocr') pageRange.value = ''
-  if (requestedOperation === 'text' && query.mode === 'form') pdfTextMode.value = 'form'
+  if (requestedOperation === 'text') pdfTextMode.value = query.mode === 'form' || query.mode === 'fill' ? query.mode : 'text'
   const supportedTextModes: TextTransformMode[] = ['json', 'trim', 'markdown', 'dedupe-lines', 'sort-lines', 'extract-contacts', 'statistics']
   if (typeof query.mode === 'string' && supportedTextModes.includes(query.mode as TextTransformMode)) textMode.value = query.mode as TextTransformMode
   activeRecipeId.value = undefined
@@ -545,6 +548,21 @@ async function runPdf(onProgress?: (progress: number, detail: string) => void, o
       outputs.push(saved)
       onOutput?.(saved)
       onProgress?.(12 + 80 * (index + 1) / inputs.length, `已读取 ${index + 1}/${inputs.length} 份 PDF 的表单字段。`)
+    }
+    return outputs
+  }
+  if (operation.value === 'text' && pdfTextMode.value === 'fill') {
+    const outputs: FileReference[] = []
+    for (let index = 0; index < inputs.length; index += 1) {
+      throwIfCancelled()
+      onProgress?.(12 + 80 * index / inputs.length, `正在填写 ${index + 1}/${inputs.length} 份 PDF 表单…`)
+      const { fillPdfForm } = await import('@/lib/pdf-form')
+      const filled = await fillPdfForm(inputs[index].data, pdfFormValues.value)
+      throwIfCancelled()
+      const saved = await save(`${cleanOutputName(inputs[index].name)}-filled.pdf`, filled, 'application/pdf')
+      outputs.push(saved)
+      onOutput?.(saved)
+      onProgress?.(12 + 80 * (index + 1) / inputs.length, `已填写 ${index + 1}/${inputs.length} 份 PDF 表单。`)
     }
     return outputs
   }
@@ -1125,8 +1143,11 @@ onBeforeUnmount(() => {
               <select v-model="pdfTextMode" class="field w-full">
                 <option value="text">文字层 → TXT</option>
                 <option value="form">AcroForm 字段 → JSON</option>
+                <option value="fill">填写 AcroForm → PDF</option>
               </select>
-              <span class="block mt-2">文字层模式不会 OCR；扫描件请改用 OCR。表单模式会保留字段名、类型、当前值和选项。</span>
+              <span v-if="pdfTextMode === 'fill'" class="block mt-2">填写模式只接受字段名 JSON；字段名必须与 PDF 完全一致，输出为新 PDF，不覆盖原文件。</span>
+              <textarea v-if="pdfTextMode === 'fill'" v-model="pdfFormValues" rows="6" class="field w-full mt-2 font-mono text-[11px]" spellcheck="false" placeholder="{\n  &quot;姓名&quot;: &quot;张三&quot;,\n  &quot;同意条款&quot;: true,\n  &quot;城市&quot;: &quot;上海&quot;\n}" aria-label="AcroForm 字段 JSON" />
+              <span v-else class="block mt-2">文字层模式不会 OCR；扫描件请改用 OCR。表单模式会保留字段名、类型、当前值和选项。</span>
             </div>
           </template>
 
