@@ -26,6 +26,7 @@ describe('tool catalog', () => {
     expect(searchTools('加入字幕')[0]?.id).toBe('media-desk')
     expect(searchTools('移除字幕')[0]?.id).toBe('media-desk')
     expect(searchTools('移除音轨')[0]?.id).toBe('media-desk')
+    expect(searchTools('音量标准化')[0]?.id).toBe('media-desk')
     expect(searchTools('whisper')[0]?.id).toBe('local-transcription')
     expect(searchTools('把 PDF 转成图片')[0]?.id).toBe('pdf-pdf-to-image')
     expect(searchTools('多张图片拼成一张长图')[0]?.id).toBe('image-concat')
