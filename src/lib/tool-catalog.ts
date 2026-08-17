@@ -110,7 +110,7 @@ export const toolCatalog: ToolCatalogItem[] = [
   { id: 'developer-json', title: 'JSON 格式化与压缩', description: '格式化/压缩/JSONPath', group: '开发', icon: 'json', to: { path: '/developer-tools', query: { tool: 'json' } }, keywords: ['json', 'jsonpath'] },
   { id: 'developer-jwt', title: 'JWT 查看器', description: '本地读取 Header、Payload 与过期时间', group: '开发', icon: 'shield', to: { path: '/developer-tools', query: { tool: 'jwt' } }, keywords: ['token', 'claims', 'header', 'payload'] },
   { id: 'developer-hash', title: 'SHA-256 文本哈希', description: '生成文本内容的十六进制指纹', group: '开发', icon: 'hash', to: { path: '/developer-tools', query: { tool: 'hash' } }, keywords: ['sha256', 'hash', '摘要', '校验'] },
-  { id: 'developer-uuid', title: 'UUID 批量生成', description: '一次生成最多 100 个 UUID v4', group: '开发', icon: 'fingerprint', to: { path: '/developer-tools', query: { tool: 'uuid' } }, keywords: ['guid', 'random', '唯一标识'] },
+  { id: 'developer-uuid', title: 'UUID / ULID', description: '生成 UUID v4 或可排序 ULID', group: '开发', icon: 'fingerprint', to: { path: '/developer-tools', query: { tool: 'uuid' } }, keywords: ['guid', 'random', '唯一标识', 'ulid'] },
   { id: 'developer-timestamp', title: '时间戳转换', description: '秒、毫秒时间戳与日期互转', group: '开发', icon: 'clock', to: { path: '/developer-tools', query: { tool: 'timestamp' } }, keywords: ['unix', 'timestamp', '日期'] },
   { id: 'developer-radix', title: '整数进制转换', description: '支持 2 到 36 进制与超大整数', group: '开发', icon: 'binary', to: { path: '/developer-tools', query: { tool: 'radix' } }, keywords: ['binary', 'hex', '二进制', '十六进制'] },
   { id: 'developer-regex', title: '正则表达式测试', description: '查看匹配索引和捕获组', group: '开发', icon: 'regex', to: { path: '/developer-tools', query: { tool: 'regex' } }, keywords: ['regex', 'regexp', '匹配'] },

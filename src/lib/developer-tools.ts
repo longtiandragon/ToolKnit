@@ -1390,6 +1390,33 @@ export function generateUuids(count = 1) {
   return Array.from({ length: count }, () => crypto.randomUUID()).join('\n')
 }
 
+const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+
+function encodeUlidBase32(value: bigint, length: number) {
+  let result = ''
+  for (let index = 0; index < length; index += 1) {
+    result = ULID_ALPHABET[Number(value & 31n)] + result
+    value >>= 5n
+  }
+  return result
+}
+
+function randomBigInt(byteCount: number) {
+  const bytes = new Uint8Array(byteCount)
+  crypto.getRandomValues(bytes)
+  return bytes.reduce((value, byte) => (value << 8n) | BigInt(byte), 0n)
+}
+
+/** Generates sortable ULIDs without relying on a remote service. The first
+ * ten characters encode the millisecond timestamp; the remaining sixteen are
+ * cryptographically random. `now` is injectable for deterministic tests. */
+export function generateUlids(count = 1, now = Date.now()) {
+  if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error('ULID 数量需要在 1 到 100 之间。')
+  if (!Number.isSafeInteger(now) || now < 0 || now > 0xffffffffffff) throw new Error('ULID 时间戳超出安全范围。')
+  const timestamp = BigInt(now)
+  return Array.from({ length: count }, () => `${encodeUlidBase32(timestamp, 10)}${encodeUlidBase32(randomBigInt(10), 16)}`).join('\n')
+}
+
 function digitValue(character: string) {
   const code = character.toLowerCase().charCodeAt(0)
   return code >= 48 && code <= 57 ? code - 48 : code >= 97 && code <= 122 ? code - 87 : -1

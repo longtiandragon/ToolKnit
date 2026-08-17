@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type CompressionFormat, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type GeneratedDataTypeLanguage, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
+import { calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateUuids, generateUlids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type CompressionFormat, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type GeneratedDataTypeLanguage, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
 import { decodeQrImage, generateQrCode } from '@/lib/qr-tools'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import AppIcon from '@/components/AppIcon.vue'
@@ -9,7 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import FieldRow from '@/components/FieldRow.vue'
 import { useWorkbenchStore } from '@/stores/workbench'
 
-type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'base32' | 'base58' | 'compress' | 'hex' | 'url' | 'json' | 'json-yaml' | 'csv-json' | 'json-schema' | 'type-gen' | 'sql' | 'cidr' | 'color' | 'cron' | 'xml' | 'html-entities' | 'jwt' | 'hash' | 'uuid' | 'timestamp' | 'radix' | 'regex' | 'diff'
+type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'base32' | 'base58' | 'compress' | 'hex' | 'url' | 'json' | 'json-yaml' | 'csv-json' | 'json-schema' | 'type-gen' | 'sql' | 'cidr' | 'color' | 'cron' | 'xml' | 'html-entities' | 'jwt' | 'hash' | 'uuid' | 'ulid' | 'timestamp' | 'radix' | 'regex' | 'diff'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,6 +37,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
   { id: 'jwt', icon: 'shield', title: 'JWT 查看器', description: '读取 Header 与 Payload' },
   { id: 'hash', icon: 'hash', title: 'SHA-256', description: '生成文本内容指纹' },
   { id: 'uuid', icon: 'fingerprint', title: 'UUID', description: '批量生成 UUID v4' },
+  { id: 'ulid', icon: 'fingerprint', title: 'ULID', description: '生成可按时间排序的 ID' },
   { id: 'timestamp', icon: 'clock', title: '时间戳', description: '秒、毫秒与日期互转' },
   { id: 'radix', icon: 'binary', title: '进制转换', description: '2 到 36 进制整数互转' },
   { id: 'regex', icon: 'regex', title: '正则测试', description: '查看匹配位置和捕获组' },
@@ -179,13 +180,14 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
   }
 })
 
-const runLabel = computed(() => tool.value === 'uuid' ? '生成 UUID' : '识别二维码')
+const runLabel = computed(() => tool.value === 'uuid' ? '生成 UUID' : tool.value === 'ulid' ? '生成 ULID' : '识别二维码')
 /** What the result panel says before there is a result. Generic copy here
  *  ("输入内容并点击执行处理") was wrong for half the tools and unhelpful for
  *  the rest. */
 const emptyResultHint = computed(() => {
   switch (tool.value) {
     case 'uuid': return '选好数量后点击生成，每次都会产生一组新的 UUID v4。'
+    case 'ulid': return '选好数量后点击生成；ULID 前缀按毫秒时间排序，随机部分只在本机生成。'
     case 'qrcode': return qrMode.value === 'generate' ? '在左侧输入网址或文字，二维码会即时生成。' : '选择一张含二维码的图片，然后点击识别。'
     case 'regex': return '先写正则表达式，再粘贴待匹配的文本。'
     case 'diff': return '左右两个输入框都填上内容，差异会逐行标出。'
@@ -269,6 +271,7 @@ async function run() {
     else if (tool.value === 'jwt') output.value = JSON.stringify(decodeJwt(input.value), null, 2)
     else if (tool.value === 'hash') output.value = await sha256(input.value)
     else if (tool.value === 'uuid') output.value = generateUuids(uuidCount.value)
+    else if (tool.value === 'ulid') output.value = generateUlids(uuidCount.value)
     else if (tool.value === 'timestamp') timestampResult.value = convertTimestamp(input.value)
     else if (tool.value === 'radix') output.value = convertNumberBase(input.value, fromBase.value, toBase.value)
     else if (tool.value === 'regex') regexMatches.value = testRegex(pattern.value, flags.value, input.value)
@@ -480,19 +483,19 @@ onBeforeUnmount(() => {
                 : tool === 'json-yaml' ? (direction === 'encode' ? 'JSON 内容' : 'YAML 内容')
                   : tool === 'csv-json' ? (direction === 'encode' ? 'CSV 内容' : 'JSON 对象数组')
                     : tool === 'qrcode' ? (qrMode === 'generate' ? '二维码内容' : '二维码图片')
-                        : tool === 'datecalc' ? '日期' : tool === 'uuid' ? '生成设置' : '输入' }}
+              : tool === 'datecalc' ? '日期' : (tool === 'uuid' || tool === 'ulid') ? '生成设置' : '输入' }}
           </p>
-          <span v-if="input && tool !== 'uuid' && tool !== 'datecalc'" class="text-[11px] text-fg-3 tabular-nums">
+          <span v-if="input && tool !== 'uuid' && tool !== 'ulid' && tool !== 'datecalc'" class="text-[11px] text-fg-3 tabular-nums">
             {{ input.length }} 字符
           </span>
         </header>
 
         <!-- Tools whose input is a set of fields rather than a body of text. -->
-        <div v-if="tool === 'uuid'" class="stack gap-4 p-4">
+        <div v-if="tool === 'uuid' || tool === 'ulid'" class="stack gap-4 p-4">
           <FieldRow label="生成数量" hint="使用系统密码学随机数，一次最多 100 个">
             <input v-model.number="uuidCount" name="uuid-count" type="number" min="1" max="100" class="field w-full" />
           </FieldRow>
-          <button class="btn-primary w-full" :disabled="running" @click="run">生成 UUID</button>
+          <button class="btn-primary w-full" :disabled="running" @click="run">{{ runLabel }}</button>
         </div>
 
         <div v-else-if="tool === 'datecalc'" class="stack gap-4 p-4">
@@ -645,7 +648,7 @@ onBeforeUnmount(() => {
         </div>
 
         <textarea
-          v-else-if="hasOutput && ['base64', 'base32', 'base58', 'compress', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'type-gen', 'sql', 'cidr', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'uuid', 'radix'].includes(tool)"
+          v-else-if="hasOutput && ['base64', 'base32', 'base58', 'compress', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'type-gen', 'sql', 'cidr', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'uuid', 'ulid', 'radix'].includes(tool)"
           :value="output"
           readonly
           aria-label="处理结果"

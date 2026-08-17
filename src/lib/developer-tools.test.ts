@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateUuids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
+import { calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateUuids, generateUlids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -298,6 +298,19 @@ describe('generators and number conversion', () => {
 
   it('caps UUID batch size', () => {
     expect(() => generateUuids(101)).toThrow('1 到 100')
+  })
+
+  it('generates sortable ULIDs with a fixed timestamp prefix', () => {
+    const values = generateUlids(3, 1_725_000_000_000).split('\n')
+    expect(values).toHaveLength(3)
+    expect(new Set(values).size).toBe(3)
+    values.forEach((value) => expect(value).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/))
+    expect(values.every((value) => value.startsWith(values[0].slice(0, 10)))).toBe(true)
+  })
+
+  it('caps ULID batches and rejects unsafe timestamps', () => {
+    expect(() => generateUlids(101)).toThrow('1 到 100')
+    expect(() => generateUlids(1, -1)).toThrow('时间戳')
   })
 
   it('converts large signed integers between bases', () => {
