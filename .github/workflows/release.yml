@@ -17,11 +17,32 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - uses: dtolnay/rust-toolchain@stable
+        with: { components: clippy }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm tauri build
+      - name: Verify release version matches tag
+        run: pnpm check:release-version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+      - run: pnpm test
+      - run: pnpm benchmark:markdown:gate
+      - run: pnpm build
+      - run: pnpm check:startup
+      - run: pnpm build:public
+      - run: pnpm check:public
+      - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --features public-core
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: pnpm check:rust:clippy
+      - run: pnpm check:rust:clippy:public
+      - run: pnpm desktop:package:public
       - name: Write checksums
         shell: pwsh
-        run: Get-ChildItem 'src-tauri/target/release/bundle' -Recurse -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "{0}  {1}" -f $_.Hash,$_.Path } | Set-Content SHA256SUMS.txt
+        run: |
+          $installers = @(Get-ChildItem -LiteralPath 'src-tauri/target/release/bundle/nsis' -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one NSIS installer, found $($installers.Count)."
+          }
+          node scripts/write-release-checksums.mjs --output SHA256SUMS.txt $installers.FullName
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true

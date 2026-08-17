@@ -31,11 +31,23 @@ Knitspace Personal Pack（工作区外的私有目录）
 ## 发布前检查
 
 ```powershell
-pnpm build
+pnpm check:release-version
+pnpm test
+pnpm build:public
 pnpm check:public
+cargo test --manifest-path src-tauri/Cargo.toml
+pnpm check:rust:clippy
+pnpm check:rust:clippy:public
+pnpm desktop:package:public
 ```
 
 `check:public` 会检查当前发布白名单中的已跟踪与未跟踪源码，以及 `dist` / Tauri 静态资源；它会拒绝 Vault、个人包、模型、私有 JSON 清单、个人用户目录和高置信度密钥内容。`.gitignore` 也默认忽略这些位置。
+
+推送 `v*` 标签时，发布工作流还会要求标签与 `package.json`、Cargo 包和 Tauri 配置中的版本完全一致。Vite 的 `__APP_VERSION__` 直接读取 `package.json`，不再单独维护。工作流只发布 Public Core 的 NSIS 安装包，并生成只含安装包文件名的 `SHA256SUMS.txt`；在安装包所在目录可用 `sha256sum -c SHA256SUMS.txt` 校验。
+
+当前 Windows 安装包尚未配置代码签名证书，首次下载可能触发 Microsoft Defender SmartScreen 提示。在签名与干净虚拟机安装/升级/卸载验证完成前，发布版本应标记为 Beta 或 RC，不能宣称为稳定版。
+
+Clippy 对基线之外的所有警告使用 `-D warnings`。脚本里暂时放行的 lint 名称对应接入 Clippy 前就存在的代码债务；清理相应旧代码后应同步删除放行项，不能借此新增同类问题。
 
 ## 导出干净的公开仓库
 

@@ -1,7 +1,12 @@
+import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import UnoCSS from 'unocss/vite'
+
+const packageVersion = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8'),
+).version as string
 
 export default defineConfig(({ mode }) => {
   const personalPack = mode !== 'public'
@@ -21,7 +26,7 @@ export default defineConfig(({ mode }) => {
     },
   ],
   define: {
-    __APP_VERSION__: JSON.stringify('0.1.0'),
+    __APP_VERSION__: JSON.stringify(packageVersion),
     __PERSONAL_PACK__: JSON.stringify(personalPack),
   },
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
