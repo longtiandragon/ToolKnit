@@ -198,6 +198,54 @@ export function shiftSubtitleCues(cues: SubtitleCue[], deltaMs: number) {
   return cues.map(cue => ({ ...cue, startMs: cue.startMs + effectiveDelta, endMs: cue.endMs + effectiveDelta }))
 }
 
+export interface SubtitleRepairReport {
+  cues: SubtitleCue[]
+  adjustedCount: number
+  overlapCount: number
+  reordered: boolean
+}
+
+/**
+ * Repairs only timeline invariants that can be fixed without guessing at
+ * subtitle wording: chronological order, non-negative starts, non-overlap,
+ * and a small positive duration. The original text and cue ids are preserved.
+ * When an overlap is found the later cue is moved forward; this makes the
+ * choice explicit and deterministic instead of silently shortening speech.
+ */
+export function repairSubtitleTiming(cues: readonly SubtitleCue[], options: { minDurationMs?: number } = {}): SubtitleRepairReport {
+  const minDurationMs = Math.min(10_000, Math.max(1, Math.round(options.minDurationMs ?? 200)))
+  const indexed = cues.map((cue, index) => ({ cue, index })).sort((left, right) => {
+    const startDelta = left.cue.startMs - right.cue.startMs
+    if (Number.isFinite(startDelta) && startDelta !== 0) return startDelta
+    const endDelta = left.cue.endMs - right.cue.endMs
+    if (Number.isFinite(endDelta) && endDelta !== 0) return endDelta
+    return left.index - right.index
+  })
+  const repaired: SubtitleCue[] = []
+  let adjustedCount = 0
+  let overlapCount = 0
+  for (const { cue } of indexed) {
+    const originalStart = cue.startMs
+    const originalEnd = cue.endMs
+    let startMs = Number.isFinite(originalStart) ? Math.max(0, Math.round(originalStart)) : 0
+    let endMs = Number.isFinite(originalEnd) ? Math.round(originalEnd) : startMs + minDurationMs
+    const previous = repaired.at(-1)
+    if (previous && startMs < previous.endMs) {
+      overlapCount += 1
+      startMs = previous.endMs
+    }
+    if (endMs <= startMs) endMs = startMs + minDurationMs
+    if (startMs !== originalStart || endMs !== originalEnd) adjustedCount += 1
+    repaired.push({ ...cue, startMs, endMs })
+  }
+  return {
+    cues: repaired,
+    adjustedCount,
+    overlapCount,
+    reordered: indexed.some(({ index }, outputIndex) => index !== outputIndex),
+  }
+}
+
 export function splitSubtitleCue(cue: SubtitleCue, nextId: string): [SubtitleCue, SubtitleCue] | undefined {
   const text = cue.text.trim()
   const duration = cue.endMs - cue.startMs

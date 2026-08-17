@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatSubtitleTimestamp, mergeSubtitleCues, parseSubtitle, parseSubtitleTimestamp, serializeSubtitle, shiftSubtitleCues, splitSubtitleCue, subtitleCueIndexes } from './subtitle'
+import { formatSubtitleTimestamp, mergeSubtitleCues, parseSubtitle, parseSubtitleTimestamp, repairSubtitleTiming, serializeSubtitle, shiftSubtitleCues, splitSubtitleCue, subtitleCueIndexes } from './subtitle'
 
 describe('subtitle workflow', () => {
   it('parses SRT with BOM and keeps multiline text', () => {
@@ -30,6 +30,20 @@ describe('subtitle workflow', () => {
     ], -500)
     expect(shifted[0]).toMatchObject({ startMs: 0, endMs: 1000 })
     expect(shifted[1]).toMatchObject({ startMs: 1800, endMs: 2800 })
+  })
+
+  it('repairs subtitle overlaps without changing text or cue ids', () => {
+    const result = repairSubtitleTiming([
+      { id: 'b', startMs: 900, endMs: 800, text: '后一句' },
+      { id: 'a', startMs: 0, endMs: 1200, text: '前一句' },
+    ])
+    expect(result.overlapCount).toBe(1)
+    expect(result.reordered).toBe(true)
+    expect(result.adjustedCount).toBe(1)
+    expect(result.cues).toEqual([
+      { id: 'a', startMs: 0, endMs: 1200, text: '前一句' },
+      { id: 'b', startMs: 1200, endMs: 1400, text: '后一句' },
+    ])
   })
 
   it('splits and merges cue text without losing its time range', () => {

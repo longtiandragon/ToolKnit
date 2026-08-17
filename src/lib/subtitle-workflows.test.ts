@@ -4,10 +4,10 @@ import { analyzeSubtitleQuality } from './subtitle'
 import { subtitleWorkflowActions, subtitleWorkflowId } from './subtitle-workflows'
 
 describe('subtitle workflows', () => {
-  it('exposes six bounded desktop tasks with stable deep links', () => {
-    expect(subtitleWorkflowActions.map(action => action.id)).toEqual(['import', 'paste', 'transcribe', 'create', 'convert', 'shift'])
-    expect(new Set(subtitleWorkflowActions.map(action => action.to)).size).toBe(6)
-    expect(subtitleWorkflowActions.filter(action => action.requiresCues).map(action => action.id)).toEqual(['convert', 'shift'])
+  it('exposes seven bounded desktop tasks with stable deep links', () => {
+    expect(subtitleWorkflowActions.map(action => action.id)).toEqual(['import', 'paste', 'transcribe', 'create', 'convert', 'shift', 'repair'])
+    expect(new Set(subtitleWorkflowActions.map(action => action.to)).size).toBe(7)
+    expect(subtitleWorkflowActions.filter(action => action.requiresCues).map(action => action.id)).toEqual(['convert', 'shift', 'repair'])
   })
 
   it('keeps the four entry workflows discoverable from global navigation', () => {

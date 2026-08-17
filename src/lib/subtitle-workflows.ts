@@ -1,4 +1,4 @@
-export type SubtitleWorkflowId = 'import' | 'paste' | 'transcribe' | 'create' | 'convert' | 'shift'
+export type SubtitleWorkflowId = 'import' | 'paste' | 'transcribe' | 'create' | 'convert' | 'shift' | 'repair'
 
 export interface SubtitleWorkflowAction {
   id: SubtitleWorkflowId
@@ -19,9 +19,9 @@ export const subtitleWorkflowActions: readonly SubtitleWorkflowAction[] = [
   { id: 'create', label: '新建空白字幕', detail: '从第一条时间轴开始', icon: 'plus', to: '/subtitles?action=create' },
   { id: 'convert', label: 'SRT / VTT 互转', detail: '载入后导出另一种格式', icon: 'rotate', to: '/subtitles?action=convert', requiresCues: true },
   { id: 'shift', label: '整体时间校准', detail: '统一提前或延后毫秒数', icon: 'clock', to: '/subtitles?action=shift', requiresCues: true },
+  { id: 'repair', label: '修复时间轴重叠', detail: '只调整时间，不改正文', icon: 'shield', to: '/subtitles?action=repair', requiresCues: true },
 ]
 
 export function subtitleWorkflowId(value: unknown): SubtitleWorkflowId | undefined {
   return subtitleWorkflowActions.some(action => action.id === value) ? value as SubtitleWorkflowId : undefined
 }
-

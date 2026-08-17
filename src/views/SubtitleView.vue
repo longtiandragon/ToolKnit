@@ -16,6 +16,7 @@ import {
   mergeSubtitleCues,
   parseSubtitle,
   parseSubtitleTimestamp,
+  repairSubtitleTiming,
   serializeSubtitle,
   shiftSubtitleCues,
   splitSubtitleCue,
@@ -81,9 +82,9 @@ let resizeObserver: ResizeObserver | undefined
 
 const ROW_HEIGHT = 76
 
-/* The four workflows you can start from nothing. The other two — convert and
-   shift — are the toolbar controls they used to duplicate, which is why they
-   still carry `data-subtitle-workflow`: deep links focus them by that. */
+/* The four workflows you can start from nothing. The cue-dependent actions —
+   convert, shift and repair — are toolbar controls, but keep the same metadata
+   so deep links can focus or invoke them. */
 const entryWorkflows = subtitleWorkflowActions.filter((action) => !action.requiresCues)
 const importFormatOptions = [
   { id: 'srt', label: 'SRT' },
@@ -249,6 +250,10 @@ async function runSubtitleWorkflow(id: SubtitleWorkflowId, fromRoute = false) {
     if (!fromRoute) await exportAs(sourceFormat.value === 'srt' ? 'vtt' : 'srt')
     return
   }
+  if (id === 'repair') {
+    await repairTiming()
+    return
+  }
   shiftInputElement.value?.scrollIntoView({ behavior: 'auto', block: 'center' })
   shiftInputElement.value?.focus({ preventScroll: true })
   shiftInputElement.value?.select()
@@ -380,6 +385,27 @@ function shiftAll(direction: -1 | 1) {
   dirty.value = true
   if (activeCue.value) selectCue(activeCue.value)
   ui.toast('时间轴已整体平移', `${amount > 0 ? '+' : ''}${amount} ms`, 'success')
+}
+
+async function repairTiming() {
+  if (!cues.value.length || !applyActiveEdit()) return
+  const preview = repairSubtitleTiming(cues.value)
+  if (!preview.adjustedCount) {
+    ui.toast('时间轴无需修复', '没有发现重叠、负数开始时间或无效时长。', 'info')
+    return
+  }
+  const approved = await ui.confirm({
+    title: '修复字幕时间轴？',
+    message: `将按开始时间排序，并向后调整 ${preview.adjustedCount} 条字幕以消除 ${preview.overlapCount} 处重叠。只修改时间，不改正文；建议修复后先检查再导出。`,
+    confirmLabel: '修复时间轴',
+  })
+  if (!approved) return
+  const active = activeId.value
+  cues.value = preview.cues
+  dirty.value = true
+  const nextActive = cues.value.find(cue => cue.id === active) ?? cues.value[0]
+  if (nextActive) selectCue(nextActive)
+  ui.toast('时间轴已修复', `${preview.adjustedCount} 条已调整${preview.reordered ? '，并按开始时间重新排序' : ''}。`, 'success')
 }
 
 function insertAfter(cue: SubtitleCue) {
@@ -612,6 +638,7 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
             <AppIcon name="play" :size="14" />本机转写
           </button>
           <button class="btn-tool" data-subtitle-workflow="paste" @click="runSubtitleWorkflow('paste')"><AppIcon name="clipboard" :size="14" />粘贴源码</button>
+          <button v-if="qualityReport.overlapCount" class="btn-tool" data-subtitle-workflow="repair" @click="repairTiming"><AppIcon name="shield" :size="14" />修复重叠</button>
           <button ref="convertButtonElement" class="btn-tool" data-subtitle-workflow="convert" :disabled="exporting" @click="exportAs(sourceFormat === 'srt' ? 'vtt' : 'srt')">
             转为 {{ sourceFormat === 'srt' ? 'VTT' : 'SRT' }}
           </button>
@@ -642,7 +669,7 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
           <span class="row-between gap-2 px-2 py-1.5 bg-surface"><span>过长一行</span><b :class="qualityReport.lineLengthViolationCount ? 'text-warn' : 'text-fg-3'">{{ qualityReport.lineLengthViolationCount }}</b></span>
           <span class="row-between gap-2 px-2 py-1.5 bg-surface"><span>过短时长</span><b :class="qualityReport.shortDurationCount ? 'text-warn' : 'text-fg-3'">{{ qualityReport.shortDurationCount }}</b></span>
           <span class="row-between gap-2 px-2 py-1.5 bg-surface"><span>重复正文</span><b :class="qualityReport.duplicateCount ? 'text-warn' : 'text-fg-3'">{{ qualityReport.duplicateCount }}</b></span>
-          <span class="row-between gap-2 px-2 py-1.5 bg-surface text-fg-3">提示仅供校对参考，不会自动改写</span>
+          <span class="row-between gap-2 px-2 py-1.5 bg-surface text-fg-3">只修复时间轴，不改正文</span>
         </div>
         <ul v-if="qualityReport.issues.length" class="stack gap-1 px-3 pb-2 text-fg-2">
           <li v-for="issue in qualityReport.issues.slice(0, 5)" :key="`${issue.cueId}-${issue.kind}`" class="row gap-1.5"><span class="w-1 h-1 shrink-0 rounded-full bg-warn" />{{ issue.message }}</li>
