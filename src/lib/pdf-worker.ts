@@ -1,4 +1,6 @@
-export type PdfTaskOperation = 'merge' | 'split' | 'compare' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'crop' | 'text' | 'pdf-to-image' | 'compress' | 'redact' | 'ocr'
+import type { PdfAttachmentMime } from './pdf-attachments'
+
+export type PdfTaskOperation = 'merge' | 'split' | 'compare' | 'rotate' | 'extract' | 'reorder' | 'watermark' | 'page-number' | 'crop' | 'text' | 'attachments' | 'pdf-to-image' | 'compress' | 'redact' | 'ocr'
 
 export interface PdfTaskInput { name: string; data: ArrayBuffer }
 
@@ -29,7 +31,7 @@ export interface PdfTaskRequest {
 export interface PdfTaskOutput {
   name: string
   data: ArrayBuffer
-  mime: 'application/pdf' | 'text/plain;charset=utf-8' | 'image/png' | 'image/jpeg' | 'image/webp'
+  mime: 'application/pdf' | 'text/plain;charset=utf-8' | PdfAttachmentMime
   pageWidth?: number
   pageHeight?: number
   pageIndex?: number

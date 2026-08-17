@@ -8,6 +8,7 @@ import { calculatePdfCropBox } from '@/lib/pdf-crop'
 import type { PdfTaskInput, PdfTaskOutput, PdfTaskRequest } from '@/lib/pdf-worker'
 import { parseRedactionTerms, redactionRectangle, type PdfTextItemForRedaction } from '@/lib/pdf-redaction'
 import { buildPdfCompareReport, comparePdfPageSnapshots, PDF_COMPARE_TEXT_LIMIT, type PdfComparePageSnapshot } from '@/lib/pdf-compare'
+import { PDF_ATTACHMENT_MAX_BYTES, PDF_ATTACHMENT_MAX_COUNT, PDF_ATTACHMENT_MAX_TOTAL_BYTES, pdfAttachmentMime, pdfAttachmentOutputName } from '@/lib/pdf-attachments'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -143,6 +144,49 @@ async function runTask(taskId: string, request: PdfTaskRequest) {
       data: toBuffer(new TextEncoder().encode(report)),
       mime: 'text/plain;charset=utf-8',
     })
+    return
+  }
+
+  if (request.operation === 'attachments') {
+    let extracted = 0
+    for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+      const file = files[fileIndex]
+      const loading = pdfjs.getDocument({ data: file.data })
+      const document = await loading.promise
+      try {
+        const attachments = await document.getAttachments()
+        if (!attachments?.size) continue
+        if (attachments.size > PDF_ATTACHMENT_MAX_COUNT) {
+          throw new Error(`“${file.name}”包含 ${attachments.size} 个附件，超过单份 PDF 的 ${PDF_ATTACHMENT_MAX_COUNT} 个上限。`)
+        }
+        let totalBytes = 0
+        let attachmentIndex = 0
+        for (const [id, metadata] of attachments) {
+          attachmentIndex += 1
+          const content = metadata.content ?? await document.getAttachmentContent(id)
+          if (!content) throw new Error(`“${file.name}”的附件“${metadata.filename || metadata.rawFilename || attachmentIndex}”无法读取。`)
+          if (content.byteLength > PDF_ATTACHMENT_MAX_BYTES) {
+            throw new Error(`“${metadata.filename || attachmentIndex}”超过 ${Math.round(PDF_ATTACHMENT_MAX_BYTES / 1024 / 1024)} MB 单附件上限。`)
+          }
+          totalBytes += content.byteLength
+          if (totalBytes > PDF_ATTACHMENT_MAX_TOTAL_BYTES) {
+            throw new Error(`“${file.name}”附件总大小超过 ${Math.round(PDF_ATTACHMENT_MAX_TOTAL_BYTES / 1024 / 1024)} MB 上限。`)
+          }
+          const name = pdfAttachmentOutputName(file.name, metadata.filename || metadata.rawFilename, attachmentIndex)
+          await publish(taskId, ++outputSequence, {
+            name,
+            data: toBuffer(content),
+            mime: pdfAttachmentMime(name),
+          })
+          extracted += 1
+          postProgress(taskId, 10 + 84 * (fileIndex + attachmentIndex / attachments.size) / files.length, `正在提取“${file.name}”中的第 ${attachmentIndex}/${attachments.size} 个附件…`)
+        }
+      } finally {
+        document.cleanup()
+        await loading.destroy()
+      }
+    }
+    if (!extracted) throw new Error('所选 PDF 没有可提取的嵌入附件。')
     return
   }
 
