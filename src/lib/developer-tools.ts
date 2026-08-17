@@ -39,6 +39,7 @@ export interface DateOffsetResult {
 }
 
 export interface CidrResult {
+  version?: 4 | 6
   address: string
   prefix: number
   network: string
@@ -331,9 +332,83 @@ function formatIpv4(value: bigint) {
   return [24n, 16n, 8n, 0n].map((shift) => Number((value >> shift) & 255n)).join('.')
 }
 
+function parseIpv6(value: string) {
+  const normalized = value.trim().toLowerCase()
+  if (!normalized || !/^[0-9a-f:]+$/.test(normalized)) throw new Error(`IPv6 地址“${value}”无效。`)
+  const compression = normalized.indexOf('::')
+  let groups: string[]
+  if (compression >= 0) {
+    if (normalized.indexOf('::', compression + 2) >= 0) throw new Error(`IPv6 地址“${value}”无效：只能使用一次 ::。`)
+    const left = normalized.slice(0, compression).split(':').filter(Boolean)
+    const right = normalized.slice(compression + 2).split(':').filter(Boolean)
+    const missing = 8 - left.length - right.length
+    if (missing < 1) throw new Error(`IPv6 地址“${value}”无效：:: 没有压缩任何分组。`)
+    groups = [...left, ...Array.from({ length: missing }, () => '0'), ...right]
+  } else {
+    groups = normalized.split(':')
+  }
+  if (groups.length !== 8 || groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) throw new Error(`IPv6 地址“${value}”无效。`)
+  return groups.reduce((result, group) => (result << 16n) | BigInt(parseInt(group, 16)), 0n)
+}
+
+function formatIpv6(value: bigint) {
+  const groups = Array.from({ length: 8 }, (_, index) => Number((value >> BigInt((7 - index) * 16)) & 0xffffn))
+  let bestStart = -1
+  let bestLength = 0
+  let start = -1
+  for (let index = 0; index <= groups.length; index += 1) {
+    if (index < groups.length && groups[index] === 0) {
+      if (start < 0) start = index
+      continue
+    }
+    if (start >= 0 && index - start >= 2 && index - start > bestLength) {
+      bestStart = start
+      bestLength = index - start
+    }
+    start = -1
+  }
+  if (bestStart < 0) return groups.map((group) => group.toString(16)).join(':')
+  const end = bestStart + bestLength
+  const left = groups.slice(0, bestStart).map((group) => group.toString(16)).join(':')
+  const right = groups.slice(end).map((group) => group.toString(16)).join(':')
+  if (!left && !right) return '::'
+  if (!left) return `::${right}`
+  if (!right) return `${left}::`
+  return `${left}::${right}`
+}
+
+export function calculateIpv6Cidr(value: string): CidrResult {
+  const [addressValue, prefixValue, ...extra] = value.trim().split('/')
+  if (!addressValue || prefixValue === undefined || extra.length) throw new Error('请输入 IPv6 CIDR，例如 2001:db8::1/64。')
+  const prefix = Number(prefixValue)
+  if (!/^\d+$/.test(prefixValue) || !Number.isInteger(prefix) || prefix < 0 || prefix > 128) throw new Error('IPv6 CIDR 前缀长度需要在 0 到 128 之间。')
+  const address = parseIpv6(addressValue)
+  const max = (1n << 128n) - 1n
+  const hostBits = 128 - prefix
+  const hostMask = hostBits === 0 ? 0n : (1n << BigInt(hostBits)) - 1n
+  const mask = max ^ hostMask
+  const network = address & mask
+  const lastAddress = network | hostMask
+  const total = lastAddress - network + 1n
+  return {
+    version: 6,
+    address: formatIpv6(address),
+    prefix,
+    network: formatIpv6(network),
+    broadcast: formatIpv6(lastAddress),
+    netmask: formatIpv6(mask),
+    wildcard: formatIpv6(max ^ mask),
+    firstHost: formatIpv6(network),
+    lastHost: formatIpv6(lastAddress),
+    totalAddresses: total.toString(),
+    usableHosts: total.toString(),
+  }
+}
+
 export function calculateCidr(value: string): CidrResult {
   const [addressValue, prefixValue, ...extra] = value.trim().split('/')
   if (!addressValue || prefixValue === undefined || extra.length) throw new Error('请输入 IPv4 CIDR，例如 192.168.1.25/24。')
+  if (addressValue.includes(':')) return calculateIpv6Cidr(value)
   const prefix = Number(prefixValue)
   if (!/^\d+$/.test(prefixValue) || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) throw new Error('CIDR 前缀长度需要在 0 到 32 之间。')
   const address = parseIpv4(addressValue)

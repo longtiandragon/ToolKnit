@@ -29,7 +29,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
   { id: 'json-schema', icon: 'json', title: 'JSON Schema', description: '从样例生成或校验数据结构' },
   { id: 'type-gen', icon: 'code', title: '数据类型生成', description: '从 JSON 样例生成 TypeScript、Java、C# 或 Go 类型' },
   { id: 'sql', icon: 'terminal', title: 'SQL 格式化', description: '整理常见 SQL 语句的大小写与缩进' },
-  { id: 'cidr', icon: 'binary', title: 'CIDR 计算', description: '计算 IPv4 子网范围和可用地址数' },
+  { id: 'cidr', icon: 'binary', title: 'CIDR 计算', description: '计算 IPv4 / IPv6 子网范围' },
   { id: 'color', icon: 'palette', title: '颜色转换', description: 'Hex、RGB 与 HSL 互转' },
   { id: 'cron', icon: 'clock', title: 'Cron 解释', description: '解释标准五字段 Cron 表达式' },
   { id: 'xml', icon: 'file-code', title: 'XML', description: '本地格式化并检查标签闭合' },
@@ -208,7 +208,7 @@ const emptyResultHint = computed(() => {
     case 'base58': return direction.value === 'encode' ? '把 UTF-8 文本转成 Bitcoin Base58。' : '粘贴 Base58 字符串并还原 UTF-8 文本。'
     case 'compress': return direction.value === 'encode' ? '把文本压缩为 Base64 载体；内容只在本机处理。' : '粘贴压缩数据的 Base64 载体，在本机解压为 UTF-8 文本。'
     case 'sql': return 'SQL 只会在本机做词法整理和缩进，不执行语句，也不会连接数据库。'
-    case 'cidr': return '输入 IPv4 CIDR，例如 192.168.1.25/24，结果会列出网络、广播和主机范围。'
+    case 'cidr': return '输入 IPv4 或 IPv6 CIDR，例如 192.168.1.25/24 或 2001:db8::1/64。'
     case 'color': return '输入 #Hex、rgb()/rgba() 或 hsl()/hsla()，结果会统一输出三种常见格式。'
     case 'cron': return '输入标准五字段 Cron：分钟 小时 日 月 星期；只解释取值，不创建定时任务。'
     case 'xml': return '粘贴 XML，结果会在本地缩进并检查标签闭合。'
