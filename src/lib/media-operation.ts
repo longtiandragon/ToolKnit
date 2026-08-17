@@ -5,6 +5,7 @@ export type MediaOperation =
   | 'transcode-m4a'
   | 'transcode-wav'
   | 'normalize-audio'
+  | 'denoise-audio'
   | 'transcode-mp4'
   | 'mute-video'
   | 'remove-audio'
@@ -33,6 +34,7 @@ export const mediaOperations: readonly MediaOperationDefinition[] = [
   { id: 'transcode-m4a', title: '转为 M4A', description: '压缩音频，保留清晰语音', detail: 'AAC 192 kbps · 长期收纳', extension: 'M4A', requiredTrack: 'audio' },
   { id: 'transcode-wav', title: '转为语音 WAV', description: '生成 16 kHz 单声道音频', detail: '适合 Whisper 与语音处理', extension: 'WAV', requiredTrack: 'audio' },
   { id: 'normalize-audio', title: '标准化音量', description: '统一语音响度并保留原始视频画面', detail: 'FFmpeg loudnorm · 音频重新编码', extension: 'M4A / MKV', requiredTrack: 'audio' },
+  { id: 'denoise-audio', title: '音频降噪', description: '降低持续的背景噪声', detail: 'FFmpeg afftdn · 音频重新编码', extension: 'M4A / MKV', requiredTrack: 'audio' },
   { id: 'transcode-mp4', title: '转为 MP4', description: '统一为便于播放的 H.264', detail: 'AAC 音频 · 快速播放', extension: 'MP4', requiredTrack: 'video' },
   { id: 'mute-video', title: '生成静音视频', description: '移除音轨并保留画面', detail: '适合演示与无声素材', extension: '静音 MP4', requiredTrack: 'video' },
   { id: 'remove-audio', title: '无损移除音轨', description: '复制画面、字幕与附件并移除所有音频', detail: '不重新编码 · 原容器输出', extension: '无音频', requiredTrack: 'video' },

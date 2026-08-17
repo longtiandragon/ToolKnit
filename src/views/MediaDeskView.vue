@@ -266,7 +266,7 @@ async function run() {
     running.value = true
     mediaProgress.value = 100
     const sourceExtension = source.value.name.split('.').at(-1) || 'mkv'
-    const extension = operation.value === 'extract-mp3' ? 'mp3' : operation.value === 'transcode-m4a' ? 'm4a' : operation.value === 'transcode-wav' ? 'wav' : operation.value === 'normalize-audio' ? (source.value.videoCodec ? 'mkv' : 'm4a') : operation.value === 'extract-subtitle' ? 'srt' : operation.value === 'extract-cover' ? 'jpg' : operation.value === 'add-subtitle' ? 'mkv' : ['remove-audio', 'remove-subtitles', 'clean-metadata', 'edit-chapters'].includes(operation.value) ? sourceExtension : 'mp4'
+    const extension = operation.value === 'extract-mp3' ? 'mp3' : operation.value === 'transcode-m4a' ? 'm4a' : operation.value === 'transcode-wav' ? 'wav' : ['normalize-audio', 'denoise-audio'].includes(operation.value) ? (source.value.videoCodec ? 'mkv' : 'm4a') : operation.value === 'extract-subtitle' ? 'srt' : operation.value === 'extract-cover' ? 'jpg' : operation.value === 'add-subtitle' ? 'mkv' : ['remove-audio', 'remove-subtitles', 'clean-metadata', 'edit-chapters'].includes(operation.value) ? sourceExtension : 'mp4'
     const name = `数据结构复习课-knitspace-${operation.value}.${extension}`
     output.value = { path: `F:\\Knitspace\\Outputs\\${name}`, name, size: 82_417_664, elapsedMs: 12_400 }
     notice.value = 'QA 输出已生成；预览没有运行 FFmpeg，也没有写入 Vault 或任务历史。'
@@ -346,7 +346,7 @@ function showSourceMenu(x: number, y: number, trigger: HTMLElement) {
   const hasVideo = Boolean(source.value.videoCodec)
   const hasSubtitle = Boolean(source.value.tracks?.some((track) => track.kind === 'subtitle'))
   const hasMedia = hasAudio || hasVideo
-  const quickActions = 1 + 3 + Number(hasAudio) * 2 + Number(hasVideo) * 3 + Number(hasSubtitle) * 2 + Number(hasMedia) * 4
+  const quickActions = 1 + 3 + Number(hasAudio) * 3 + Number(hasVideo) * 3 + Number(hasSubtitle) * 2 + Number(hasMedia) * 4
   sourceMenu.value = clampMenuPosition(x, y, { menuWidth: 212, menuHeight: 35 + quickActions * 35 })
   void nextTick(() => sourceMenuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus())
 }
@@ -784,6 +784,7 @@ onBeforeUnmount(() => {
         <button v-if="source?.audioCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('extract-mp3')">提取音轨为 MP3</button>
         <button v-if="source?.audioCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('transcode-wav')">转为语音 WAV</button>
         <button v-if="source?.audioCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('normalize-audio')">标准化音量</button>
+        <button v-if="source?.audioCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('denoise-audio')">音频降噪…</button>
         <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('mute-video')">生成静音视频</button>
         <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('remove-audio')">无损移除音轨</button>
         <button v-if="source?.tracks?.some((track) => track.kind === 'subtitle')" class="menu-item" role="menuitem" @click="selectOperationFromSource('extract-subtitle')">提取字幕为 SRT</button>

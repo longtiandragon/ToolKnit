@@ -2731,7 +2731,7 @@ async fn analyze_media_waveform(path: String) -> Result<MediaWaveformReport, Str
 
 fn required_media_track(operation: &str) -> Option<&'static str> {
     match operation {
-        "extract-mp3" | "transcode-m4a" | "transcode-wav" | "normalize-audio" => Some("audio"),
+        "extract-mp3" | "transcode-m4a" | "transcode-wav" | "normalize-audio" | "denoise-audio" => Some("audio"),
         "transcode-mp4" | "mute-video" | "remux-mp4" | "extract-cover" => Some("video"),
         "extract-subtitle" => Some("subtitle"),
         "remove-audio" => Some("video"),
@@ -2895,6 +2895,53 @@ fn transcode_media(
             };
             (
                 "audio-normalized",
+                if has_video { "mkv".into() } else { "m4a".into() },
+                arguments,
+                source_duration,
+            )
+        }
+        "denoise-audio" => {
+            let has_video = media_info
+                .as_ref()
+                .is_some_and(|info| info.video_codec.is_some());
+            let arguments = if has_video {
+                vec![
+                    "-map".into(),
+                    "0:v?".into(),
+                    "-map".into(),
+                    "0:a:0".into(),
+                    "-map".into(),
+                    "0:s?".into(),
+                    "-c:v".into(),
+                    "copy".into(),
+                    "-c:s".into(),
+                    "copy".into(),
+                    "-c:a".into(),
+                    "aac".into(),
+                    "-b:a".into(),
+                    "192k".into(),
+                    "-af".into(),
+                    "afftdn=nr=12:nf=-45:tn=1".into(),
+                    "-map_metadata".into(),
+                    "0".into(),
+                ]
+            } else {
+                vec![
+                    "-map".into(),
+                    "0:a:0".into(),
+                    "-vn".into(),
+                    "-c:a".into(),
+                    "aac".into(),
+                    "-b:a".into(),
+                    "192k".into(),
+                    "-af".into(),
+                    "afftdn=nr=12:nf=-45:tn=1".into(),
+                    "-map_metadata".into(),
+                    "0".into(),
+                ]
+            };
+            (
+                "audio-denoised",
                 if has_video { "mkv".into() } else { "m4a".into() },
                 arguments,
                 source_duration,
@@ -5524,6 +5571,7 @@ mod external_markdown_tests {
         assert_eq!(required_media_track("transcode-wav"), Some("audio"));
         assert_eq!(required_media_track("mute-video"), Some("video"));
         assert_eq!(required_media_track("normalize-audio"), Some("audio"));
+        assert_eq!(required_media_track("denoise-audio"), Some("audio"));
         assert_eq!(required_media_track("trim-clip"), Some("media"));
         assert_eq!(required_media_track("lossless-clip"), Some("media"));
         assert_eq!(required_media_track("remux-mp4"), Some("video"));

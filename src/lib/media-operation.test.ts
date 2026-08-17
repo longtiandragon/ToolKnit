@@ -16,6 +16,7 @@ describe('media operation catalog', () => {
     expect(mediaOperationUnavailableReason(mediaOperations.find((item) => item.id === 'mute-video')!, audio)).toBe('当前文件没有视频轨')
     expect(firstAvailableMediaOperation(video)).toBe('transcode-mp4')
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'normalize-audio')!, { ...video, audioCodec: 'aac' })).toBe(true)
+    expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'denoise-audio')!, { ...video, audioCodec: 'aac' })).toBe(true)
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'lossless-clip')!, audio)).toBe(true)
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'remux-mp4')!, audio)).toBe(false)
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'remove-audio')!, video)).toBe(true)
