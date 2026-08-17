@@ -47,6 +47,22 @@ describe('tool platform text pipelines', () => {
     expect(attempts).toEqual([1, 2, 3])
   })
 
+  it('supports deterministic conditional branches without changing skipped content', () => {
+    const result = runTextPipeline(' b \n a', [
+      createPipelineStep('text.trim', 0),
+      { ...createPipelineStep('text.sort-lines', 1), when: 'changed' },
+      { ...createPipelineStep('text.json', 2), when: 'empty' },
+      { ...createPipelineStep('text.statistics', 3), when: 'non-empty' },
+    ])
+    expect(result.steps.map((step) => step.attempts)).toEqual([1, 1, 0, 1])
+    expect(result.steps[2]).toMatchObject({ skipped: true, skipReason: 'condition' })
+    expect(result.steps[3].content).toContain('字符（含空格）')
+  })
+
+  it('rejects unknown conditional branch values', () => {
+    expect(() => validatePipelineSteps([{ id: 'a', toolId: 'text.trim', when: 'sometimes' as never }])).toThrow(/执行条件/)
+  })
+
   it('recommends deterministic operations from pasted content', () => {
     expect(suggestToolDefinitions('{"ok":true}').map((tool) => tool.id).slice(0, 2)).toEqual(['text.json', 'text.trim'])
     expect(suggestToolDefinitions('https://example.com\na@example.com').map((tool) => tool.id)).toContain('text.extract-contacts')

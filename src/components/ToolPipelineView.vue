@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import type { FileReference, ToolPipelineRecipe, ToolPipelineStep, ToolPipelineErrorPolicy } from '@/types'
+import type { FileReference, ToolPipelineCondition, ToolPipelineRecipe, ToolPipelineStep, ToolPipelineErrorPolicy } from '@/types'
 import type { TextPipelineStepResult } from '@/lib/tool-platform'
 import { cleanOutputName } from '@/lib/file-tools'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
@@ -49,7 +49,7 @@ const inputLabel = computed(() => files.value[0]?.name || '粘贴文本')
 const recipeCount = computed(() => store.pipelineRecipes.length)
 
 function cloneSteps(value: readonly ToolPipelineStep[]) {
-  return value.map((step) => ({ ...step, onError: step.onError ?? 'stop', ...(step.parameters ? { parameters: { ...step.parameters } } : {}) }))
+  return value.map((step) => ({ ...step, onError: step.onError ?? 'stop', when: step.when ?? 'always', ...(step.parameters ? { parameters: { ...step.parameters } } : {}) }))
 }
 
 function stepDefinition(step: ToolPipelineStep) {
@@ -148,7 +148,7 @@ function normalizedRecipeSteps(raw: unknown) {
   if (raw.length > 12) throw new Error('配方最多支持 12 个步骤。')
   const steps = raw.map((value, index) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`第 ${index + 1} 步格式不正确。`)
-    const candidate = value as { toolId?: unknown; parameters?: unknown; onError?: unknown }
+    const candidate = value as { toolId?: unknown; parameters?: unknown; onError?: unknown; when?: unknown }
     if (typeof candidate.toolId !== 'string' || !getToolDefinition(candidate.toolId)) throw new Error(`第 ${index + 1} 步引用了未知工具。`)
     let parameters: ToolPipelineStep['parameters'] | undefined
     if (candidate.parameters !== undefined) {
@@ -163,7 +163,9 @@ function normalizedRecipeSteps(raw: unknown) {
     }
     const onError = candidate.onError === undefined ? 'stop' : candidate.onError
     if (!['stop', 'skip', 'retry'].includes(String(onError))) throw new Error('失败策略不正确。')
-    return { ...createPipelineStep(candidate.toolId, index), ...(parameters ? { parameters } : {}), onError: onError as ToolPipelineErrorPolicy }
+    const when = candidate.when === undefined ? 'always' : candidate.when
+    if (!['always', 'non-empty', 'empty', 'changed'].includes(String(when))) throw new Error('执行条件不正确。')
+    return { ...createPipelineStep(candidate.toolId, index), ...(parameters ? { parameters } : {}), onError: onError as ToolPipelineErrorPolicy, when: when as ToolPipelineCondition }
   })
   validatePipelineSteps(steps)
   return steps
@@ -281,9 +283,9 @@ async function run() {
   try {
     const result = await runTextPipelineAsync(input.value, steps.value, {
       shouldCancel: () => cancellationRequested,
-      onProgress: ({ index, total, definition, attempt }) => {
+      onProgress: ({ index, total, definition, attempt, skipped }) => {
       progress.value = Math.max(progress.value, Math.round(12 + ((index + 1) / total) * 72))
-      message.value = `正在执行第 ${index + 1}/${total} 步：${definition.title}${attempt > 1 ? `（重试${attempt - 1}）` : ''}`
+      message.value = skipped ? `第 ${index + 1}/${total} 步已跳过：${definition.title}` : `正在执行第 ${index + 1}/${total} 步：${definition.title}${attempt > 1 ? `（重试${attempt - 1}）` : ''}`
       store.updateJob(job.id, { status: 'running', progress: progress.value, detail: message.value })
       },
     })
@@ -432,6 +434,15 @@ onBeforeUnmount(() => {
               </div>
               <p class="pl-7 text-[11px] text-fg-3 leading-snug">{{ stepDefinition(step)?.description }}</p>
               <div class="row gap-2 pl-7">
+                <label class="text-[11px] text-fg-3 shrink-0" :for="`step-condition-${step.id}`">条件</label>
+                <select :id="`step-condition-${step.id}`" v-model="step.when" class="field h-7 min-w-0 flex-1 text-[11px]" :disabled="running">
+                  <option value="always">始终执行</option>
+                  <option value="non-empty">输入非空时</option>
+                  <option value="empty">输入为空时</option>
+                  <option value="changed">上一步已改变时</option>
+                </select>
+              </div>
+              <div class="row gap-2 pl-7">
                 <label class="text-[11px] text-fg-3 shrink-0" :for="`step-policy-${step.id}`">失败时</label>
                 <select :id="`step-policy-${step.id}`" v-model="step.onError" class="field h-7 min-w-0 flex-1 text-[11px]" :disabled="running">
                   <option value="stop">停止流水线</option>
@@ -457,7 +468,7 @@ onBeforeUnmount(() => {
             </select>
             <button class="btn-default btn-sm shrink-0" :disabled="running || steps.length >= 12" @click="addStep()">添加</button>
           </div>
-          <p class="text-[11px] text-fg-3 leading-snug">步骤按顺序执行；可先预览任一步，再运行并导出。失败策略仅用于文本步骤。</p>
+          <p class="text-[11px] text-fg-3 leading-snug">步骤按顺序执行；条件可形成轻量分支，可先预览任一步再导出。</p>
         </section>
 
         <section class="panel p-4 stack gap-3">

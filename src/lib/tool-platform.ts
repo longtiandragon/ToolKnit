@@ -1,5 +1,5 @@
 import { transformText, type TextTransformMode } from '@/lib/file-tools'
-import type { ToolPipelineErrorPolicy, ToolPipelineStep } from '@/types'
+import type { ToolPipelineCondition, ToolPipelineErrorPolicy, ToolPipelineStep } from '@/types'
 
 /**
  * The small, serializable contract shared by toolbox tools.
@@ -46,6 +46,7 @@ export interface TextPipelineStepResult extends ToolTextResult {
   title: string
   attempts: number
   skipped?: boolean
+  skipReason?: 'condition' | 'error'
 }
 
 export interface TextPipelineResult extends ToolTextResult {
@@ -58,6 +59,7 @@ export interface ToolPipelineProgress {
   step: ToolPipelineStep
   definition: ToolDefinition
   attempt: number
+  skipped?: boolean
 }
 
 export interface AsyncTextPipelineOptions {
@@ -140,8 +142,18 @@ export function validatePipelineSteps(steps: readonly ToolPipelineStep[]) {
       invalidStep(`第 ${index + 1} 步的参数格式不正确。`)
     }
     if (step.onError !== undefined && !(['stop', 'skip', 'retry'] as ToolPipelineErrorPolicy[]).includes(step.onError)) invalidStep(`第 ${index + 1} 步的失败策略不正确。`)
+    if (step.when !== undefined && !(['always', 'non-empty', 'empty', 'changed'] as ToolPipelineCondition[]).includes(step.when)) invalidStep(`第 ${index + 1} 步的执行条件不正确。`)
   }
   return true
+}
+
+function matchesCondition(condition: ToolPipelineCondition | undefined, content: string, initial: string) {
+  switch (condition ?? 'always') {
+    case 'non-empty': return content.trim().length > 0
+    case 'empty': return content.trim().length === 0
+    case 'changed': return content !== initial
+    default: return true
+  }
 }
 
 export function runTextPipeline(input: string, steps: readonly ToolPipelineStep[], onProgress?: (progress: ToolPipelineProgress) => void): TextPipelineResult {
@@ -153,6 +165,11 @@ export function runTextPipeline(input: string, steps: readonly ToolPipelineStep[
   const results: TextPipelineStepResult[] = []
   steps.forEach((step, index) => {
     const definition = getToolDefinition(step.toolId)!
+    if (!matchesCondition(step.when, content, input)) {
+      onProgress?.({ index, total: steps.length, step, definition, attempt: 0, skipped: true })
+      results.push({ stepId: step.id, toolId: step.toolId, title: definition.title, content, extension, attempts: 0, skipped: true, skipReason: 'condition' })
+      return
+    }
     const policy = step.onError ?? 'stop'
     const maxAttempts = policy === 'retry' ? TOOL_PIPELINE_MAX_RETRIES + 1 : 1
     let attempts = 0
@@ -169,7 +186,7 @@ export function runTextPipeline(input: string, steps: readonly ToolPipelineStep[
         completed = true
       } catch (error) {
         if (policy === 'skip' || attempts >= maxAttempts) {
-          if (policy === 'skip') results.push({ stepId: step.id, toolId: step.toolId, title: definition.title, content, extension, attempts, skipped: true })
+          if (policy === 'skip') results.push({ stepId: step.id, toolId: step.toolId, title: definition.title, content, extension, attempts, skipped: true, skipReason: 'error' })
           else throw error
           completed = true
         }
@@ -197,6 +214,11 @@ export async function runTextPipelineAsync(input: string, steps: readonly ToolPi
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     if (options.shouldCancel?.()) throw new ToolPipelineCancelledError()
     const definition = getToolDefinition(step.toolId)!
+    if (!matchesCondition(step.when, content, input)) {
+      options.onProgress?.({ index, total: steps.length, step, definition, attempt: 0, skipped: true })
+      results.push({ stepId: step.id, toolId: step.toolId, title: definition.title, content, extension, attempts: 0, skipped: true, skipReason: 'condition' })
+      continue
+    }
     const policy = step.onError ?? 'stop'
     const maxAttempts = policy === 'retry' ? TOOL_PIPELINE_MAX_RETRIES + 1 : 1
     let attempts = 0
@@ -216,7 +238,7 @@ export async function runTextPipelineAsync(input: string, steps: readonly ToolPi
         completed = true
       } catch (error) {
         if (policy === 'skip' || attempts >= maxAttempts) {
-          if (policy === 'skip') results.push({ stepId: step.id, toolId: step.toolId, title: definition.title, content, extension, attempts, skipped: true })
+          if (policy === 'skip') results.push({ stepId: step.id, toolId: step.toolId, title: definition.title, content, extension, attempts, skipped: true, skipReason: 'error' })
           else throw error
           completed = true
         }
@@ -264,5 +286,5 @@ export function suggestToolDefinitions(input: string) {
 export function createPipelineStep(toolId: string, index: number): ToolPipelineStep {
   if (!getToolDefinition(toolId)) throw new Error(`找不到工具“${toolId}”。`)
   const safeId = toolId.replace(/[^a-zA-Z0-9_-]+/g, '-')
-  return { id: `step-${index + 1}-${safeId}`, toolId, onError: 'stop' }
+  return { id: `step-${index + 1}-${safeId}`, toolId, onError: 'stop', when: 'always' }
 }

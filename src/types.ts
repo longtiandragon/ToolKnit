@@ -304,6 +304,7 @@ export interface ToolRecipe {
 /** A reusable ordered set of tools. The step shape intentionally contains
  * only serializable parameters and never owns file paths or file contents. */
 export type ToolPipelineErrorPolicy = 'stop' | 'skip' | 'retry'
+export type ToolPipelineCondition = 'always' | 'non-empty' | 'empty' | 'changed'
 
 export interface ToolPipelineStep {
   id: string
@@ -311,6 +312,8 @@ export interface ToolPipelineStep {
   parameters?: Record<string, string | number | boolean>
   /** What to do when this pure transformation cannot process its input. */
   onError?: ToolPipelineErrorPolicy
+  /** Optional deterministic branch condition evaluated against the current text. */
+  when?: ToolPipelineCondition
 }
 
 export interface ToolPipelineRecipe {
