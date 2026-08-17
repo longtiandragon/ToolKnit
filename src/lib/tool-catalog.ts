@@ -75,7 +75,7 @@ export const toolCatalog: ToolCatalogItem[] = [
   fileTool('page-number', 'PDF 添加页码', '设置起始数字和页码位置', 'pdf', 'number', ['编号', 'page number']),
   fileTool('images-to-pdf', '图片转 PDF', '把多张图片合成一份 PDF', 'pdf', 'file-image', ['照片', 'image to pdf']),
   fileTool('pdf-to-image', 'PDF 转图片', '把 PDF 每一页渲染成 PNG、JPG 或 WebP 图片', 'pdf', 'image', ['导出图片', '渲染', 'png', 'jpg', 'webp', 'pdf to image']),
-  fileTool('text', '提取 PDF 文字', '导出 PDF 已有的文字层', 'pdf', 'file-text', ['文本', '复制', 'extract text']),
+  fileTool('text', '提取 PDF 文字', '文字层/表单字段', 'pdf', 'file-text', ['文本', '复制', 'extract text']),
   fileTool('protect', 'PDF 密码', '加解密', 'pdf', 'shield', ['密码']),
   { ...imageTool('convert', '转换图片格式', 'PNG/JPG/WebP 转换预览', 'image', ['格式', 'png', 'jpg', 'webp']), popular: true },
   imageTool('resize', '缩放压缩图片', '限制最大宽度、调整质量并实时预览', 'resize', ['压缩', '尺寸', 'resize']),

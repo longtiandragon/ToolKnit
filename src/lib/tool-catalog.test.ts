@@ -13,6 +13,7 @@ describe('tool catalog', () => {
     expect(searchTools('去重')[0]?.id).toBe('organize-dedupe-report')
     expect(searchTools('webp')[0]?.id).toBe('pdf-pdf-to-image')
     expect(searchTools('密码')[0]?.id).toBe('pdf-protect')
+    expect(searchTools('表单字段')[0]?.id).toBe('pdf-text')
     expect(searchTools('pdf 转图片')[0]?.id).toBe('pdf-pdf-to-image')
     expect(searchTools('pdf to image')[0]?.id).toBe('pdf-pdf-to-image')
     expect(searchTools('邮箱')[0]?.to.query?.mode).toBe('extract-contacts')

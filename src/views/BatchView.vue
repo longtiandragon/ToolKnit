@@ -50,6 +50,7 @@ const watermarkColor = ref('#8a8f98')
 const pageNumberStart = ref(1)
 const pageNumberPosition = ref<'bottom-center' | 'bottom-right'>('bottom-center')
 const redactTerms = ref('')
+const pdfTextMode = ref<'text' | 'form'>('text')
 const pdfPassword = ref('')
 const pdfAllowPrinting = ref(false)
 const pdfAllowCopying = ref(false)
@@ -118,7 +119,7 @@ const operationNotes: Record<string, string> = {
   decrypt: '使用本机 qpdf 验证密码并移除 PDF 加密，原文件不会被覆盖',
   redact: '按文本匹配覆盖并栅格化页面，输出后无法恢复原文字层',
   ocr: '把扫描页面识别为本机文字，并生成可搜索的 PDF 副本',
-  'extract-text': '导出 PDF 里已有的文字层,不做 OCR',
+  text: '导出 PDF 文字层，或查看 AcroForm 表单字段',
   convert: '在 PNG、JPG 与 WebP 之间转换',
   resize: '限制最大宽度并调整压缩质量',
   'image-crop': '按选区裁剪并批量导出',
@@ -262,6 +263,7 @@ function recipeParameters() {
     pageNumberPosition: pageNumberPosition.value, redactTerms: redactTerms.value, textMode: textMode.value, renamePrefix: renamePrefix.value,
     renameSuffix: renameSuffix.value, renameStart: renameStart.value, renameDigits: renameDigits.value,
     renameSeparator: renameSeparator.value, renameKeepOriginal: renameKeepOriginal.value ? 1 : 0,
+    pdfTextMode: pdfTextMode.value,
     pdfAllowPrinting: pdfAllowPrinting.value ? 1 : 0,
     pdfAllowCopying: pdfAllowCopying.value ? 1 : 0,
     pdfAllowModification: pdfAllowModification.value ? 1 : 0,
@@ -289,6 +291,7 @@ function applyRecipe(recipe: ToolRecipe) {
   pageNumberStart.value = Number(params.pageNumberStart ?? pageNumberStart.value)
   pageNumberPosition.value = params.pageNumberPosition === 'bottom-right' ? 'bottom-right' : 'bottom-center'
   redactTerms.value = String(params.redactTerms ?? redactTerms.value)
+  pdfTextMode.value = params.pdfTextMode === 'form' ? 'form' : 'text'
   pdfAllowPrinting.value = Number(params.pdfAllowPrinting ?? (pdfAllowPrinting.value ? 1 : 0)) === 1
   pdfAllowCopying.value = Number(params.pdfAllowCopying ?? (pdfAllowCopying.value ? 1 : 0)) === 1
   pdfAllowModification.value = Number(params.pdfAllowModification ?? (pdfAllowModification.value ? 1 : 0)) === 1
@@ -363,6 +366,7 @@ watch(() => route.query, (query) => {
   rotation.value = defaultRotationFor(requestedOperation)
   outputName.value = defaultOutputNameFor(requestedOperation)
   if (requestedOperation === 'pdf-to-image' || requestedOperation === 'ocr') pageRange.value = ''
+  if (requestedOperation === 'text' && query.mode === 'form') pdfTextMode.value = 'form'
   const supportedTextModes: TextTransformMode[] = ['json', 'trim', 'markdown', 'dedupe-lines', 'sort-lines', 'extract-contacts', 'statistics']
   if (typeof query.mode === 'string' && supportedTextModes.includes(query.mode as TextTransformMode)) textMode.value = query.mode as TextTransformMode
   activeRecipeId.value = undefined
@@ -453,6 +457,48 @@ async function makeWatermarkPng(text: string, color: string) {
   return blob.arrayBuffer()
 }
 
+function boundedFormText(value: string | undefined) {
+  return value === undefined ? undefined : value.slice(0, 4000)
+}
+
+async function inspectPdfForm(input: { name: string; data: ArrayBuffer }) {
+  const { PDFButton, PDFCheckBox, PDFDocument, PDFDropdown, PDFOptionList, PDFRadioGroup, PDFSignature, PDFTextField } = await import('pdf-lib')
+  const document = await PDFDocument.load(input.data)
+  const fields = document.getForm().getFields()
+  const truncated = fields.length > 512
+  const summaries = fields.slice(0, 512).map((field) => {
+    const summary: { name: string; kind: string; value?: string | string[] | boolean; options?: string[] } = {
+      name: field.getName().slice(0, 400),
+      kind: field.constructor.name,
+    }
+    if (field instanceof PDFTextField) {
+      summary.kind = 'text'
+      summary.value = boundedFormText(field.getText())
+    } else if (field instanceof PDFCheckBox) {
+      summary.kind = 'checkbox'
+      summary.value = field.isChecked()
+    } else if (field instanceof PDFDropdown) {
+      summary.kind = 'dropdown'
+      summary.value = field.getSelected().map((value) => boundedFormText(value) ?? '')
+      summary.options = field.getOptions().slice(0, 128).map((value) => boundedFormText(value) ?? '')
+    } else if (field instanceof PDFOptionList) {
+      summary.kind = 'option-list'
+      summary.value = field.getSelected().map((value) => boundedFormText(value) ?? '')
+      summary.options = field.getOptions().slice(0, 128).map((value) => boundedFormText(value) ?? '')
+    } else if (field instanceof PDFRadioGroup) {
+      summary.kind = 'radio'
+      summary.value = boundedFormText(field.getSelected())
+      summary.options = field.getOptions().slice(0, 128).map((value) => boundedFormText(value) ?? '')
+    } else if (field instanceof PDFSignature) {
+      summary.kind = 'signature'
+    } else if (field instanceof PDFButton) {
+      summary.kind = 'button'
+    }
+    return summary
+  })
+  return { version: 1, fileName: input.name, fieldCount: fields.length, truncated, fields: summaries }
+}
+
 async function runPdf(onProgress?: (progress: number, detail: string) => void, onOutput?: (output: FileReference) => void) {
   if (operation.value === 'images-to-pdf') {
     const images = files.value.filter((file) => file.type.startsWith('image/'))
@@ -487,6 +533,20 @@ async function runPdf(onProgress?: (progress: number, detail: string) => void, o
     throwIfCancelled()
     onProgress?.(4 + 7 * (index + 1) / pdfs.length, `正在准备 ${index + 1}/${pdfs.length} 份 PDF…`)
     inputs.push({ name: pdfs[index].name, data: await pdfs[index].arrayBuffer() })
+  }
+  if (operation.value === 'text' && pdfTextMode.value === 'form') {
+    const outputs: FileReference[] = []
+    for (let index = 0; index < inputs.length; index += 1) {
+      throwIfCancelled()
+      onProgress?.(12 + 80 * index / inputs.length, `正在读取 ${index + 1}/${inputs.length} 份 PDF 的表单字段…`)
+      const report = await inspectPdfForm(inputs[index])
+      throwIfCancelled()
+      const saved = await save(`${cleanOutputName(inputs[index].name)}-form-fields.json`, JSON.stringify(report, null, 2), 'application/json;charset=utf-8')
+      outputs.push(saved)
+      onOutput?.(saved)
+      onProgress?.(12 + 80 * (index + 1) / inputs.length, `已读取 ${index + 1}/${inputs.length} 份 PDF 的表单字段。`)
+    }
+    return outputs
   }
   const watermarkTextValue = watermarkText.value.trim()
   if (operation.value === 'watermark' && !watermarkTextValue) throw new Error('请输入水印文字。')
@@ -1060,9 +1120,14 @@ onBeforeUnmount(() => {
             <p v-if="operation === 'split'" class="text-[12px] text-fg-3 leading-snug">
               每一页会生成一份独立 PDF，文件名带上原来的页码。这个操作没有需要设置的参数。
             </p>
-            <p v-if="operation === 'text'" class="text-[12px] text-fg-3 leading-snug">
-              只导出 PDF 里已有的文字层。扫描件里没有文字层，这里不会伪造识别结果，请改用 OCR。
-            </p>
+            <div v-if="operation === 'text'" class="text-[12px] text-fg-3 leading-snug">
+              <span class="block mb-2">选择要读取的内容；两种模式都只读原 PDF，不会填写或提交表单。</span>
+              <select v-model="pdfTextMode" class="field w-full">
+                <option value="text">文字层 → TXT</option>
+                <option value="form">AcroForm 字段 → JSON</option>
+              </select>
+              <span class="block mt-2">文字层模式不会 OCR；扫描件请改用 OCR。表单模式会保留字段名、类型、当前值和选项。</span>
+            </div>
           </template>
 
           <template v-else-if="group === 'image'">
