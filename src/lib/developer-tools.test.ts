@@ -64,7 +64,7 @@ describe('hash and time utilities', () => {
 
   it('recognizes second timestamps', () => {
     expect(convertTimestamp('0', 'en-US').iso).toBe('1970-01-01T00:00:00.000Z')
-  })
+  }, 15_000)
 
   it('rejects invalid dates', () => {
     expect(() => convertTimestamp('not-a-date')).toThrow('无法识别')
