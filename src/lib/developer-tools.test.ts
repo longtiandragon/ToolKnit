@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateCidr, calculateDateDifference, calculateDateOffset, calculateIpv6Cidr, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
+import { analyzeHttpHeaders, calculateCidr, calculateDateDifference, calculateDateOffset, calculateIpv6Cidr, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -278,6 +278,25 @@ describe('IPv6 CIDR calculator', () => {
   it('rejects malformed IPv6 prefixes and repeated compression', () => {
     expect(() => calculateIpv6Cidr('2001::db8::1/64')).toThrow('只能使用一次')
     expect(() => calculateIpv6Cidr('2001:db8::1/129')).toThrow('0 到 128')
+  })
+})
+
+describe('HTTP Header analyzer', () => {
+  it('parses a response line, normalizes fields and reports unsafe combinations', () => {
+    const result = analyzeHttpHeaders('HTTP/1.1 200 OK\r\nContent-Length: 2\r\ncontent-length: 3\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Credentials: true\r\n\r\n')
+    expect(result.kind).toBe('response')
+    expect(result.startLine).toBe('HTTP/1.1 200 OK')
+    expect(result.headers).toHaveLength(4)
+    expect(result.duplicateNames).toEqual(['Content-Length'])
+    expect(result.normalized).toContain('Content-Length: 2\ncontent-length: 3')
+    expect(result.warnings.join('\n')).toContain('值不一致')
+    expect(result.warnings.join('\n')).toContain('CORS')
+  })
+
+  it('accepts header-only input and rejects blank lines or invalid names', () => {
+    expect(analyzeHttpHeaders('Host: example.test\nAccept: application/json').kind).toBe('headers')
+    expect(() => analyzeHttpHeaders('Host: example.test\n\nAccept: */*')).toThrow('不能混入正文')
+    expect(() => analyzeHttpHeaders('Bad Header: value')).toThrow('名称')
   })
 })
 

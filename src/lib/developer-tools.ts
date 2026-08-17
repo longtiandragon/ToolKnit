@@ -52,6 +52,23 @@ export interface CidrResult {
   usableHosts: string
 }
 
+export type HttpHeaderMessageKind = 'request' | 'response' | 'headers'
+
+export interface HttpHeaderEntry {
+  name: string
+  value: string
+  line: number
+}
+
+export interface HttpHeadersResult {
+  kind: HttpHeaderMessageKind
+  startLine: string
+  headers: HttpHeaderEntry[]
+  duplicateNames: string[]
+  warnings: string[]
+  normalized: string
+}
+
 export interface ColorResult {
   hex: string
   rgb: { r: number; g: number; b: number; alpha: number }
@@ -429,6 +446,111 @@ export function calculateCidr(value: string): CidrResult {
     lastHost: formatIpv4(lastHost),
     totalAddresses: total.toString(),
     usableHosts: (prefix >= 31 ? total : total - 2n).toString(),
+  }
+}
+
+const HTTP_HEADER_MAX_BYTES = 64 * 1024
+const HTTP_HEADER_MAX_LINES = 256
+const HTTP_HEADER_MAX_VALUE_LENGTH = 16 * 1024
+const HTTP_TOKEN_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+
+function isHttpResponseLine(value: string) {
+  return /^HTTP\/\d(?:\.\d)?\s+\d{3}(?:\s+.*)?$/.test(value)
+}
+
+function isHttpRequestLine(value: string) {
+  return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+\s+\S+\s+HTTP\/\d(?:\.\d)?$/.test(value)
+}
+
+function hasHttpControlCharacters(value: string) {
+  return /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value)
+}
+
+/**
+ * Parse a pasted HTTP request/response header block without touching the
+ * network. The optional request/status line is kept, while the rest is
+ * normalized into individual fields so duplicate and unsafe combinations can
+ * be inspected before someone copies them into a client or server config.
+ */
+export function analyzeHttpHeaders(value: string): HttpHeadersResult {
+  if (!value.trim()) throw new Error('请粘贴 HTTP 请求头、响应头，或至少一行“名称: 值”。')
+  if (new TextEncoder().encode(value).byteLength > HTTP_HEADER_MAX_BYTES) throw new Error('HTTP Header 超过 64 KB 安全上限，请先拆分内容。')
+
+  const lines = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop()
+  if (lines.length > HTTP_HEADER_MAX_LINES) throw new Error(`HTTP Header 最多支持 ${HTTP_HEADER_MAX_LINES} 行。`)
+  if (!lines.length) throw new Error('HTTP Header 不能为空。')
+
+  let kind: HttpHeaderMessageKind = 'headers'
+  let startLine = ''
+  let firstHeaderIndex = 0
+  const firstLine = lines[0].trim()
+  if (isHttpResponseLine(firstLine)) {
+    kind = 'response'
+    startLine = firstLine
+    firstHeaderIndex = 1
+  } else if (isHttpRequestLine(firstLine)) {
+    kind = 'request'
+    startLine = firstLine
+    firstHeaderIndex = 1
+  } else if (!firstLine.includes(':')) {
+    throw new Error('第一行不是有效的 HTTP 请求/响应行，也没有“名称: 值”格式。')
+  }
+
+  const headers: HttpHeaderEntry[] = []
+  for (let index = firstHeaderIndex; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (!line.trim()) throw new Error(`第 ${index + 1} 行为空；Header 区域不能混入正文。`)
+    const separator = line.indexOf(':')
+    if (separator <= 0) throw new Error(`第 ${index + 1} 行缺少“名称: 值”分隔符。`)
+    const name = line.slice(0, separator)
+    const rawValue = line.slice(separator + 1)
+    if (!HTTP_TOKEN_PATTERN.test(name)) throw new Error(`第 ${index + 1} 行的 Header 名称“${name}”无效。`)
+    if (rawValue.length > HTTP_HEADER_MAX_VALUE_LENGTH) throw new Error(`第 ${index + 1} 行的 Header 值超过 ${HTTP_HEADER_MAX_VALUE_LENGTH} 字符。`)
+    const headerValue = rawValue.trim()
+    if (hasHttpControlCharacters(headerValue)) throw new Error(`第 ${index + 1} 行包含不可见控制字符。`)
+    headers.push({ name, value: headerValue, line: index + 1 })
+  }
+  if (!headers.length) throw new Error('没有解析到 Header 字段。')
+
+  const byName = new Map<string, HttpHeaderEntry[]>()
+  for (const header of headers) {
+    const key = header.name.toLowerCase()
+    const existing = byName.get(key) ?? []
+    existing.push(header)
+    byName.set(key, existing)
+  }
+  const duplicateNames = [...byName.entries()]
+    .filter(([, entries]) => entries.length > 1)
+    .map(([, entries]) => entries[0].name)
+  const warnings: string[] = []
+
+  if (duplicateNames.length) warnings.push(`发现重复 Header：${duplicateNames.join('、')}；除 Set-Cookie 等少数字段外，重复值可能被不同客户端解释不一致。`)
+  const contentLengths = byName.get('content-length')?.map((header) => header.value) ?? []
+  if (contentLengths.some((header) => !/^\d+$/.test(header))) warnings.push('Content-Length 不是纯数字，发送或代理转发前应修正。')
+  if (new Set(contentLengths).size > 1) warnings.push('重复 Content-Length 的值不一致，可能造成请求走私或截断解析。')
+  if (byName.has('transfer-encoding') && byName.has('content-length')) warnings.push('同时存在 Transfer-Encoding 与 Content-Length；不要把这组 Header 直接转发到不受信任的代理。')
+
+  const getValues = (name: string) => byName.get(name)?.map((header) => header.value) ?? []
+  const accessOrigin = getValues('access-control-allow-origin').at(-1)?.trim()
+  const accessCredentials = getValues('access-control-allow-credentials').at(-1)?.trim().toLowerCase()
+  if (accessOrigin === '*' && accessCredentials === 'true') warnings.push('CORS 的 Allow-Origin 为“*”时不能与 Allow-Credentials: true 一起使用。')
+
+  const csp = getValues('content-security-policy').join(';').toLowerCase()
+  if (csp.includes("'unsafe-inline'") || csp.includes("'unsafe-eval'")) warnings.push('Content-Security-Policy 含有 unsafe-inline 或 unsafe-eval；这会削弱脚本注入防护。')
+  const contentTypeOptions = getValues('x-content-type-options').at(-1)?.toLowerCase()
+  if (kind === 'response' && contentTypeOptions && contentTypeOptions !== 'nosniff') warnings.push('X-Content-Type-Options 不是 nosniff，浏览器可能进行 MIME 嗅探。')
+  const strictTransport = getValues('strict-transport-security').at(-1)
+  if (strictTransport && !/\bmax-age\s*=\s*\d+/i.test(strictTransport)) warnings.push('Strict-Transport-Security 缺少有效的 max-age。')
+  if (getValues('server').length || getValues('x-powered-by').length) warnings.push('Server / X-Powered-By 暴露了服务端实现信息；公开响应可考虑移除或泛化。')
+
+  return {
+    kind,
+    startLine,
+    headers,
+    duplicateNames,
+    warnings,
+    normalized: [startLine, ...headers.map((header) => `${header.name}: ${header.value}`)].filter(Boolean).join('\n'),
   }
 }
 

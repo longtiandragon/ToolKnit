@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type CompressionFormat, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type GeneratedDataTypeLanguage, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
+import { analyzeHttpHeaders, calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type CompressionFormat, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type GeneratedDataTypeLanguage, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
 import { decodeQrImage, generateQrCode } from '@/lib/qr-tools'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import AppIcon from '@/components/AppIcon.vue'
@@ -9,7 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import FieldRow from '@/components/FieldRow.vue'
 import { useWorkbenchStore } from '@/stores/workbench'
 
-type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'base32' | 'base58' | 'compress' | 'hex' | 'url' | 'json' | 'json-yaml' | 'csv-json' | 'json-schema' | 'type-gen' | 'sql' | 'cidr' | 'color' | 'cron' | 'xml' | 'html-entities' | 'jwt' | 'hash' | 'uuid' | 'ulid' | 'random' | 'timestamp' | 'radix' | 'regex' | 'diff'
+type DeveloperToolId = 'qrcode' | 'datecalc' | 'base64' | 'base32' | 'base58' | 'compress' | 'hex' | 'url' | 'json' | 'json-yaml' | 'csv-json' | 'json-schema' | 'type-gen' | 'sql' | 'cidr' | 'headers' | 'color' | 'cron' | 'xml' | 'html-entities' | 'jwt' | 'hash' | 'uuid' | 'ulid' | 'random' | 'timestamp' | 'radix' | 'regex' | 'diff'
 
 const route = useRoute()
 const router = useRouter()
@@ -30,6 +30,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
   { id: 'type-gen', icon: 'code', title: '数据类型生成', description: '从 JSON 样例生成 TypeScript、Java、C# 或 Go 类型' },
   { id: 'sql', icon: 'terminal', title: 'SQL 格式化', description: '整理常见 SQL 语句的大小写与缩进' },
   { id: 'cidr', icon: 'binary', title: 'CIDR 计算', description: '计算 IPv4 / IPv6 子网范围' },
+  { id: 'headers', icon: 'link', title: 'HTTP Header', description: '解析字段并提示常见配置问题' },
   { id: 'color', icon: 'palette', title: '颜色转换', description: 'Hex、RGB 与 HSL 互转' },
   { id: 'cron', icon: 'clock', title: 'Cron 解释', description: '解释标准五字段 Cron 表达式' },
   { id: 'xml', icon: 'file-code', title: 'XML', description: '本地格式化并检查标签闭合' },
@@ -107,7 +108,7 @@ const hasOutput = computed(() => processed.value)
  * amount of work that should not fire while you are still choosing.
  */
 const LIVE_TOOLS = new Set<DeveloperToolId>([
-  'base64', 'base32', 'base58', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'type-gen', 'sql', 'cidr', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'timestamp', 'radix', 'regex', 'diff', 'datecalc',
+  'base64', 'base32', 'base58', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'type-gen', 'sql', 'cidr', 'headers', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'timestamp', 'radix', 'regex', 'diff', 'datecalc',
 ])
 const isLive = computed(() => LIVE_TOOLS.has(tool.value) || (tool.value === 'qrcode' && qrMode.value === 'generate'))
 const hasInput = computed(() => {
@@ -209,6 +210,7 @@ const emptyResultHint = computed(() => {
     case 'compress': return direction.value === 'encode' ? '把文本压缩为 Base64 载体；内容只在本机处理。' : '粘贴压缩数据的 Base64 载体，在本机解压为 UTF-8 文本。'
     case 'sql': return 'SQL 只会在本机做词法整理和缩进，不执行语句，也不会连接数据库。'
     case 'cidr': return '输入 IPv4 或 IPv6 CIDR，例如 192.168.1.25/24 或 2001:db8::1/64。'
+    case 'headers': return '粘贴请求行、响应行和 Header 字段；只在本机解析，不会发送网络请求。'
     case 'color': return '输入 #Hex、rgb()/rgba() 或 hsl()/hsla()，结果会统一输出三种常见格式。'
     case 'cron': return '输入标准五字段 Cron：分钟 小时 日 月 星期；只解释取值，不创建定时任务。'
     case 'xml': return '粘贴 XML，结果会在本地缩进并检查标签闭合。'
@@ -272,6 +274,7 @@ async function run() {
     else if (tool.value === 'type-gen') output.value = generateDataTypes(input.value, typeLanguage.value, typeRootName.value)
     else if (tool.value === 'sql') output.value = formatSql(input.value)
     else if (tool.value === 'cidr') output.value = JSON.stringify(calculateCidr(input.value), null, 2)
+    else if (tool.value === 'headers') output.value = JSON.stringify(analyzeHttpHeaders(input.value), null, 2)
     else if (tool.value === 'color') output.value = JSON.stringify(convertColor(input.value), null, 2)
     else if (tool.value === 'cron') output.value = JSON.stringify(explainCron(input.value), null, 2)
     else if (tool.value === 'xml') output.value = formatXml(input.value)
@@ -613,6 +616,7 @@ onBeforeUnmount(() => {
                               : tool === 'xml' ? '<root><item /></root>'
                               : tool === 'sql' ? 'select id,name from users where active=1;'
                               : tool === 'cidr' ? '192.168.1.25/24'
+                              : tool === 'headers' ? 'HTTP/1.1 200 OK\nContent-Type: application/json\nX-Content-Type-Options: nosniff'
                               : tool === 'color' ? '#3B82F6 或 rgba(59 130 246 / 50%)'
                               : tool === 'cron' ? '0 9 * * 1-5'
                               : tool === 'html-entities' ? '<p>A & B</p>'
@@ -670,7 +674,7 @@ onBeforeUnmount(() => {
         </div>
 
         <textarea
-          v-else-if="hasOutput && ['base64', 'base32', 'base58', 'compress', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'type-gen', 'sql', 'cidr', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'uuid', 'ulid', 'random', 'radix'].includes(tool)"
+          v-else-if="hasOutput && ['base64', 'base32', 'base58', 'compress', 'hex', 'url', 'json', 'json-yaml', 'csv-json', 'json-schema', 'type-gen', 'sql', 'cidr', 'headers', 'color', 'cron', 'xml', 'html-entities', 'jwt', 'hash', 'uuid', 'ulid', 'random', 'radix'].includes(tool)"
           :value="output"
           readonly
           aria-label="处理结果"
