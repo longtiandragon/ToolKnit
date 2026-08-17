@@ -13,6 +13,8 @@ describe('universal intake detection', () => {
     expect(detectIntake([], 'eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjMifQ.unsigned')).toBe('jwt')
     expect(detectIntake([], 'SGVsbG8sIEtuaXRzcGFjZSE=')).toBe('base64')
     expect(detectIntake([], 'https://example.com/path?q=1')).toBe('url')
+    expect(detectIntake([], '<!doctype html><html><body><article><p>正文</p></article></body></html>')).toBe('html')
+    expect(detectIntake([], '<article><h1>标题</h1><p>正文</p></article>')).toBe('html')
     expect(detectIntake([], 'const answer = 42;')).toBe('code')
     expect(detectIntake([], '今天整理课程笔记')).toBe('text')
   })

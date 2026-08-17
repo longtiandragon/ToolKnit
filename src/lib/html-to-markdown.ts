@@ -7,6 +7,20 @@ export type RichClipboardMarkdown = {
   rich: boolean
 }
 
+export type ArticleExtractionConfidence = 'high' | 'medium' | 'low'
+
+export type WebArticleExtraction = {
+  title: string
+  markdown: string
+  byline?: string
+  publishedAt?: string
+  siteName?: string
+  confidence: ArticleExtractionConfidence
+  truncated: boolean
+  removedBlocks: number
+  sourceCharacters: number
+}
+
 type HtmlNode = { tag: string; attrs: Record<string, string>; children: HtmlNode[]; text?: string }
 
 const richTags = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'strong', 'b', 'em', 'i', 'del', 's', 'strike', 'a', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'table', 'img', 'hr'])
@@ -181,6 +195,124 @@ function cleanMarkdown(value: string) {
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^\s+|\s+$/g, '')
+}
+
+const articleTags = new Set(['article', 'main'])
+const noiseTags = new Set(['head', 'nav', 'aside', 'footer', 'form', 'dialog', 'button', 'iframe', 'object', 'embed'])
+const positiveArticleSignal = /(?:^|[-_\s])(article|content|entry|main|post|story|正文|文章)(?:$|[-_\s])/i
+const negativeArticleSignal = /(?:^|[-_\s])(ad|ads|advert|banner|breadcrumb|comment|cookie|consent|footer|header|menu|modal|nav|newsletter|pagination|promo|recommend|related|share|sidebar|social|subscribe|toolbar)(?:$|[-_\s])/i
+
+function visitNodes(node: HtmlNode, visit: (node: HtmlNode) => void) {
+  visit(node)
+  node.children.forEach(child => visitNodes(child, visit))
+}
+
+function compactText(node: HtmlNode) {
+  return plainText(node).replace(/\s+/g, ' ').trim()
+}
+
+function attributeSignal(node: HtmlNode) {
+  return `${node.attrs.id ?? ''} ${node.attrs.class ?? ''} ${node.attrs.role ?? ''}`.trim()
+}
+
+function articleScore(node: HtmlNode) {
+  const textLength = compactText(node).length
+  // Chinese paragraphs carry much more information per character than Latin
+  // prose, so a semantic container should not need hundreds of characters.
+  if (textLength < 40) return Number.NEGATIVE_INFINITY
+  let paragraphs = 0
+  let headings = 0
+  let linkCharacters = 0
+  visitNodes(node, child => {
+    if (child.tag === 'p') paragraphs += 1
+    if (/^h[1-6]$/.test(child.tag)) headings += 1
+    if (child.tag === 'a') linkCharacters += compactText(child).length
+  })
+  const signal = attributeSignal(node)
+  const semantic = node.tag === 'article' ? 150 : node.tag === 'main' ? 120 : positiveArticleSignal.test(signal) ? 70 : 0
+  const negative = negativeArticleSignal.test(signal) ? 240 : 0
+  const linkDensity = textLength ? linkCharacters / textLength : 1
+  return semantic + Math.min(textLength, 12_000) / 80 + Math.min(paragraphs, 30) * 14 + Math.min(headings, 8) * 5 - linkDensity * 180 - negative
+}
+
+function readableClone(node: HtmlNode, preserveHeader: boolean, removed: { count: number }): HtmlNode | undefined {
+  const signal = attributeSignal(node)
+  const role = node.attrs.role?.toLowerCase()
+  const hidden = 'hidden' in node.attrs || node.attrs['aria-hidden'] === 'true'
+  const noisyRole = role === 'navigation' || role === 'complementary' || role === 'banner' || role === 'contentinfo'
+  if (hidden || noiseTags.has(node.tag) || (!preserveHeader && node.tag === 'header') || noisyRole || negativeArticleSignal.test(signal)) {
+    removed.count += 1
+    return undefined
+  }
+  return {
+    ...node,
+    attrs: { ...node.attrs },
+    children: node.children.map(child => readableClone(child, preserveHeader, removed)).filter((child): child is HtmlNode => Boolean(child)),
+  }
+}
+
+function metaContent(root: HtmlNode, names: readonly string[]) {
+  const accepted = new Set(names.map(name => name.toLowerCase()))
+  let result = ''
+  visitNodes(root, node => {
+    if (result || node.tag !== 'meta') return
+    const key = (node.attrs.property || node.attrs.name || node.attrs.itemprop || '').toLowerCase()
+    if (accepted.has(key)) result = (node.attrs.content ?? '').trim()
+  })
+  return result
+}
+
+function firstTagText(root: HtmlNode, tags: readonly string[]) {
+  const accepted = new Set(tags)
+  let result = ''
+  visitNodes(root, node => {
+    if (!result && accepted.has(node.tag)) result = compactText(node)
+  })
+  return result
+}
+
+function metadataValue(value: string) {
+  return decodeHtmlEntities(value).replace(/\s+/g, ' ').trim().slice(0, 300)
+}
+
+export function extractWebArticle(html: string): WebArticleExtraction {
+  const sourceTruncated = html.length > RICH_CLIPBOARD_HTML_LIMIT
+  const source = html.slice(0, RICH_CLIPBOARD_HTML_LIMIT)
+  const parsed = parseHtmlFragment(source)
+  const candidates: Array<{ node: HtmlNode; score: number }> = []
+  visitNodes(parsed.root, node => {
+    if (articleTags.has(node.tag) || positiveArticleSignal.test(attributeSignal(node))) {
+      candidates.push({ node, score: articleScore(node) })
+    }
+  })
+  candidates.sort((left, right) => right.score - left.score)
+  const winner = candidates.find(candidate => Number.isFinite(candidate.score))
+  const selected = winner?.node ?? parsed.root
+  const removed = { count: 0 }
+  const readable = readableClone(selected, selected.tag === 'article' || selected.tag === 'main', removed) ?? { tag: 'root', attrs: {}, children: [] }
+  const rendered = cleanMarkdown(selected.tag === 'root' ? renderChildren(readable, 0, 0) : renderNode(readable))
+  const title = metadataValue(
+    metaContent(parsed.root, ['og:title', 'twitter:title'])
+      || firstTagText(selected, ['h1'])
+      || firstTagText(parsed.root, ['title', 'h1']),
+  )
+  const outputTruncated = rendered.length > RICH_CLIPBOARD_MARKDOWN_LIMIT
+  const markdown = rendered.slice(0, RICH_CLIPBOARD_MARKDOWN_LIMIT)
+  const textLength = compactText(readable).length
+  const confidence: ArticleExtractionConfidence = winner
+    ? winner.score >= 270 && textLength >= 500 ? 'high' : 'medium'
+    : 'low'
+  return {
+    title: title || '未命名网页',
+    markdown,
+    byline: metadataValue(metaContent(parsed.root, ['author', 'article:author', 'parsely-author'])) || undefined,
+    publishedAt: metadataValue(metaContent(parsed.root, ['article:published_time', 'date', 'datepublished'])) || undefined,
+    siteName: metadataValue(metaContent(parsed.root, ['og:site_name'])) || undefined,
+    confidence,
+    truncated: sourceTruncated || parsed.nodeLimitReached || outputTruncated,
+    removedBlocks: removed.count,
+    sourceCharacters: html.length,
+  }
 }
 
 export function htmlToMarkdown(html: string): RichClipboardMarkdown {

@@ -10,7 +10,7 @@
 - Worker、Rust 原生和受控外部 CLI 三类执行边界；任务有进度、取消、重试、输出和历史。
 - 本机能力页提供统一 Engine Registry：以固定参数探测 FFmpeg、FFprobe、7-Zip、qpdf、LibreOffice、Tesseract、ImageMagick、ExifTool、Czkawka 和 yt-dlp；不会执行用户输入的命令，也不会自动下载引擎。
 - 可保存/导入/导出 JSON 配方，限制步骤数和参数大小；文本流水线支持每步独立预览、条件分支、失败即停、跳过或最多重试 2 次，已有文本处理、文件处理和媒体任务可以复用同一套任务记录。
-- 快速处理入口会根据文件类型或粘贴内容推荐下一步：PDF、图片、代码、JSON、JWT、Base64、URL 和普通文本。JWT 只解码，不验证签名。
+- 快速处理入口会根据文件类型或粘贴内容推荐下一步：PDF、图片、完整 HTML 源码、代码、JSON、JWT、Base64、URL 和普通文本。粘贴网页源码后可在 Worker 中离线识别 `article/main` 或内容密集区，剔除导航、广告、评论与 Cookie 提示，明确显示提取置信度和截断状态；结果可人工修订后复制或存为 Markdown 笔记，全程不抓取网页、不执行脚本。JWT 只解码，不验证签名。
 
 ## 当前已实现的功能包
 

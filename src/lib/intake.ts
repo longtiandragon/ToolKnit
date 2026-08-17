@@ -1,7 +1,7 @@
 import { looksLikeCode } from './workbench-utils'
 export { isQuickIntakeShortcut } from './quick-intake-shortcut'
 
-export type IntakeKind = 'empty' | 'pdf' | 'image' | 'code' | 'json' | 'jwt' | 'base64' | 'url' | 'text' | 'mixed' | 'files'
+export type IntakeKind = 'empty' | 'pdf' | 'image' | 'html' | 'code' | 'json' | 'jwt' | 'base64' | 'url' | 'text' | 'mixed' | 'files'
 
 export interface IntakeFileLike {
   name: string
@@ -43,6 +43,12 @@ function isBase64(value: string) {
   return compact.length >= 16 && compact.length % 4 !== 1 && !compact.includes('.') && /^[A-Za-z0-9+/_=-]+$/.test(compact)
 }
 
+function isHtmlDocument(value: string) {
+  const sample = value.slice(0, 40_000)
+  return /<(?:!doctype\s+html|html|body|article|main)\b/i.test(sample)
+    && /<\/(?:html|body|article|main)>/i.test(sample)
+}
+
 export function detectIntake(files: IntakeFileLike[], text: string): IntakeKind {
   if (files.length) {
     const kinds = new Set(files.map(fileKind))
@@ -54,13 +60,14 @@ export function detectIntake(files: IntakeFileLike[], text: string): IntakeKind 
   if (isJwt(value)) return 'jwt'
   if (isBase64(value)) return 'base64'
   if (isUrl(value)) return 'url'
+  if (isHtmlDocument(value)) return 'html'
   if (looksLikeCode(value)) return 'code'
   return 'text'
 }
 
 export function intakeSummary(kind: IntakeKind, count = 0) {
   const labels: Record<IntakeKind, string> = {
-    empty: '等待内容', pdf: `${count} 份 PDF`, image: `${count} 张图片`, code: count ? `${count} 份代码文件` : '代码片段',
+    empty: '等待内容', pdf: `${count} 份 PDF`, image: `${count} 张图片`, html: '网页 HTML 源码', code: count ? `${count} 份代码文件` : '代码片段',
     json: 'JSON 数据', jwt: 'JWT 令牌', base64: 'Base64 数据', url: '网页链接', text: '文本内容', mixed: `${count} 个混合文件`, files: `${count} 个文件`
   }
   return labels[kind]

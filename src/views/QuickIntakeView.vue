@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { VocabularyEntry } from '@/types'
 import AppIcon from '@/components/AppIcon.vue'
@@ -16,6 +16,8 @@ import { questionTemplate } from '@/lib/question-template'
 import { cloneVocabularyEntry } from '@/lib/vocabulary'
 import { useUiStore } from '@/stores/ui'
 import { useWorkbenchStore } from '@/stores/workbench'
+
+const WebArticleExtractPanel = defineAsyncComponent(() => import('@/components/WebArticleExtractPanel.vue'))
 
 interface IntakeAction {
   id: string
@@ -38,6 +40,7 @@ function loadQuickDraft() {
 }
 const text = ref(loadQuickDraft())
 const readingClipboard = ref(false)
+const articleHtml = ref('')
 const actionMenu = ref<{ action: IntakeAction; x: number; y: number }>()
 const actionMenuElement = ref<HTMLElement>()
 let actionMenuTrigger: HTMLElement | undefined
@@ -52,6 +55,7 @@ const kindMeta: Record<IntakeKind, { label: string; description: string; icon: s
   empty: { label: '等待输入', description: '拖入、粘贴或选择内容后自动推荐操作', icon: 'inbox' },
   pdf: { label: '识别为 PDF', description: '可以合并、拆页、提取文字或调整页面', icon: 'file-pdf' },
   image: { label: '识别为图片', description: '可以裁剪、压缩、标注或转换格式', icon: 'file-image' },
+  html: { label: '识别为网页源码', description: '可以离线去除导航、广告与评论区，再转成 Markdown', icon: 'file-code' },
   code: { label: '识别为代码', description: '可以制作分享图、保存片段或交给 AI 解释', icon: 'terminal' },
   json: { label: '识别为 JSON', description: '可以校验、格式化或提取结构信息', icon: 'json' },
   jwt: { label: '识别为 JWT', description: '只解码 Header 与 Payload，不验证签名', icon: 'shield' },
@@ -116,6 +120,11 @@ const actions = computed<IntakeAction[]>(() => {
     { id: 'note', title: '保存为笔记', description: '保留原始 JSON 和 Markdown 说明', icon: 'book' },
     { id: 'ai-extract', title: 'AI 提取结构', description: '发送前仍可确认具体内容', icon: 'sparkle', to: { path: '/ai', query: { action: 'extract' } } }
   ]
+  if (kind.value === 'html') return [
+    { id: 'extract-article', title: '提取网页正文', description: '本地识别正文容器，先预览再存为 Markdown 笔记', icon: 'file-text', primary: true },
+    { id: 'raw-html-note', title: '按原样保存源码', description: '用代码块保存 HTML，不把标签当作笔记内容渲染', icon: 'book' },
+    { id: 'snippet', title: '保存为常用片段', description: '固定原始源码，后续继续处理', icon: 'clipboard' },
+  ]
   if (kind.value === 'jwt') return [
     { id: 'jwt', title: '解析 JWT', description: '本地解码 Header、Payload 与过期时间，不验证签名', icon: 'shield', to: { path: '/developer-tools', query: { tool: 'jwt' } }, primary: true },
     { id: 'snippet', title: '保存为常用片段', description: '固定到本地剪贴板，随时复用', icon: 'clipboard' },
@@ -157,6 +166,7 @@ const actions = computed<IntakeAction[]>(() => {
 function clearInput() {
   files.value = []
   text.value = ''
+  articleHtml.value = ''
   try { window.localStorage.removeItem(quickDraftKey) } catch { /* no-op */ }
 }
 
@@ -202,6 +212,22 @@ function noteTitle() {
 }
 
 async function openAction(action: IntakeAction) {
+  if (action.id === 'extract-article') {
+    articleHtml.value = text.value
+    await nextTick()
+    document.getElementById('article-extract-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    return
+  }
+  if (action.id === 'raw-html-note') {
+    const source = text.value.trim()
+    const longest = Math.max(0, ...(source.match(/`+/g) ?? []).map(run => run.length))
+    const fence = '`'.repeat(Math.max(3, longest + 1))
+    const note = store.createNote('网页 HTML 源码', '网页摘录', `# 网页 HTML 源码\n\n${fence}html\n${source}\n${fence}\n`)
+    store.saveDocument({ ...note, subject: '网页资料', tags: ['网页源码', '待整理'] })
+    clearInput()
+    await router.push({ path: '/documents', query: { kind: 'note', document: note.id, mode: 'edit' } })
+    return
+  }
   if (action.id === 'note') {
     const note = store.createNote(noteTitle())
     note.content = `# ${note.title}\n\n${text.value.trim()}\n`
@@ -485,6 +511,8 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
+
+    <WebArticleExtractPanel v-if="articleHtml" :html="articleHtml" @close="articleHtml = ''" @saved="clearInput" />
 
     <section class="row gap-2 flex-wrap mt-4">
       <span class="row text-[12px] text-fg-3 pr-1">快速开始</span>
