@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { analyzeHttpHeaders, calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, inspectUrl, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type CompressionFormat, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type GeneratedDataTypeLanguage, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
+import { analyzeHttpHeaders, calculateCidr, calculateDateDifference, calculateDateOffset, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, inspectUrl, sha256, testRegex, transformCsvJson, transformCsvMarkdown, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml, type CompressionFormat, type DateDifferenceResult, type DateOffsetResult, type DateOffsetUnit, type DiffLine, type GeneratedDataTypeLanguage, type HtmlEntityDirection, type JsonSchemaDirection, type RegexMatch, type TimestampResult } from '@/lib/developer-tools'
 import { decodeQrImage, generateQrCode } from '@/lib/qr-tools'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import AppIcon from '@/components/AppIcon.vue'
@@ -25,7 +25,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
   { id: 'url', icon: 'link', title: 'URL 编解码', description: '编解码并离线解析地址结构' },
   { id: 'json', icon: 'json', title: 'JSON', description: '格式化、压缩与语法检查' },
   { id: 'json-yaml', icon: 'file-code', title: 'JSON ↔ YAML', description: '在 JSON 与 YAML 之间安全转换' },
-  { id: 'csv-json', icon: 'table', title: 'CSV ↔ JSON', description: '转换表格数据并保留引号字段' },
+  { id: 'csv-json', icon: 'table', title: 'CSV 数据转换', description: 'CSV、JSON 与 Markdown 表格互转' },
   { id: 'json-schema', icon: 'json', title: 'JSON Schema', description: '从样例生成或校验数据结构' },
   { id: 'type-gen', icon: 'code', title: '数据类型生成', description: '从 JSON 样例生成 TypeScript、Java、C# 或 Go 类型' },
   { id: 'sql', icon: 'terminal', title: 'SQL 格式化', description: '整理常见 SQL 语句的大小写与缩进' },
@@ -49,6 +49,7 @@ const tools: { id: DeveloperToolId; icon: string; title: string; description: st
 const tool = ref<DeveloperToolId>('base64')
 const direction = ref<'encode' | 'decode'>('encode')
 const urlMode = ref<'encode' | 'decode' | 'inspect'>('encode')
+const csvMode = ref<'csv-to-json' | 'json-to-csv' | 'csv-to-markdown' | 'markdown-to-csv'>('csv-to-json')
 const compressionFormat = ref<CompressionFormat>('gzip')
 const input = ref(store.consumeIntakeText())
 const secondaryInput = ref('')
@@ -130,7 +131,6 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
     case 'base58':
     case 'hex':
     case 'json-yaml':
-    case 'csv-json':
     case 'json-schema':
     case 'type-gen':
     case 'html-entities':
@@ -142,10 +142,8 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
             ? [{ id: 'typescript', label: 'TypeScript' }, { id: 'java', label: 'Java' }, { id: 'csharp', label: 'C#' }, { id: 'go', label: 'Go' }]
           : tool.value === 'json-yaml'
           ? [{ id: 'encode', label: 'JSON → YAML' }, { id: 'decode', label: 'YAML → JSON' }]
-          : tool.value === 'csv-json'
-            ? [{ id: 'encode', label: 'CSV → JSON' }, { id: 'decode', label: 'JSON → CSV' }]
-            : tool.value === 'html-entities'
-              ? [{ id: 'encode', label: '编码' }, { id: 'decode', label: '解码' }]
+          : tool.value === 'html-entities'
+            ? [{ id: 'encode', label: '编码' }, { id: 'decode', label: '解码' }]
             : [{ id: 'encode', label: '编码' }, { id: 'decode', label: '解码' }],
         value: tool.value === 'json-schema' ? schemaDirection.value : tool.value === 'type-gen' ? typeLanguage.value : tool.value === 'html-entities' ? entityDirection.value : direction.value,
         set: (id) => {
@@ -161,6 +159,13 @@ const modeGroup = computed<{ label: string; options: ModeOption[]; value: string
         options: [{ id: 'encode', label: '编码' }, { id: 'decode', label: '解码' }, { id: 'inspect', label: '解析' }],
         value: urlMode.value,
         set: (id) => { urlMode.value = id as typeof urlMode.value; resetResult() },
+      }
+    case 'csv-json':
+      return {
+        label: '转换方向',
+        options: [{ id: 'csv-to-json', label: 'CSV → JSON' }, { id: 'json-to-csv', label: 'JSON → CSV' }, { id: 'csv-to-markdown', label: 'CSV → 表格' }, { id: 'markdown-to-csv', label: '表格 → CSV' }],
+        value: csvMode.value,
+        set: (id) => { csvMode.value = id as typeof csvMode.value; resetResult() },
       }
     case 'compress':
       return {
@@ -209,7 +214,7 @@ const emptyResultHint = computed(() => {
     case 'diff': return '左右两个输入框都填上内容，差异会逐行标出。'
     case 'json': return jsonMode.value === 'path' ? '用 $.users[*].name 这类表达式提取字段，结果会保持 JSON。' : '在左侧输入内容，结果会随输入即时更新。'
     case 'json-yaml': return direction.value === 'encode' ? '粘贴 JSON，结果会转换为可读 YAML。' : '粘贴 YAML，结果会转换为严格 JSON。'
-    case 'csv-json': return direction.value === 'encode' ? '首行作为字段名，把 CSV 转成对象数组。' : '粘贴对象数组，把 JSON 转成可直接保存的 CSV。'
+    case 'csv-json': return csvMode.value === 'csv-to-json' ? '首行作为字段名，把 CSV 转成对象数组。' : csvMode.value === 'json-to-csv' ? '粘贴对象数组，把 JSON 转成可直接保存的 CSV。' : csvMode.value === 'csv-to-markdown' ? '把 CSV 转成可粘贴到文档的 Markdown 表格；含换行的单元格会明确提示，避免丢数据。' : '粘贴标准 Markdown 表格，还原成可保存的 CSV。'
     case 'json-schema': return schemaDirection.value === 'generate' ? '粘贴 JSON 样例，生成可编辑的 JSON Schema。' : '左侧放 JSON，下面放 Schema，结果会列出校验错误。'
     case 'type-gen': return '粘贴 JSON 样例，输出可直接复制到项目中的类型定义；这里只根据样例推断，不连接网络。'
     case 'base32': return direction.value === 'encode' ? '把 UTF-8 文本转成 RFC 4648 Base32。' : '粘贴 Base32（可带或不带 = 补位）并还原 UTF-8 文本。'
@@ -278,7 +283,7 @@ async function run() {
     else if (tool.value === 'url') output.value = urlMode.value === 'inspect' ? JSON.stringify(inspectUrl(input.value), null, 2) : urlMode.value === 'encode' ? encodeUrl(input.value) : decodeUrl(input.value)
     else if (tool.value === 'json') output.value = jsonMode.value === 'path' ? transformJsonPath(input.value, jsonPath.value) : transformJson(input.value, jsonMode.value === 'compact')
     else if (tool.value === 'json-yaml') output.value = transformJsonYaml(input.value, direction.value === 'encode' ? 'json-to-yaml' : 'yaml-to-json')
-    else if (tool.value === 'csv-json') output.value = transformCsvJson(input.value, direction.value === 'encode' ? 'csv-to-json' : 'json-to-csv')
+    else if (tool.value === 'csv-json') output.value = csvMode.value === 'csv-to-json' || csvMode.value === 'json-to-csv' ? transformCsvJson(input.value, csvMode.value) : transformCsvMarkdown(input.value, csvMode.value)
     else if (tool.value === 'json-schema') output.value = transformJsonSchema(input.value, schemaDirection.value, secondaryInput.value)
     else if (tool.value === 'type-gen') output.value = generateDataTypes(input.value, typeLanguage.value, typeRootName.value)
     else if (tool.value === 'sql') output.value = formatSql(input.value)
@@ -413,7 +418,7 @@ function closeResultMenuOnWindow() { closeResultMenu() }
 // short enough that the result feels attached to the input.
 let liveTimer: ReturnType<typeof setTimeout> | undefined
 watch(
-  [input, secondaryInput, pattern, flags, jsonCompact, jsonMode, jsonPath, direction, urlMode, entityDirection, schemaDirection, compressionFormat, fromBase, toBase,
+  [input, secondaryInput, pattern, flags, jsonCompact, jsonMode, jsonPath, direction, urlMode, csvMode, entityDirection, schemaDirection, compressionFormat, fromBase, toBase,
     typeLanguage, typeRootName, dateStart, dateEnd, dateAmount, dateUnit, dateMode, qrSize, qrMode, tool],
   () => {
     clearTimeout(liveTimer)
@@ -502,7 +507,7 @@ onBeforeUnmount(() => {
               : tool === 'type-gen' ? 'JSON 样例'
               : tool === 'radix' ? '待转换整数'
                 : tool === 'json-yaml' ? (direction === 'encode' ? 'JSON 内容' : 'YAML 内容')
-                  : tool === 'csv-json' ? (direction === 'encode' ? 'CSV 内容' : 'JSON 对象数组')
+                  : tool === 'csv-json' ? (csvMode === 'csv-to-json' || csvMode === 'csv-to-markdown' ? 'CSV 内容' : csvMode === 'json-to-csv' ? 'JSON 对象数组' : 'Markdown 表格')
                     : tool === 'qrcode' ? (qrMode === 'generate' ? '二维码内容' : '二维码图片')
               : tool === 'datecalc' ? '日期' : (tool === 'uuid' || tool === 'ulid' || tool === 'random') ? '生成设置' : '输入' }}
           </p>
@@ -620,8 +625,9 @@ onBeforeUnmount(() => {
                 : tool === 'json-yaml' ? '粘贴 YAML 内容…'
                   : tool === 'jwt' ? '粘贴 eyJ… 格式的 Token'
                     : tool === 'radix' ? '65535 或 FF_FF'
-                      : tool === 'csv-json' && direction === 'encode' ? 'name,age\nAda,36\n'
-                          : tool === 'csv-json' ? '[{name: Ada, age: 36}]'
+                      : tool === 'csv-json' && (csvMode === 'csv-to-json' || csvMode === 'csv-to-markdown') ? 'name,age\nAda,36\n'
+                          : tool === 'csv-json' && csvMode === 'json-to-csv' ? '[{&quot;name&quot;:&quot;Ada&quot;,&quot;age&quot;:36}]'
+                          : tool === 'csv-json' ? '| name | age |\n| --- | --- |\n| Ada | 36 |'
                               : tool === 'xml' ? '<root><item /></root>'
                               : tool === 'sql' ? 'select id,name from users where active=1;'
                               : tool === 'cidr' ? '192.168.1.25/24'

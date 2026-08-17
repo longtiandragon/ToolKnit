@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { analyzeHttpHeaders, calculateCidr, calculateDateDifference, calculateDateOffset, calculateIpv6Cidr, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, inspectUrl, sha256, testRegex, transformCsvJson, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
+import { analyzeHttpHeaders, calculateCidr, calculateDateDifference, calculateDateOffset, calculateIpv6Cidr, compressText, convertColor, convertNumberBase, convertTimestamp, decodeBase32, decodeBase58, decodeBase64, decodeHex, decodeJwt, decodeUrl, decompressText, diffLines, encodeBase32, encodeBase58, encodeBase64, encodeHex, encodeUrl, explainCron, formatSql, formatXml, generateDataTypes, generateRandomStrings, generateUuids, generateUlids, inspectUrl, sha256, testRegex, transformCsvJson, transformCsvMarkdown, transformHtmlEntities, transformJson, transformJsonPath, transformJsonSchema, transformJsonYaml } from './developer-tools'
 
 describe('Base64 and URL transforms', () => {
   it('round-trips Unicode Base64 text', () => {
@@ -154,6 +154,18 @@ describe('structured data utilities', () => {
     const json = transformCsvJson('name,name,note\nAda,Ada,"hello, world"\n', 'csv-to-json')
     expect(JSON.parse(json)).toEqual([{ name: 'Ada', name_2: 'Ada', note: 'hello, world' }])
     expect(transformCsvJson(json, 'json-to-csv')).toContain('"hello, world"')
+  })
+
+  it('converts CSV and Markdown tables without silently dropping pipe or empty values', () => {
+    const markdown = transformCsvMarkdown('name,note,path\nAda,"A | B",C:\\work\\ToolKnit\n', 'csv-to-markdown')
+    expect(markdown).toContain('A \\| B')
+    const csv = transformCsvMarkdown(markdown, 'markdown-to-csv')
+    expect(JSON.parse(transformCsvJson(csv, 'csv-to-json'))).toEqual([{ name: 'Ada', note: 'A | B', path: 'C:\\work\\ToolKnit' }])
+    expect(transformCsvMarkdown('| name | note |\n| --- | --- |\n| Ada | |\n', 'markdown-to-csv')).toBe('name,note\r\nAda,\r\n')
+  })
+
+  it('refuses multi-line CSV cells that a Markdown table cannot represent losslessly', () => {
+    expect(() => transformCsvMarkdown('name,note\nAda,"first line\nsecond line"\n', 'csv-to-markdown')).toThrow('不能无损')
   })
 
   it('decodes JWT claims without verifying the signature', () => {

@@ -126,6 +126,7 @@ export interface JwtResult {
 
 export type JsonYamlDirection = 'json-to-yaml' | 'yaml-to-json'
 export type CsvJsonDirection = 'csv-to-json' | 'json-to-csv'
+export type CsvMarkdownDirection = 'csv-to-markdown' | 'markdown-to-csv'
 export type HtmlEntityDirection = 'encode' | 'decode'
 export type JsonSchemaDirection = 'generate' | 'validate'
 export type GeneratedDataTypeLanguage = 'typescript' | 'java' | 'csharp' | 'go'
@@ -1580,6 +1581,78 @@ export function transformCsvJson(value: string, direction: CsvJsonDirection) {
   } catch (reason) {
     const detail = reason instanceof Error ? reason.message : '语法错误'
     throw new Error(`${direction === 'csv-to-json' ? 'CSV' : 'JSON'} 解析失败：${detail}`)
+  }
+}
+
+function markdownTableCell(value: string) {
+  if (/\r|\n/.test(value)) throw new Error('Markdown 表格不能无损表示含换行的 CSV 单元格；请先拆分该字段。')
+  return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|')
+}
+
+function parseMarkdownTableRow(value: string, lineNumber: number, allowEmpty = false) {
+  const source = value.trim()
+  if (!source) throw new Error(`Markdown 表格第 ${lineNumber} 行为空。`)
+  const cells: string[] = []
+  let cell = ''
+  let escaped = false
+  let endedWithDelimiter = false
+  for (const character of source) {
+    if (escaped) {
+      cell += character === '|' || character === '\\' ? character : `\\${character}`
+      escaped = false
+      endedWithDelimiter = false
+    } else if (character === '\\') {
+      escaped = true
+      endedWithDelimiter = false
+    } else if (character === '|') {
+      cells.push(cell.trim())
+      cell = ''
+      endedWithDelimiter = true
+    } else {
+      cell += character
+      endedWithDelimiter = false
+    }
+  }
+  if (escaped) cell += '\\'
+  cells.push(cell.trim())
+  if (source.startsWith('|')) cells.shift()
+  if (endedWithDelimiter) cells.pop()
+  if (!cells.length || (!allowEmpty && cells.some((item) => item.length === 0))) throw new Error(`Markdown 表格第 ${lineNumber} 行包含空列。`)
+  return cells
+}
+
+function isMarkdownTableDivider(cells: string[]) {
+  return cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')))
+}
+
+export function transformCsvMarkdown(value: string, direction: CsvMarkdownDirection) {
+  if (!value.trim()) throw new Error('请输入 CSV 或 Markdown 表格内容。')
+  assertStructuredTextSize(value)
+  try {
+    if (direction === 'csv-to-markdown') {
+      const rows = parseCsvRows(value)
+      if (rows[0].length > 256) throw new Error('CSV 表格最多支持 256 列。')
+      const columns = rows[0].length
+      if (rows.some((row) => row.length > columns)) throw new Error('CSV 中存在超过表头列数的数据行，请先修正列数。')
+      const renderRow = (row: string[]) => `| ${Array.from({ length: columns }, (_, index) => markdownTableCell(row[index] ?? '')).join(' | ')} |`
+      return [renderRow(rows[0]), `| ${Array.from({ length: columns }, () => '---').join(' | ')} |`, ...rows.slice(1).map(renderRow)].join('\n')
+    }
+    const lines = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter((line) => line.trim())
+    if (lines.length < 2) throw new Error('Markdown 表格至少需要表头和分隔行。')
+    if (lines.length > 10_002) throw new Error('Markdown 表格最多支持 10000 行数据。')
+    const headers = parseMarkdownTableRow(lines[0], 1)
+    const divider = parseMarkdownTableRow(lines[1], 2)
+    if (headers.length > 256) throw new Error('Markdown 表格最多支持 256 列。')
+    if (divider.length !== headers.length || !isMarkdownTableDivider(divider)) throw new Error('Markdown 表格第 2 行必须是与表头列数一致的 --- 分隔行。')
+    const records = lines.slice(2).map((line, index) => {
+      const row = parseMarkdownTableRow(line, index + 3, true)
+      if (row.length !== headers.length) throw new Error(`Markdown 表格第 ${index + 3} 行有 ${row.length} 列，表头有 ${headers.length} 列。`)
+      return row
+    })
+    return [headers.map(csvCell).join(','), ...records.map((row) => row.map(csvCell).join(','))].join('\r\n') + '\r\n'
+  } catch (reason) {
+    const detail = reason instanceof Error ? reason.message : '语法错误'
+    throw new Error(`${direction === 'csv-to-markdown' ? 'CSV' : 'Markdown 表格'} 解析失败：${detail}`)
   }
 }
 
