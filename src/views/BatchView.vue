@@ -8,6 +8,7 @@ import type { PdfTaskOperation } from '@/lib/pdf-worker'
 import { buildRenamePreview, cleanOutputName, transformText, type TextTransformMode } from '@/lib/file-tools'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
 import { isDesktop } from '@/lib/native'
+import { optimizeDesktopPdf } from '@/lib/pdf-native'
 import { readDesktopOcrFont, recognizeDesktopImageBytes } from '@/lib/ocr-native'
 import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -108,7 +109,7 @@ const operationNotes: Record<string, string> = {
   'page-number': '按起始数字和位置批量添加页码',
   'images-to-pdf': '把多张图片按顺序合成一份 PDF',
   'pdf-to-image': '把每一页渲染成图片,可选格式、分辨率与页码范围',
-  compress: '重写 PDF 结构与对象流，尽量减小体积，不改变页面内容',
+  compress: '桌面版调用本机 qpdf 重写对象流；浏览器使用 PDF 引擎优化结构，不改变页面内容',
   redact: '按文本匹配覆盖并栅格化页面，输出后无法恢复原文字层',
   ocr: '把扫描页面识别为本机文字，并生成可搜索的 PDF 副本',
   'extract-text': '导出 PDF 里已有的文字层,不做 OCR',
@@ -141,7 +142,7 @@ const outputHint = computed(() => {
   if (!files.value.length && !(group.value === 'text' && textInput.value.trim())) return '等待输入内容'
   if (group.value === 'pdf' && operation.value === 'split') return `将把 ${files.value.length} 份 PDF 拆成独立页面`
   if (group.value === 'pdf' && operation.value === 'redact') return '匹配到的页面会变成不可搜索的图片，并永久覆盖敏感文字'
-  if (group.value === 'pdf' && operation.value === 'compress') return '仅重写 PDF 结构；图片型 PDF 体积可能变化不大'
+  if (group.value === 'pdf' && operation.value === 'compress') return isDesktop() ? '使用本机 qpdf 重写对象流和压缩流；原文件不会被覆盖' : '仅重写 PDF 结构；图片型 PDF 体积可能变化不大'
   if (group.value === 'pdf' && operation.value === 'ocr') return isDesktop() ? '使用 Windows 本机 OCR，原文件不会上传；输出会保留页面图片并附加文字层' : 'OCR PDF 需要 Windows 桌面版与本机 OCR 语言包'
   if (group.value === 'organize') return '仅生成预览报告，不修改原文件'
   return `将为 ${Math.max(files.value.length, 1)} 个输入生成新输出`
@@ -535,6 +536,21 @@ async function runPdf(onProgress?: (progress: number, detail: string) => void, o
     const saved = await save(name, bytes(await output.save({ useObjectStreams: true, addDefaultPage: false, objectsPerTick: 20 })), 'application/pdf')
     onOutput?.(saved)
     return [saved]
+  }
+
+  if (operation.value === 'compress' && isDesktop()) {
+    const outputs: FileReference[] = []
+    for (let index = 0; index < inputs.length; index += 1) {
+      throwIfCancelled()
+      onProgress?.(12 + 80 * index / inputs.length, `正在用本机 qpdf 优化 ${index + 1}/${inputs.length} 份 PDF…`)
+      const optimized = await optimizeDesktopPdf(inputs[index].data)
+      throwIfCancelled()
+      const saved = await save(`${cleanOutputName(inputs[index].name)}-optimized.pdf`, optimized, 'application/pdf')
+      outputs.push(saved)
+      onOutput?.(saved)
+      onProgress?.(12 + 80 * (index + 1) / inputs.length, `已完成 ${index + 1}/${inputs.length} 份 PDF 优化。`)
+    }
+    return outputs
   }
 
   onProgress?.(12, '正在交给后台 PDF 引擎处理…')
@@ -946,7 +962,7 @@ onBeforeUnmount(() => {
             </template>
 
             <p v-if="operation === 'compress'" class="text-[12px] text-fg-3 leading-snug">
-              这是无损结构优化：不会降低图片分辨率或删除文字。图片型 PDF 若仍很大，下一步可用图片质量工具重建。
+              {{ isDesktop() ? '桌面版会调用本机 qpdf：只重写对象流和压缩流，不降低图片分辨率或删除文字；未安装 qpdf 时会明确提示。' : '这是无损结构优化：不会降低图片分辨率或删除文字。图片型 PDF 若仍很大，下一步可用图片质量工具重建。' }}
             </p>
 
             <p v-if="operation === 'ocr'" class="text-[11px] text-fg-3 leading-relaxed">

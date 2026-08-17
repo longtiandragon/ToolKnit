@@ -3,6 +3,7 @@ mod private_tools;
 mod archive_tools;
 mod engine_registry;
 mod file_health;
+mod pdf_tools;
 mod transcription;
 mod vault;
 mod windows_ocr;
@@ -5925,6 +5926,7 @@ pub fn run() {
             extract_tar_archive,
             seven_zip_engine_status,
             engine_registry_status,
+            pdf_tools::optimize_pdf_bytes,
             create_seven_zip_archive,
             list_seven_zip_archive,
             extract_seven_zip_archive,

@@ -24,7 +24,8 @@
 ### PDF
 
 - 合并、拆分、旋转、提取/重排页面、文字层提取、页码、水印、图片转 PDF、PDF 转图片。
-- PDF 结构优化、按文本匹配的永久栅格化脱敏、页面 CropBox 裁剪。
+- PDF 结构优化：Windows 桌面版有 qpdf 可用时，会在受控临时目录中重写对象流、压缩流并生成新文件；浏览器继续使用 PDF 引擎的结构优化。
+- 按文本匹配的永久栅格化脱敏、页面 CropBox 裁剪。
 - Windows 本机 OCR 生成可搜索 PDF；原文件不覆盖。
 
 ### 图片与媒体
@@ -52,7 +53,7 @@
 
 下面这些是明确的后续任务，不应在发布说明中写成“已支持”：
 
-- qpdf/LibreOffice/Tesseract/ImageMagick/ExifTool/Czkawka 的完整功能适配、版本策略和 Engine Registry 的安装/更新管理；目前已完成只读固定版本探针，但不会自动下载或更新外部引擎。
+- qpdf 的密码/权限、签名和更完整的图片压缩策略，以及 qpdf/LibreOffice/Tesseract/ImageMagick/ExifTool/Czkawka 的完整功能适配、版本策略和 Engine Registry 的安装/更新管理；目前已完成 qpdf 只读探针和受控 PDF 结构优化，但不会自动下载或更新外部引擎。
 - PDF 密码、数字签名、表单、书签、附件、PDF/A 和 Office/HTML 转换。
 - 媒体字幕烧录、章节、波形、黑场/静音检测、音量标准化、降噪和说话人分离。
 - 字幕翻译、本地模型管理、图形字幕 OCR 和更完整的 CPS 自动修复。
