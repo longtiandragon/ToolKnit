@@ -18,7 +18,21 @@ export interface MediaDetectionReport {
   elapsedMs: number
 }
 
+export interface MediaWaveformReport {
+  sampleRate: number
+  sampledDurationSeconds: number
+  sourceDurationSeconds?: number
+  limited: boolean
+  peaks: number[]
+  elapsedMs: number
+}
+
 export async function analyzeDesktopMedia(path: string, kind: 'silence' | 'black') {
   if (!isDesktop()) throw new Error('媒体检测仅支持桌面模式。')
   return invoke<MediaDetectionReport>(kind === 'silence' ? 'analyze_media_silence' : 'analyze_media_black', { path })
+}
+
+export async function analyzeDesktopMediaWaveform(path: string) {
+  if (!isDesktop()) throw new Error('媒体波形分析仅支持桌面模式。')
+  return invoke<MediaWaveformReport>('analyze_media_waveform', { path })
 }

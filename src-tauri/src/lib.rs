@@ -1813,6 +1813,17 @@ struct MediaDetectionReport {
     elapsed_ms: u128,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaWaveformReport {
+    sample_rate: u32,
+    sampled_duration_seconds: f64,
+    source_duration_seconds: Option<f64>,
+    limited: bool,
+    peaks: Vec<f32>,
+    elapsed_ms: u128,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MediaProgress {
@@ -1886,6 +1897,10 @@ const SUPPORTED_MEDIA_EXTENSIONS: &[&str] = &[
 const SUPPORTED_SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt", "ass", "ssa", "sub", "smi"];
 const MAX_SUBTITLE_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MEDIA_PROGRESS_EVENT: &str = "toolknit://media-progress";
+const MEDIA_WAVEFORM_SAMPLE_RATE: u32 = 1_000;
+const MEDIA_WAVEFORM_MAX_POINTS: usize = 1_600;
+const MEDIA_WAVEFORM_MAX_BYTES: usize = 24 * 1024 * 1024;
+const MEDIA_WAVEFORM_TIMEOUT: Duration = Duration::from_secs(180);
 
 fn media_engine_version() -> Option<String> {
     let output = Command::new("ffmpeg").arg("-version").output().ok()?;
@@ -2071,6 +2086,70 @@ fn read_media_log<R: Read>(mut reader: R) -> String {
         }
     }
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn read_media_waveform<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 16 * 1024];
+    let mut oversized = false;
+    loop {
+        let length = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("读取 FFmpeg 波形数据失败：{error}"))?;
+        if length == 0 {
+            break;
+        }
+        if !oversized {
+            let remaining = MEDIA_WAVEFORM_MAX_BYTES.saturating_sub(bytes.len());
+            if length <= remaining {
+                bytes.extend_from_slice(&buffer[..length]);
+            } else {
+                bytes.extend_from_slice(&buffer[..remaining]);
+                oversized = true;
+            }
+        }
+    }
+    if oversized {
+        Err("媒体波形数据超过安全上限，请先截取较短的片段。".into())
+    } else {
+        Ok(bytes)
+    }
+}
+
+fn summarize_media_waveform(
+    pcm: &[u8],
+    source_duration_seconds: Option<f64>,
+    elapsed_ms: u128,
+) -> Result<MediaWaveformReport, String> {
+    let sample_count = pcm.len() / 2;
+    if sample_count == 0 {
+        return Err("媒体没有可生成波形的音频样本。".into());
+    }
+    let point_count = sample_count.min(MEDIA_WAVEFORM_MAX_POINTS);
+    let mut peaks = Vec::with_capacity(point_count);
+    for point in 0..point_count {
+        let start = point * sample_count / point_count;
+        let end = ((point + 1) * sample_count / point_count).max(start + 1);
+        let mut peak = 0.0_f32;
+        for sample in start..end.min(sample_count) {
+            let offset = sample * 2;
+            let value = i16::from_le_bytes([pcm[offset], pcm[offset + 1]]);
+            peak = peak.max((f32::from(value).abs() / 32_768.0).min(1.0));
+        }
+        peaks.push(peak);
+    }
+    let sampled_duration_seconds = sample_count as f64 / f64::from(MEDIA_WAVEFORM_SAMPLE_RATE);
+    let limited = source_duration_seconds
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .is_some_and(|value| value > sampled_duration_seconds + 1.0);
+    Ok(MediaWaveformReport {
+        sample_rate: MEDIA_WAVEFORM_SAMPLE_RATE,
+        sampled_duration_seconds,
+        source_duration_seconds,
+        limited,
+        peaks,
+        elapsed_ms,
+    })
 }
 
 fn emit_media_progress(
@@ -2294,6 +2373,71 @@ fn parse_detection_segments(
     (segments, truncated)
 }
 
+fn run_media_waveform(path: String) -> Result<MediaWaveformReport, String> {
+    let input = validated_media_input_path(&path)?;
+    require_media_engine()?;
+    let media_info = probe_media_file(input.clone())?;
+    if media_info.audio_codec.is_none() {
+        return Err("当前文件没有可生成波形的音轨。".into());
+    }
+    let started = Instant::now();
+    let mut command = Command::new("ffmpeg");
+    command
+        .args(["-hide_banner", "-loglevel", "error", "-nostdin"])
+        .arg("-i")
+        .arg(&input)
+        .args(["-map", "0:a:0", "-vn", "-ac", "1", "-ar"])
+        .arg(MEDIA_WAVEFORM_SAMPLE_RATE.to_string())
+        .args(["-t", "10800", "-f", "s16le", "-"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("无法启动 FFmpeg 生成波形：{error}"))?;
+    let stdout = child.stdout.take().ok_or("无法读取 FFmpeg 波形数据。")?;
+    let stderr = child.stderr.take().ok_or("无法读取 FFmpeg 波形日志。")?;
+    let waveform_reader = thread::spawn(move || read_media_waveform(stdout));
+    let stderr_reader = thread::spawn(move || read_media_log(stderr));
+    let status = loop {
+        if started.elapsed() >= MEDIA_WAVEFORM_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = waveform_reader.join();
+            let _ = stderr_reader.join();
+            return Err("媒体波形分析超时，已停止本次只读分析。".into());
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("无法检查 FFmpeg 波形状态：{error}"))?
+        {
+            break status;
+        }
+        thread::sleep(Duration::from_millis(80));
+    };
+    let pcm = waveform_reader
+        .join()
+        .map_err(|_| "读取 FFmpeg 波形数据的线程异常退出。".to_string())??;
+    let log = stderr_reader.join().unwrap_or_default();
+    if !status.success() {
+        let message = log
+            .lines()
+            .rev()
+            .take(5)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(if message.trim().is_empty() {
+            "FFmpeg 未能完成波形分析。".into()
+        } else {
+            message.chars().take(900).collect()
+        });
+    }
+    summarize_media_waveform(&pcm, media_info.duration_seconds, started.elapsed().as_millis())
+}
+
 fn run_media_detection(path: String, kind: &str) -> Result<MediaDetectionReport, String> {
     let input = validated_media_input_path(&path)?;
     require_media_engine()?;
@@ -2395,6 +2539,13 @@ async fn analyze_media_black(path: String) -> Result<MediaDetectionReport, Strin
     tauri::async_runtime::spawn_blocking(move || run_media_detection(path, "black"))
         .await
         .map_err(|error| format!("黑场检测任务失败：{error}"))?
+}
+
+#[tauri::command]
+async fn analyze_media_waveform(path: String) -> Result<MediaWaveformReport, String> {
+    tauri::async_runtime::spawn_blocking(move || run_media_waveform(path))
+        .await
+        .map_err(|error| format!("波形分析任务失败：{error}"))?
 }
 
 fn required_media_track(operation: &str) -> Option<&'static str> {
@@ -5066,6 +5217,18 @@ mod external_markdown_tests {
     }
 
     #[test]
+    fn media_waveform_summary_is_bounded_and_marks_limited_sources() {
+        let pcm = [0_u8, 0, 0, 64, 0, 128, 0, 32];
+        let report = summarize_media_waveform(&pcm, Some(10.0), 7).unwrap();
+        assert_eq!(report.sample_rate, MEDIA_WAVEFORM_SAMPLE_RATE);
+        assert_eq!(report.peaks.len(), 4);
+        assert_eq!(report.sampled_duration_seconds, 0.004);
+        assert!(report.limited);
+        assert_eq!(report.elapsed_ms, 7);
+        assert!(summarize_media_waveform(&[], None, 0).is_err());
+    }
+
+    #[test]
     fn media_clip_ranges_reject_invalid_or_out_of_bounds_requests() {
         assert_eq!(
             validated_media_clip_range(Some(12.0), Some(18.0), Some(60.0)).unwrap(),
@@ -6302,6 +6465,7 @@ pub fn run() {
             inspect_media_file,
             analyze_media_silence,
             analyze_media_black,
+            analyze_media_waveform,
             transcode_media_file,
             cancel_media_transcode,
             probe_transcription_engine,

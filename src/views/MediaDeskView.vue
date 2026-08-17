@@ -6,7 +6,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { firstAvailableMediaOperation, isSupportedMediaPath, mediaOperationAvailable, mediaOperationUnavailableReason, mediaOperations, mediaOutputMime, routeMediaOperation, type MediaOperation } from '@/lib/media-operation'
 import { cancelDesktopMediaTranscode, getMediaEngineStatus, inspectDesktopMedia, isDesktop, listenDesktopEvent, listenWindowFileDrops, revealDesktopFile, saveOutputAs, transcodeDesktopMedia, type MediaEngineStatus, type MediaFileInfo, type MediaOutput, type MediaTranscodeProgress } from '@/lib/native'
-import { analyzeDesktopMedia, type MediaDetectionReport } from '@/lib/media-native'
+import { analyzeDesktopMedia, analyzeDesktopMediaWaveform, type MediaDetectionReport, type MediaWaveformReport } from '@/lib/media-native'
 import { newId } from '@/lib/id'
 import { chooseOutputDirectory } from '@/lib/output'
 import { useWorkbenchStore } from '@/stores/workbench'
@@ -36,8 +36,9 @@ const cancelling = ref(false)
 const mediaProgress = ref(0)
 const activeRunId = ref('')
 const activeJobId = ref('')
-const detectionRunning = ref<'silence' | 'black' | null>(null)
+const detectionRunning = ref<'silence' | 'black' | 'waveform' | null>(null)
 const detectionReport = shallowRef<MediaDetectionReport>()
+const waveformReport = shallowRef<MediaWaveformReport>()
 const detectionError = ref('')
 const busy = computed(() => running.value || Boolean(detectionRunning.value))
 const notice = ref(desktop ? '选择一份本地媒体文件；先读取信息，再生成新输出。' : '媒体转换仅在桌面端可用。')
@@ -72,7 +73,15 @@ const outputDirectory = computed(() => qaPreview ? 'F:\\Knitspace\\Outputs' : st
 const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !busy.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)) && (operation.value !== 'add-subtitle' || Boolean(subtitlePath.value)))
 const canAnalyzeSilence = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.audioCodec) && !running.value && !detectionRunning.value)
 const canAnalyzeBlack = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.videoCodec) && !running.value && !detectionRunning.value)
+const canAnalyzeWaveform = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.audioCodec) && !running.value && !detectionRunning.value)
 const outputDirectoryLabel = computed(() => outputDirectory.value ? outputDirectory.value.split(/[\\/]/).filter(Boolean).at(-1) || outputDirectory.value : '尚未选择')
+const waveformPoints = computed(() => {
+  const peaks = waveformReport.value?.peaks ?? []
+  if (!peaks.length) return ''
+  const width = 800
+  const center = 40
+  return peaks.map((peak, index) => `${(index / Math.max(1, peaks.length - 1)) * width},${center - Math.max(1, peak * 36)}`).join(' ')
+})
 
 function formatSize(value?: number) {
   if (!value) return '—'
@@ -130,6 +139,7 @@ async function inspectSource(path: string) {
   inspecting.value = true
   output.value = undefined
   detectionReport.value = undefined
+  waveformReport.value = undefined
   detectionError.value = ''
   try {
     source.value = await inspectDesktopMedia(path)
@@ -339,26 +349,34 @@ function clearSource() {
   source.value = undefined
   output.value = undefined
   detectionReport.value = undefined
+  waveformReport.value = undefined
   detectionError.value = ''
   notice.value = '已清除当前媒体。选择另一份本地文件继续。'
   closeSourceMenu(true)
 }
 
-async function analyze(kind: 'silence' | 'black') {
+async function analyze(kind: 'silence' | 'black' | 'waveform') {
   if (!source.value?.path || detectionRunning.value || running.value) return
   if (kind === 'silence' && !canAnalyzeSilence.value) return
   if (kind === 'black' && !canAnalyzeBlack.value) return
+  if (kind === 'waveform' && !canAnalyzeWaveform.value) return
   detectionRunning.value = kind
   detectionReport.value = undefined
+  waveformReport.value = undefined
   detectionError.value = ''
-  notice.value = kind === 'silence' ? '正在扫描静音区间；媒体只读，不会生成输出。' : '正在扫描黑场区间；媒体只读，不会生成输出。'
+  notice.value = kind === 'silence' ? '正在扫描静音区间；媒体只读，不会生成输出。' : kind === 'black' ? '正在扫描黑场区间；媒体只读，不会生成输出。' : '正在生成音频波形概览；媒体只读，不会生成输出。'
   try {
-    detectionReport.value = await analyzeDesktopMedia(source.value.path, kind)
-    notice.value = detectionReport.value.segments.length
-      ? `检测完成：发现 ${detectionReport.value.segments.length} 个${kind === 'silence' ? '静音' : '黑场'}区间。`
-      : `检测完成：没有发现满足阈值的${kind === 'silence' ? '静音' : '黑场'}区间。`
+    if (kind === 'waveform') {
+      waveformReport.value = await analyzeDesktopMediaWaveform(source.value.path)
+      notice.value = `波形概览完成：采样 ${formatDuration(waveformReport.value.sampledDurationSeconds)}${waveformReport.value.limited ? '（超过 3 小时，仅显示前段）' : ''}。`
+    } else {
+      detectionReport.value = await analyzeDesktopMedia(source.value.path, kind)
+      notice.value = detectionReport.value.segments.length
+        ? `检测完成：发现 ${detectionReport.value.segments.length} 个${kind === 'silence' ? '静音' : '黑场'}区间。`
+        : `检测完成：没有发现满足阈值的${kind === 'silence' ? '静音' : '黑场'}区间。`
+    }
   } catch (error) {
-    detectionError.value = error instanceof Error ? error.message : '媒体检测失败。'
+    detectionError.value = error instanceof Error ? error.message : kind === 'waveform' ? '媒体波形分析失败。' : '媒体检测失败。'
     notice.value = detectionError.value
   } finally {
     detectionRunning.value = null
@@ -592,7 +610,7 @@ onBeforeUnmount(() => {
               </span>
               <small class="font-mono text-[11px] text-fg-3">FFmpeg</small>
             </header>
-            <div class="grid grid-cols-2 gap-2">
+            <div class="grid grid-cols-3 gap-2">
               <button class="row gap-2 p-2 rounded-sm border border-line bg-surface text-left transition-colors duration-120 hover:not-disabled:border-line-strong disabled:opacity-45" :disabled="!canAnalyzeSilence" @click="analyze('silence')">
                 <AppIcon name="clock" :size="15" class="shrink-0 text-accent" />
                 <span class="stack gap-0.5 min-w-0">
@@ -605,6 +623,13 @@ onBeforeUnmount(() => {
                 <span class="stack gap-0.5 min-w-0">
                   <b class="text-[11px] font-medium text-fg">{{ detectionRunning === 'black' ? '扫描黑场…' : '检测黑场' }}</b>
                   <small class="text-[10px] text-fg-3">0.40 秒 · 10%</small>
+                </span>
+              </button>
+              <button class="row gap-2 p-2 rounded-sm border border-line bg-surface text-left transition-colors duration-120 hover:not-disabled:border-line-strong disabled:opacity-45" :disabled="!canAnalyzeWaveform" @click="analyze('waveform')">
+                <AppIcon name="activity" :size="15" class="shrink-0 text-accent" />
+                <span class="stack gap-0.5 min-w-0">
+                  <b class="text-[11px] font-medium text-fg">{{ detectionRunning === 'waveform' ? '生成波形…' : '生成波形' }}</b>
+                  <small class="text-[10px] text-fg-3">只读 · 1600 点</small>
                 </span>
               </button>
             </div>
@@ -623,6 +648,17 @@ onBeforeUnmount(() => {
               </ol>
               <small v-if="detectionReport.truncated" class="text-[10px] text-warn">结果超过 256 段，仅显示前 256 段。</small>
               <small v-else class="text-[10px] text-fg-3">阈值固定用于快速定位，不等同于最终剪辑判断。</small>
+            </div>
+            <div v-else-if="waveformReport" class="stack gap-1.5" role="status" aria-live="polite">
+              <div class="row-between gap-2 text-[11px] text-fg-3">
+                <span>音频波形 · {{ waveformReport.peaks.length }} 个峰值</span>
+                <span class="font-mono">{{ formatDuration(waveformReport.sampledDurationSeconds) }}</span>
+              </div>
+              <svg viewBox="0 0 800 80" class="w-full h-16 rounded-sm bg-surface" role="img" aria-label="音频波形概览">
+                <line x1="0" y1="40" x2="800" y2="40" stroke="currentColor" stroke-opacity=".16" stroke-width="1" />
+                <polyline :points="waveformPoints" fill="none" stroke="currentColor" class="text-accent" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+              </svg>
+              <small class="text-[10px]" :class="waveformReport.limited ? 'text-warn' : 'text-fg-3'">{{ waveformReport.limited ? '源媒体超过 3 小时，仅采样前 3 小时。' : '固定 1 kHz 单声道采样，仅用于定位剪辑和字幕空档。' }}</small>
             </div>
             <small v-else class="text-[11px] text-fg-3">选择上方检测后，结果会显示在这里；不会写入任务历史或修改源文件。</small>
           </section>

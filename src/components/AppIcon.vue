@@ -85,6 +85,7 @@ const props = withDefaults(defineProps<{ name: string; size?: number; label?: st
 
 const icons: Record<string, Component> = {
   dashboard: Blocks,
+  activity: GitCompareArrows,
   inbox: Inbox,
   toolbox: Blocks,
   code: CodeXml,
