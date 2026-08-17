@@ -47,6 +47,9 @@ const watermarkOpacity = ref(18)
 // A watermark should read as a mark, not as brand colour. The old default was
 // left over from the previous palette's green.
 const watermarkColor = ref('#8a8f98')
+const signatureText = ref('')
+const signaturePosition = ref<'bottom-left' | 'bottom-center' | 'bottom-right'>('bottom-right')
+const signatureScale = ref(100)
 const pageNumberStart = ref(1)
 const pageNumberPosition = ref<'bottom-center' | 'bottom-right'>('bottom-center')
 const redactTerms = ref('')
@@ -92,7 +95,7 @@ const groups: [ToolGroup, string, string, string][] = [
 ]
 
 const operationMap: Record<ToolGroup, ToolOption[]> = {
-  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['compare', '比较 PDF'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['protect', '密码保护 PDF'], ['decrypt', '移除 PDF 密码'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本'], ['attachments', '提取附件'], ['bookmarks', '导出书签'], ['metadata', '导出元数据']],
+  pdf: [['merge', '合并 PDF'], ['split', '按页拆分'], ['compare', '比较 PDF'], ['rotate', '旋转 PDF'], ['extract', '提取指定页'], ['reorder', '重排页面'], ['crop', '裁剪页面'], ['watermark', '添加水印'], ['signature', '放置签名'], ['page-number', '添加页码'], ['compress', '优化 PDF'], ['protect', '密码保护 PDF'], ['decrypt', '移除 PDF 密码'], ['redact', '永久脱敏'], ['ocr', 'OCR PDF'], ['images-to-pdf', '图片转 PDF'], ['pdf-to-image', 'PDF 转图片'], ['text', '提取文本'], ['attachments', '提取附件'], ['bookmarks', '导出书签'], ['metadata', '导出元数据']],
   image: [['convert', '转换图片'], ['resize', '缩放并压缩'], ['crop', '裁剪图片'], ['rotate', '旋转图片']],
   text: [['transform', '文本转换']],
   organize: [['rename-report', '命名预览'], ['dedupe-report', '哈希去重报告']]
@@ -113,6 +116,7 @@ const operationNotes: Record<string, string> = {
   reorder: '按你指定的页序重新组织后导出',
   crop: '调整 PDF 页面可见区域，不栅格化文字和矢量内容',
   watermark: '在每页叠加文字水印,可调透明度与角度',
+  signature: '把签名文字绘制成手写风格图层并放在每页底部；不是数字证书签名',
   'page-number': '按起始数字和位置批量添加页码',
   'images-to-pdf': '把多张图片按顺序合成一份 PDF',
   'pdf-to-image': '把每一页渲染成图片,可选格式、分辨率与页码范围',
@@ -143,7 +147,7 @@ const accept = computed(() => group.value === 'pdf' && operation.value !== 'imag
       : group.value === 'text'
         ? '.txt,.md,.json,.js,.ts,.py,.java,.csv,text/*,application/json'
         : '*/*')
-const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'crop', 'watermark', 'page-number', 'rotate', 'split', 'compare', 'text', 'pdf-to-image', 'compress', 'protect', 'decrypt', 'redact', 'ocr'].includes(operation.value))
+const hasParameters = computed(() => group.value !== 'pdf' || ['extract', 'reorder', 'crop', 'watermark', 'signature', 'page-number', 'rotate', 'split', 'compare', 'text', 'pdf-to-image', 'compress', 'protect', 'decrypt', 'redact', 'ocr'].includes(operation.value))
 const usesOutputName = computed(() => group.value === 'text' || group.value === 'organize' || (group.value === 'pdf' && ['merge', 'images-to-pdf'].includes(operation.value)))
 const canRun = computed(() => !running.value
   && (files.value.length > 0 || (group.value === 'text' && textInput.value.trim().length > 0))
@@ -151,6 +155,7 @@ const canRun = computed(() => !running.value
   && (!(group.value === 'pdf' && ['protect', 'decrypt'].includes(operation.value)) || (isDesktop() && pdfPassword.value.length > 0))
   && (!(group.value === 'pdf' && operation.value === 'protect') || pdfPassword.value.length >= 8)
   && !(group.value === 'pdf' && operation.value === 'redact' && !redactTerms.value.trim())
+  && !(group.value === 'pdf' && operation.value === 'signature' && !signatureText.value.trim())
   && !(group.value === 'pdf' && operation.value === 'ocr' && !isDesktop()))
 const outputHint = computed(() => {
   if (!files.value.length && !(group.value === 'text' && textInput.value.trim())) return '等待输入内容'
@@ -164,6 +169,7 @@ const outputHint = computed(() => {
   if (group.value === 'pdf' && operation.value === 'attachments') return '提取 PDF 内嵌附件为独立文件；单份 PDF 最多 128 个、单个 16 MB、总计 64 MB'
   if (group.value === 'pdf' && operation.value === 'bookmarks') return '导出书签标题、层级、链接和目标存在性；超深或超大书签树会被安全截断'
   if (group.value === 'pdf' && operation.value === 'metadata') return '导出标题、作者、创建工具、权限、指纹和页面尺寸；只读且会限制字段与页数'
+  if (group.value === 'pdf' && operation.value === 'signature') return '将手写风格签名绘制到每页底部，生成新副本；不会产生数字证书签名'
   if (group.value === 'organize') return '仅生成预览报告，不修改原文件'
   return `将为 ${Math.max(files.value.length, 1)} 个输入生成新输出`
 })
@@ -268,7 +274,7 @@ function recipeParameters() {
     imageFormat: imageFormat.value, pdfImageDpi: pdfImageDpi.value, cropLeft: cropLeft.value, cropTop: cropTop.value,
     cropWidth: cropWidth.value, cropHeight: cropHeight.value, maxWidth: maxWidth.value,
     quality: quality.value, watermarkText: watermarkText.value, watermarkOpacity: watermarkOpacity.value,
-    watermarkColor: watermarkColor.value, pageNumberStart: pageNumberStart.value,
+    watermarkColor: watermarkColor.value, signatureText: signatureText.value, signaturePosition: signaturePosition.value, signatureScale: signatureScale.value, pageNumberStart: pageNumberStart.value,
     pageNumberPosition: pageNumberPosition.value, redactTerms: redactTerms.value, textMode: textMode.value, renamePrefix: renamePrefix.value,
     renameSuffix: renameSuffix.value, renameStart: renameStart.value, renameDigits: renameDigits.value,
     renameSeparator: renameSeparator.value, renameKeepOriginal: renameKeepOriginal.value ? 1 : 0,
@@ -298,6 +304,9 @@ function applyRecipe(recipe: ToolRecipe) {
   watermarkText.value = String(params.watermarkText ?? watermarkText.value)
   watermarkOpacity.value = Number(params.watermarkOpacity ?? watermarkOpacity.value)
   watermarkColor.value = String(params.watermarkColor ?? watermarkColor.value)
+  signatureText.value = String(params.signatureText ?? signatureText.value)
+  signaturePosition.value = params.signaturePosition === 'bottom-left' || params.signaturePosition === 'bottom-center' ? params.signaturePosition : 'bottom-right'
+  signatureScale.value = Math.max(50, Math.min(180, Number(params.signatureScale ?? signatureScale.value)))
   pageNumberStart.value = Number(params.pageNumberStart ?? pageNumberStart.value)
   pageNumberPosition.value = params.pageNumberPosition === 'bottom-right' ? 'bottom-right' : 'bottom-center'
   redactTerms.value = String(params.redactTerms ?? redactTerms.value)
@@ -468,6 +477,29 @@ async function makeWatermarkPng(text: string, color: string) {
   return blob.arrayBuffer()
 }
 
+async function makeSignaturePng(text: string) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 1600
+  canvas.height = 360
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('浏览器不支持签名绘制。')
+  context.clearRect(0, 0, canvas.width, canvas.height)
+  context.fillStyle = '#1f2937'
+  context.font = 'italic 142px "Segoe Script", "Bradley Hand", "Comic Sans MS", cursive'
+  context.textAlign = 'center'
+  context.textBaseline = 'middle'
+  context.fillText(text.trim().slice(0, 80), canvas.width / 2, canvas.height / 2 - 14)
+  context.strokeStyle = '#1f2937'
+  context.lineWidth = 8
+  context.beginPath()
+  context.moveTo(260, 270)
+  context.quadraticCurveTo(800, 318, 1340, 264)
+  context.stroke()
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+  if (!blob) throw new Error('无法生成签名图层。')
+  return blob.arrayBuffer()
+}
+
 function boundedFormText(value: string | undefined) {
   return value === undefined ? undefined : value.slice(0, 4000)
 }
@@ -572,6 +604,38 @@ async function runPdf(onProgress?: (progress: number, detail: string) => void, o
       outputs.push(saved)
       onOutput?.(saved)
       onProgress?.(12 + 80 * (index + 1) / inputs.length, `已填写 ${index + 1}/${inputs.length} 份 PDF 表单。`)
+    }
+    return outputs
+  }
+  if (operation.value === 'signature') {
+    const text = signatureText.value.trim()
+    if (!text) throw new Error('请输入签名文字。')
+    onProgress?.(12, '正在生成签名图层…')
+    const { PDFDocument } = await import('pdf-lib')
+    const signatureBytes = await makeSignaturePng(text)
+    const outputs: FileReference[] = []
+    for (let index = 0; index < inputs.length; index += 1) {
+      throwIfCancelled()
+      const document = await PDFDocument.load(inputs[index].data)
+      const image = await document.embedPng(signatureBytes)
+      for (const page of document.getPages()) {
+        const { width, height } = page.getSize()
+        const baseWidth = Math.min(180, Math.max(96, width * 0.3))
+        const imageWidth = baseWidth * Math.max(0.5, Math.min(1.8, signatureScale.value / 100))
+        const imageHeight = imageWidth * image.height / image.width
+        const margin = Math.max(18, Math.min(48, width * 0.04))
+        const x = signaturePosition.value === 'bottom-left'
+          ? margin
+          : signaturePosition.value === 'bottom-center'
+            ? (width - imageWidth) / 2
+            : width - imageWidth - margin
+        page.drawImage(image, { x, y: margin, width: imageWidth, height: imageHeight, opacity: 0.92 })
+      }
+      throwIfCancelled()
+      const saved = await save(`${cleanOutputName(inputs[index].name)}-signed.pdf`, bytes(await document.save({ useObjectStreams: true })), 'application/pdf')
+      outputs.push(saved)
+      onOutput?.(saved)
+      onProgress?.(12 + 82 * (index + 1) / inputs.length, `已放置 ${index + 1}/${inputs.length} 份 PDF 的签名。`)
     }
     return outputs
   }
@@ -1068,6 +1132,24 @@ onBeforeUnmount(() => {
                   <code class="row h-8 px-2 rounded-sm bg-well border border-line text-[12px] text-fg-3 uppercase">{{ watermarkColor }}</code>
                 </div>
               </FieldRow>
+            </template>
+
+            <template v-if="operation === 'signature'">
+              <FieldRow label="签名文字" hint="会以手写风格绘制；最多 80 个字符">
+                <input v-model="signatureText" name="signature-text" maxlength="80" class="field w-full" placeholder="例如：张三" />
+              </FieldRow>
+              <FieldRow label="签名位置">
+                <select v-model="signaturePosition" class="field w-full">
+                  <option value="bottom-left">左下角</option>
+                  <option value="bottom-center">底部居中</option>
+                  <option value="bottom-right">右下角</option>
+                </select>
+              </FieldRow>
+              <FieldRow label="签名大小">
+                <template #value>{{ signatureScale }}%</template>
+                <input v-model.number="signatureScale" type="range" min="50" max="180" class="w-full accent-accent" />
+              </FieldRow>
+              <p class="text-[11px] text-warn leading-relaxed">这是可视签名图层，不是 PKI 数字签名；不会验证身份，也不会锁定 PDF。</p>
             </template>
 
             <FieldRow v-if="operation === 'rotate'" label="旋转角度">
