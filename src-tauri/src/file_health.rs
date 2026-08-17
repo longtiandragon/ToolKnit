@@ -6,6 +6,9 @@ use std::{
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 use walkdir::WalkDir;
 
@@ -15,6 +18,10 @@ pub const MAX_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub const DEFAULT_LARGE_FILE_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_COMPARE_ITEMS: usize = 20_000;
 pub const MAX_MANIFEST_FILES: usize = 40_000;
+const MAX_SIMILAR_IMAGE_GROUPS: usize = 500;
+const MAX_SIMILAR_IMAGE_FILES: usize = 4_000;
+const MAX_CZKAWKA_JSON_BYTES: u64 = 32 * 1024 * 1024;
+const CZKAWKA_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +57,26 @@ pub struct FileHealthDuplicateGroup {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FileHealthSimilarImage {
+    pub path: String,
+    pub relative_path: String,
+    pub name: String,
+    pub size: u64,
+    pub width: u32,
+    pub height: u32,
+    pub difference: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileHealthSimilarImageGroup {
+    pub id: String,
+    pub files: Vec<FileHealthSimilarImage>,
+    pub suggested_keep: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileHealthDirectory {
     pub path: String,
     pub relative_path: String,
@@ -74,6 +101,7 @@ pub struct FileHealthReport {
     pub large_files: Vec<FileHealthFinding>,
     pub extension_mismatches: Vec<FileHealthFinding>,
     pub duplicate_groups: Vec<FileHealthDuplicateGroup>,
+    pub similar_image_groups: Vec<FileHealthSimilarImageGroup>,
     pub largest_directories: Vec<FileHealthDirectory>,
 }
 
@@ -570,6 +598,229 @@ fn extension_matches(path: &Path, detected: &str) -> bool {
     }
 }
 
+fn looks_like_image(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "jpg"
+            | "jpeg"
+            | "jpe"
+            | "jfif"
+            | "png"
+            | "gif"
+            | "bmp"
+            | "tif"
+            | "tiff"
+            | "webp"
+            | "avif"
+            | "heic"
+            | "heif"
+            | "jxl"
+            | "tga"
+            | "qoi"
+            | "exr"
+    )
+}
+
+fn normalized_similar_path(root: &Path, raw: &str) -> Result<PathBuf> {
+    let candidate = PathBuf::from(raw);
+    let candidate = if candidate.is_absolute() {
+        candidate
+    } else {
+        root.join(candidate)
+    };
+    let canonical = fs::canonicalize(&candidate)
+        .with_context(|| format!("无法定位 Czkawka 返回的图片：{}", candidate.display()))?;
+    if !canonical.starts_with(root) {
+        bail!("Czkawka 返回了扫描目录之外的路径。")
+    }
+    let metadata = fs::symlink_metadata(&canonical)?;
+    if !metadata.is_file() {
+        bail!("Czkawka 返回的路径不是文件：{}", canonical.display())
+    }
+    Ok(canonical)
+}
+
+fn parse_czkawka_similar_images(
+    root: &Path,
+    bytes: &[u8],
+) -> Result<Vec<FileHealthSimilarImageGroup>> {
+    let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).context("Czkawka 相似图片结果不是有效 JSON")?;
+    let groups = value
+        .as_array()
+        .or_else(|| {
+            value
+                .get("similar_vectors")
+                .and_then(serde_json::Value::as_array)
+        })
+        .or_else(|| value.get("groups").and_then(serde_json::Value::as_array))
+        .context("Czkawka 相似图片结果缺少分组列表")?;
+    let mut result = Vec::new();
+    let mut total_files = 0_usize;
+    for (group_index, group) in groups.iter().enumerate() {
+        if result.len() >= MAX_SIMILAR_IMAGE_GROUPS || total_files >= MAX_SIMILAR_IMAGE_FILES {
+            break;
+        }
+        let Some(entries) = group.as_array() else {
+            continue;
+        };
+        let mut files = Vec::new();
+        for entry in entries {
+            if total_files >= MAX_SIMILAR_IMAGE_FILES {
+                break;
+            }
+            let Some(raw_path) = entry.get("path").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let path = match normalized_similar_path(&root, raw_path) {
+                Ok(path) => path,
+                Err(_) => continue,
+            };
+            let metadata = match fs::metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+            let width = entry
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default()
+                .min(u32::MAX as u64) as u32;
+            let height = entry
+                .get("height")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default()
+                .min(u32::MAX as u64) as u32;
+            let difference = entry
+                .get("difference")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default()
+                .min(u32::MAX as u64) as u32;
+            files.push(FileHealthSimilarImage {
+                path: path.to_string_lossy().into_owned(),
+                relative_path: relative_label(&root, &path),
+                name: file_name(&path),
+                size: metadata.len(),
+                width,
+                height,
+                difference,
+            });
+        }
+        if files.len() < 2 {
+            continue;
+        }
+        files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+        let suggested_keep = files
+            .first()
+            .map(|file| file.path.clone())
+            .unwrap_or_default();
+        total_files += files.len();
+        result.push(FileHealthSimilarImageGroup {
+            id: format!("similar-image-{group_index}"),
+            files,
+            suggested_keep,
+        });
+    }
+    Ok(result)
+}
+
+fn scan_similar_images_with_czkawka(
+    root: &Path,
+) -> Result<Option<Vec<FileHealthSimilarImageGroup>>> {
+    let directory = std::env::temp_dir().join(format!(
+        "knitspace-czkawka-similar-{}",
+        uuid::Uuid::now_v7()
+    ));
+    fs::create_dir_all(&directory).context("无法创建 Czkawka 临时目录")?;
+    let output = directory.join("similar-images.json");
+    let result = (|| {
+        let root_arg = root.to_string_lossy().into_owned();
+        let output_arg = output.to_string_lossy().into_owned();
+        let args = [
+            "image",
+            "-d",
+            root_arg.as_str(),
+            "-p",
+            output_arg.as_str(),
+            "-s",
+            "8",
+            "-g",
+            "Gradient",
+            "-c",
+            "16",
+            "-z",
+            "Nearest",
+            "-m",
+            "16384",
+            "-x",
+            "IMAGE",
+            "-N",
+            "-M",
+            "-W",
+        ];
+        let candidates = ["czkawka_cli.exe", "czkawka_cli", "czkawka.exe", "czkawka"];
+        let mut child = None;
+        let mut last_error = None;
+        for candidate in candidates {
+            match Command::new(candidate)
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(process) => {
+                    child = Some(process);
+                    break;
+                }
+                Err(error) => last_error = Some(error.to_string()),
+            }
+        }
+        let Some(mut child) = child else {
+            return Err(anyhow::anyhow!(
+                "未检测到 Czkawka CLI{}",
+                last_error
+                    .map(|error| format!("：{error}"))
+                    .unwrap_or_default()
+            ));
+        };
+        let started = Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait().context("无法检查 Czkawka 状态")? {
+                break status;
+            }
+            if started.elapsed() >= CZKAWKA_TIMEOUT {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(anyhow::anyhow!(
+                    "Czkawka 相似图片扫描超过 {} 秒，已停止。",
+                    CZKAWKA_TIMEOUT.as_secs()
+                ));
+            }
+            thread::sleep(Duration::from_millis(100));
+        };
+        if !status.success() && status.code() != Some(11) {
+            return Err(anyhow::anyhow!(
+                "Czkawka 相似图片扫描失败（退出状态：{status}）。"
+            ));
+        }
+        let metadata = fs::metadata(&output).context("Czkawka 未生成相似图片结果")?;
+        if metadata.len() == 0 || metadata.len() > MAX_CZKAWKA_JSON_BYTES {
+            return Err(anyhow::anyhow!("Czkawka 结果超过 32 MB 安全上限。"));
+        }
+        let bytes = fs::read(&output).context("无法读取 Czkawka 相似图片结果")?;
+        parse_czkawka_similar_images(root, &bytes)
+            .map(Some)
+            .map_err(|error| error.context("无法解析 Czkawka 相似图片结果"))
+    })();
+    let _ = fs::remove_dir_all(&directory);
+    result
+}
+
 fn scan_folder(root: &Path, large_file_bytes: u64) -> Result<FileHealthReport> {
     let threshold = large_file_bytes.clamp(1 * 1024 * 1024, 4 * 1024 * 1024 * 1024);
     let mut scanned_entries = 0_usize;
@@ -754,6 +1005,18 @@ fn scan_folder(root: &Path, large_file_bytes: u64) -> Result<FileHealthReport> {
             .then_with(|| right.size.cmp(&left.size))
     });
 
+    let mut similar_image_groups = Vec::new();
+    if records.iter().any(|record| looks_like_image(&record.path)) {
+        match scan_similar_images_with_czkawka(root) {
+            Ok(Some(groups)) => similar_image_groups = groups,
+            Ok(None) => {}
+            Err(error) => warnings.push(format!(
+                "未完成相似图片扫描：{}。精确重复、空文件和其他检查仍已完成。",
+                error
+            )),
+        }
+    }
+
     let mut largest_directories = directory_sizes
         .into_iter()
         .filter(|(path, (_, count))| *path != root && *count > 0)
@@ -782,6 +1045,7 @@ fn scan_folder(root: &Path, large_file_bytes: u64) -> Result<FileHealthReport> {
         large_files,
         extension_mismatches,
         duplicate_groups,
+        similar_image_groups,
         largest_directories,
     })
 }
@@ -879,6 +1143,50 @@ mod tests {
         assert_eq!(report.empty_directories.len(), 1);
         assert_eq!(report.extension_mismatches.len(), 1);
         fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn parses_and_sorts_czkawka_similar_image_groups_inside_root() -> Result<()> {
+        let root = temp_root("similar-images");
+        fs::create_dir_all(&root)?;
+        let first = root.join("z-last.png");
+        let second = root.join("a-first.png");
+        fs::write(&first, b"not-an-image-but-a-bounded-fixture")?;
+        fs::write(&second, b"another-bounded-fixture")?;
+        let payload = serde_json::json!([[
+            { "path": first.to_string_lossy(), "width": 800, "height": 600, "difference": 4 },
+            { "path": second.to_string_lossy(), "width": 400, "height": 300, "difference": 4 }
+        ]]);
+        let payload_bytes = serde_json::to_vec(&payload)?;
+        let groups = parse_czkawka_similar_images(&root, &payload_bytes)?;
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].files.len(), 2);
+        assert_eq!(groups[0].files[0].name, "a-first.png");
+        assert_eq!(groups[0].suggested_keep, groups[0].files[0].path);
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn ignores_similar_image_paths_outside_the_scan_root() -> Result<()> {
+        let root = temp_root("similar-images-inside");
+        let outside = temp_root("similar-images-outside");
+        fs::create_dir_all(&root)?;
+        fs::create_dir_all(&outside)?;
+        let inside = root.join("inside.png");
+        let outside_file = outside.join("outside.png");
+        fs::write(&inside, b"inside")?;
+        fs::write(&outside_file, b"outside")?;
+        let payload = serde_json::json!([[
+            { "path": inside.to_string_lossy(), "width": 10, "height": 10, "difference": 1 },
+            { "path": outside_file.to_string_lossy(), "width": 10, "height": 10, "difference": 1 }
+        ]]);
+        let groups =
+            parse_czkawka_similar_images(&root, serde_json::to_string(&payload)?.as_bytes())?;
+        assert!(groups.is_empty());
+        fs::remove_dir_all(root)?;
+        fs::remove_dir_all(outside)?;
         Ok(())
     }
 

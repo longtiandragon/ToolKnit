@@ -23,6 +23,22 @@ export interface FileHealthDuplicateGroup {
   suggestedKeep: string
 }
 
+export interface FileHealthSimilarImage {
+  path: string
+  relativePath: string
+  name: string
+  size: number
+  width: number
+  height: number
+  difference: number
+}
+
+export interface FileHealthSimilarImageGroup {
+  id: string
+  files: FileHealthSimilarImage[]
+  suggestedKeep: string
+}
+
 export interface FileHealthDirectory {
   path: string
   relativePath: string
@@ -45,6 +61,7 @@ export interface FileHealthReport {
   largeFiles: FileHealthFinding[]
   extensionMismatches: FileHealthFinding[]
   duplicateGroups: FileHealthDuplicateGroup[]
+  similarImageGroups: FileHealthSimilarImageGroup[]
   largestDirectories: FileHealthDirectory[]
 }
 

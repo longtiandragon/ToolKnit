@@ -7,11 +7,11 @@ import ToolLayout from '@/components/ToolLayout.vue'
 import FieldRow from '@/components/FieldRow.vue'
 import { isDesktop } from '@/lib/native'
 import { exportOutput } from '@/lib/output'
-import { compareDesktopDirectories, createDesktopFileManifest, recycleDesktopFileHealthPaths, scanDesktopFileHealth, type DirectoryCompareReport, type DirectoryCompareStatus, type FileHealthDuplicateGroup, type FileHealthFinding, type FileHealthPath, type FileHealthReport } from '@/lib/file-health-native'
+import { compareDesktopDirectories, createDesktopFileManifest, recycleDesktopFileHealthPaths, scanDesktopFileHealth, type DirectoryCompareReport, type DirectoryCompareStatus, type FileHealthDuplicateGroup, type FileHealthFinding, type FileHealthPath, type FileHealthReport, type FileHealthSimilarImageGroup } from '@/lib/file-health-native'
 import { useUiStore } from '@/stores/ui'
 import { useWorkbenchStore } from '@/stores/workbench'
 
-type Filter = 'all' | 'duplicate' | 'large-file' | 'empty-file' | 'empty-directory' | 'extension-mismatch'
+type Filter = 'all' | 'duplicate' | 'similar-image' | 'large-file' | 'empty-file' | 'empty-directory' | 'extension-mismatch'
 type DisplayItem = FileHealthPath & { id: string; kind: Filter; detail: string; suggestedKeep?: boolean }
 type ViewMode = 'health' | 'compare'
 type CompareFilter = 'all' | DirectoryCompareStatus
@@ -32,8 +32,9 @@ const compareFilter = ref<CompareFilter>('all')
 const selectedPaths = ref<string[]>([])
 
 const filters: { id: Filter; label: string; count: (value: FileHealthReport) => number }[] = [
-  { id: 'all', label: '全部问题', count: value => value.emptyFiles.length + value.emptyDirectories.length + value.largeFiles.length + value.extensionMismatches.length + value.duplicateGroups.reduce((sum, group) => sum + group.files.length, 0) },
+  { id: 'all', label: '全部问题', count: value => value.emptyFiles.length + value.emptyDirectories.length + value.largeFiles.length + value.extensionMismatches.length + value.duplicateGroups.reduce((sum, group) => sum + group.files.length, 0) + value.similarImageGroups.reduce((sum, group) => sum + group.files.length, 0) },
   { id: 'duplicate', label: '重复文件', count: value => value.duplicateGroups.reduce((sum, group) => sum + group.files.length, 0) },
+  { id: 'similar-image', label: '相似图片', count: value => value.similarImageGroups.reduce((sum, group) => sum + group.files.length, 0) },
   { id: 'large-file', label: '大文件', count: value => value.largeFiles.length },
   { id: 'empty-file', label: '空文件', count: value => value.emptyFiles.length },
   { id: 'empty-directory', label: '空文件夹', count: value => value.emptyDirectories.length },
@@ -85,10 +86,21 @@ function duplicateItems(group: FileHealthDuplicateGroup): DisplayItem[] {
   }))
 }
 
+function similarImageItems(group: FileHealthSimilarImageGroup): DisplayItem[] {
+  return group.files.map(file => ({
+    ...file,
+    id: `${group.id}:${file.path}`,
+    kind: 'similar-image',
+    detail: `与同组另外 ${group.files.length - 1} 张图片相似 · 感知差异 ${file.difference}${file.width && file.height ? ` · ${file.width} × ${file.height}` : ''}`,
+    suggestedKeep: file.path === group.suggestedKeep,
+  }))
+}
+
 const items = computed<DisplayItem[]>(() => {
   if (!report.value) return []
   const all = [
     ...report.value.duplicateGroups.flatMap(duplicateItems),
+    ...report.value.similarImageGroups.flatMap(similarImageItems),
     ...report.value.largeFiles.map(findingItem),
     ...report.value.emptyFiles.map(findingItem),
     ...report.value.emptyDirectories.map(findingItem),
@@ -247,7 +259,7 @@ function directoryLabel(path: string) {
   <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
     <PageHeader
       :title="viewMode === 'health' ? '文件健康扫描' : '目录对比'"
-      :subtitle="viewMode === 'health' ? '参考 Czkawka 的高频检查：先扫描、分组和预览，再把选中的文件移入回收站。' : '只读比较两个文件夹的文件内容，不同步、不覆盖，也不会修改原文件。'"
+      :subtitle="viewMode === 'health' ? '参考 Czkawka 的高频检查：先扫描、分组和预览，再把选中的文件移入回收站；安装 Czkawka CLI 后还会显示相似图片。' : '只读比较两个文件夹的文件内容，不同步、不覆盖，也不会修改原文件。'"
       :stats="viewMode === 'health' ? [
         { label: '扫描文件', value: report?.scannedFiles ?? 0 },
         { label: '问题项目', value: totalProblemCount, tone: totalProblemCount ? 'warn' : 'accent' },
@@ -290,7 +302,7 @@ function directoryLabel(path: string) {
         <span class="center w-14 h-14 rounded-xl bg-accent-soft text-accent"><AppIcon name="search" :size="28" /></span>
         <div class="stack gap-1.5 max-w-xl">
           <h2 class="text-[16px] font-semibold text-fg">扫描前不修改任何文件</h2>
-          <p class="text-[12px] text-fg-3 leading-relaxed">Knitspace 只读取目录元信息，并对同大小文件计算 SHA-256。符号链接会跳过，文件数量和哈希总量都有上限；直到你明确选择并确认，任何文件都不会移动。</p>
+          <p class="text-[12px] text-fg-3 leading-relaxed">Knitspace 只读取目录元信息，并对同大小文件计算 SHA-256。检测到图片且本机有 Czkawka CLI 时，会以固定参数追加只读相似图片扫描；符号链接会跳过，文件数量和哈希总量都有上限，直到你明确选择并确认，任何文件都不会移动。</p>
         </div>
         <button class="btn-primary" :disabled="!desktop || !root || busy" @click="scan"><AppIcon name="search" :size="15" />{{ busy ? '正在扫描…' : '开始扫描' }}</button>
         <p class="text-[11px] text-fg-3" aria-live="polite">{{ message }}</p>
@@ -316,8 +328,8 @@ function directoryLabel(path: string) {
             <li v-for="item in items" :key="item.id" class="row gap-2 px-2.5 py-2 rounded-sm hover:bg-surface-2" :class="item.suggestedKeep ? 'opacity-60' : ''">
               <input v-if="item.kind !== 'empty-directory'" type="checkbox" class="accent-accent shrink-0" :checked="selectedPaths.includes(item.path)" :disabled="item.suggestedKeep" :aria-label="`选择 ${item.name}`" @change="toggleSelected(item)" />
               <span v-else class="w-3.5 shrink-0" aria-hidden="true" />
-              <AppIcon :name="item.kind === 'duplicate' ? 'duplicate' : item.kind === 'large-file' ? 'file-text' : item.kind === 'empty-directory' ? 'folder' : 'warning'" :size="15" class="text-fg-3 shrink-0" />
-              <span class="stack gap-0.5 min-w-0 flex-1"><strong class="text-[12px] font-medium text-fg truncate" :title="item.path">{{ item.relativePath || item.name }}</strong><small class="text-[11px] text-fg-3 truncate">{{ item.detail }}<template v-if="item.suggestedKeep"> · 建议保留</template></small></span>
+              <AppIcon :name="item.kind === 'duplicate' ? 'duplicate' : item.kind === 'similar-image' ? 'image' : item.kind === 'large-file' ? 'file-text' : item.kind === 'empty-directory' ? 'folder' : 'warning'" :size="15" class="text-fg-3 shrink-0" />
+              <span class="stack gap-0.5 min-w-0 flex-1"><strong class="text-[12px] font-medium text-fg truncate" :title="item.path">{{ item.relativePath || item.name }}</strong><small class="text-[11px] text-fg-3 truncate">{{ item.detail }}<template v-if="item.suggestedKeep"> · 建议保留</template><template v-if="item.kind === 'similar-image'"> · 仅代表视觉相似，不代表内容重复</template></small></span>
               <span class="text-[11px] text-fg-3 tabular-nums shrink-0">{{ item.size ? formatBytes(item.size) : '—' }}</span>
             </li>
           </ul>
