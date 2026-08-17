@@ -7,14 +7,16 @@ import ToolLayout from '@/components/ToolLayout.vue'
 import FieldRow from '@/components/FieldRow.vue'
 import { isDesktop } from '@/lib/native'
 import { exportOutput } from '@/lib/output'
+import { buildDirectorySyncPreview, type DirectorySyncDirection, type DirectorySyncPlan, type DirectorySyncPlanAction } from '@/lib/directory-sync-plan'
 import { compareDesktopDirectories, createDesktopFileManifest, recycleDesktopFileHealthPaths, scanDesktopFileHealth, type DirectoryCompareReport, type DirectoryCompareStatus, type FileHealthDuplicateGroup, type FileHealthFinding, type FileHealthPath, type FileHealthReport, type FileHealthSimilarImageGroup } from '@/lib/file-health-native'
 import { useUiStore } from '@/stores/ui'
 import { useWorkbenchStore } from '@/stores/workbench'
 
 type Filter = 'all' | 'duplicate' | 'similar-image' | 'large-file' | 'empty-file' | 'empty-directory' | 'extension-mismatch'
 type DisplayItem = FileHealthPath & { id: string; kind: Filter; detail: string; suggestedKeep?: boolean }
-type ViewMode = 'health' | 'compare'
+type ViewMode = 'health' | 'compare' | 'sync'
 type CompareFilter = 'all' | DirectoryCompareStatus
+type SyncFilter = 'all' | DirectorySyncPlanAction
 
 const desktop = isDesktop()
 const ui = useUiStore()
@@ -29,6 +31,8 @@ const message = ref(desktop ? '选择一个文件夹，先扫描再决定如何�
 const threshold = ref(512 * 1024 * 1024)
 const filter = ref<Filter>('all')
 const compareFilter = ref<CompareFilter>('all')
+const syncDirection = ref<DirectorySyncDirection>('left-to-right')
+const syncFilter = ref<SyncFilter>('all')
 const selectedPaths = ref<string[]>([])
 
 const filters: { id: Filter; label: string; count: (value: FileHealthReport) => number }[] = [
@@ -60,6 +64,22 @@ const compareItems = computed(() => {
 })
 const compareDifferenceCount = computed(() => (compareReport.value?.addedCount ?? 0) + (compareReport.value?.removedCount ?? 0) + (compareReport.value?.changedCount ?? 0) + (compareReport.value?.unverifiedCount ?? 0))
 const compareWarnings = computed(() => compareReport.value?.warnings ?? [])
+const syncPlan = computed(() => compareReport.value ? buildDirectorySyncPreview(compareReport.value, syncDirection.value) : undefined)
+const syncActionFilters: { id: SyncFilter; label: string; count: (value: DirectorySyncPlan) => number }[] = [
+  { id: 'all', label: '全部', count: value => value.items.length },
+  { id: 'copy-missing', label: '待补齐', count: value => value.copyCount },
+  { id: 'conflict', label: '内容冲突', count: value => value.conflictCount },
+  { id: 'review', label: '人工复核', count: value => value.reviewCount },
+  { id: 'keep-target', label: '目标保留', count: value => value.keepTargetCount },
+  { id: 'same', label: '已一致', count: value => value.sameCount },
+]
+const syncItems = computed(() => {
+  if (!syncPlan.value) return []
+  return syncFilter.value === 'all'
+    ? syncPlan.value.items
+    : syncPlan.value.items.filter(item => item.action === syncFilter.value)
+})
+const syncNeedsReviewCount = computed(() => (syncPlan.value?.conflictCount ?? 0) + (syncPlan.value?.reviewCount ?? 0))
 
 function formatBytes(value: number) {
   if (value < 1024) return `${value} B`
@@ -172,6 +192,25 @@ async function compare() {
   }
 }
 
+async function createSyncPreview() {
+  if (!desktop || !root.value || !compareRoot.value || busy.value) return
+  busy.value = true
+  message.value = '正在读取两侧目录，生成不写入文件的同步预览…'
+  try {
+    compareReport.value = await compareDesktopDirectories(root.value, compareRoot.value)
+    const plan = buildDirectorySyncPreview(compareReport.value, syncDirection.value)
+    message.value = plan.partial
+      ? '同步预览已生成，但原始对比触及安全上限；请把它作为局部计划复核。'
+      : `同步预览已生成：${plan.copyCount} 个目标缺少文件可供后续补齐，${plan.conflictCount + plan.reviewCount} 项需要人工复核。`
+  } catch (error) {
+    compareReport.value = undefined
+    message.value = error instanceof Error ? error.message : '无法生成同步预览。'
+    ui.toast('同步预览失败', message.value, 'error')
+  } finally {
+    busy.value = false
+  }
+}
+
 function toggleSelected(item: DisplayItem) {
   if (item.kind === 'empty-directory' || item.suggestedKeep) return
   selectedPaths.value = selectedPaths.value.includes(item.path)
@@ -250,24 +289,58 @@ async function exportCompareReport() {
   }
 }
 
+async function exportSyncPreview() {
+  const plan = syncPlan.value
+  if (!plan || busy.value) return
+  const name = `knitspace-directory-sync-preview-${new Date().toISOString().slice(0, 10)}.json`
+  try {
+    const output = await exportOutput(store.settings.outputDirectory, name, JSON.stringify(plan, null, 2), 'application/json;charset=utf-8')
+    ui.toast('同步预览已导出', output.path || output.name, 'success')
+  } catch (error) {
+    ui.toast('导出同步预览失败', error instanceof Error ? error.message : '无法写出 JSON 预览。', 'error')
+  }
+}
+
 function directoryLabel(path: string) {
   return path || '根目录'
+}
+
+function syncActionLabel(action: DirectorySyncPlanAction) {
+  return ({
+    'copy-missing': '待补齐',
+    'keep-target': '目标保留',
+    conflict: '内容冲突',
+    review: '人工复核',
+    same: '已一致',
+  } as const)[action]
+}
+
+function syncActionIcon(action: DirectorySyncPlanAction) {
+  return action === 'copy-missing' ? 'arrow-right' : action === 'conflict' ? 'refresh' : action === 'review' ? 'warning' : 'check'
+}
+
+function syncActionTone(action: DirectorySyncPlanAction) {
+  return action === 'copy-missing' ? 'text-accent' : action === 'conflict' || action === 'review' ? 'text-warn' : 'text-success'
 }
 </script>
 
 <template>
   <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
     <PageHeader
-      :title="viewMode === 'health' ? '文件健康扫描' : '目录对比'"
-      :subtitle="viewMode === 'health' ? '参考 Czkawka 的高频检查：先扫描、分组和预览，再把选中的文件移入回收站；安装 Czkawka CLI 后还会显示相似图片。' : '只读比较两个文件夹的文件内容，不同步、不覆盖，也不会修改原文件。'"
+      :title="viewMode === 'health' ? '文件健康扫描' : viewMode === 'compare' ? '目录对比' : '同步预览'"
+      :subtitle="viewMode === 'health' ? '参考 Czkawka 的高频检查：先扫描、分组和预览，再把选中的文件移入回收站；安装 Czkawka CLI 后还会显示相似图片。' : viewMode === 'compare' ? '只读比较两个文件夹的文件内容，不同步、不覆盖，也不会修改原文件。' : '根据目录对比生成单向补齐计划：只列出目标缺少的文件，不复制、不覆盖、不删除。'"
       :stats="viewMode === 'health' ? [
         { label: '扫描文件', value: report?.scannedFiles ?? 0 },
         { label: '问题项目', value: totalProblemCount, tone: totalProblemCount ? 'warn' : 'accent' },
         { label: '重复可回收', value: formatBytes(duplicateBytes) },
-      ] : [
+      ] : viewMode === 'compare' ? [
         { label: '对比文件', value: compareReport ? compareReport.items.length : 0 },
         { label: '差异项目', value: compareDifferenceCount, tone: compareDifferenceCount ? 'warn' : 'accent' },
         { label: '相同文件', value: compareReport?.sameCount ?? 0 },
+      ] : [
+        { label: '候选补齐', value: syncPlan?.copyCount ?? 0, tone: syncPlan?.copyCount ? 'accent' : undefined },
+        { label: '预计新增', value: formatBytes(syncPlan?.copyBytes ?? 0) },
+        { label: '需复核', value: syncNeedsReviewCount, tone: syncNeedsReviewCount ? 'warn' : 'accent' },
       ]"
     >
       <template #actions>
@@ -280,6 +353,7 @@ function directoryLabel(path: string) {
           <div class="row gap-1 p-0.5 rounded-sm bg-surface-2" role="tablist" aria-label="文件工具模式">
             <button class="h-7 px-2.5 rounded-sm text-[11px]" :class="viewMode === 'health' ? 'bg-surface text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2'" role="tab" :aria-selected="viewMode === 'health'" @click="viewMode = 'health'">健康扫描</button>
             <button class="h-7 px-2.5 rounded-sm text-[11px]" :class="viewMode === 'compare' ? 'bg-surface text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2'" role="tab" :aria-selected="viewMode === 'compare'" @click="viewMode = 'compare'">目录对比</button>
+            <button class="h-7 px-2.5 rounded-sm text-[11px]" :class="viewMode === 'sync' ? 'bg-surface text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2'" role="tab" :aria-selected="viewMode === 'sync'" @click="viewMode = 'sync'">同步预览</button>
           </div>
           <template v-if="viewMode === 'health'">
             <button class="btn-default btn-sm" :disabled="busy || !desktop" @click="chooseRoot"><AppIcon name="folder" :size="14" />选择文件夹</button>
@@ -345,7 +419,7 @@ function directoryLabel(path: string) {
         </template>
       </template>
 
-      <template v-else>
+      <template v-else-if="viewMode === 'compare'">
         <section v-if="!compareReport" class="panel min-h-96 p-8 stack items-center justify-center gap-4 text-center">
           <span class="center w-14 h-14 rounded-xl bg-accent-soft text-accent"><AppIcon name="diff" :size="28" /></span>
           <div class="stack gap-1.5 max-w-xl">
@@ -381,6 +455,58 @@ function directoryLabel(path: string) {
         </template>
       </template>
 
+      <template v-else>
+        <section v-if="!syncPlan" class="panel min-h-96 p-8 stack items-center justify-center gap-4 text-center">
+          <span class="center w-14 h-14 rounded-xl bg-accent-soft text-accent"><AppIcon name="arrow-right" :size="28" /></span>
+          <div class="stack gap-1.5 max-w-xl">
+            <h2 class="text-[16px] font-semibold text-fg">先生成不写入文件的同步预览</h2>
+            <p class="text-[12px] text-fg-3 leading-relaxed">Knitspace 会重新只读比较两个文件夹。预览只把目标缺少的文件列为“待补齐”，绝不复制、覆盖或删除；内容不同和未校验的文件必须人工决定。</p>
+          </div>
+          <button class="btn-primary" :disabled="!desktop || !root || !compareRoot || busy" @click="createSyncPreview"><AppIcon name="diff" :size="15" />{{ busy ? '正在生成…' : '生成同步预览' }}</button>
+          <p class="text-[11px] text-fg-3" aria-live="polite">{{ message }}</p>
+        </section>
+
+        <template v-else>
+          <section class="panel p-3 stack gap-3">
+            <div class="row-between gap-3">
+              <div class="stack gap-0.5 min-w-0"><p class="eyebrow">单向补齐预览</p><p class="text-[12px] text-fg-2 truncate" :title="`${syncPlan.sourceRoot} → ${syncPlan.targetRoot}`">{{ basename(syncPlan.sourceRoot) }} → {{ basename(syncPlan.targetRoot) }}</p></div>
+              <div class="row gap-1.5 shrink-0"><button class="btn-default btn-sm" :disabled="busy" @click="exportSyncPreview"><AppIcon name="download" :size="14" />导出预览</button><button class="btn-default btn-sm" :disabled="busy" @click="createSyncPreview"><AppIcon name="refresh" :size="14" />重新生成</button></div>
+            </div>
+            <div class="row gap-1 p-0.5 rounded-sm bg-surface-2 w-fit" role="tablist" aria-label="同步方向">
+              <button class="h-7 px-2.5 rounded-sm text-[11px]" :class="syncDirection === 'left-to-right' ? 'bg-surface text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2'" role="tab" :aria-selected="syncDirection === 'left-to-right'" @click="syncDirection = 'left-to-right'">左侧 → 右侧补齐</button>
+              <button class="h-7 px-2.5 rounded-sm text-[11px]" :class="syncDirection === 'right-to-left' ? 'bg-surface text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2'" role="tab" :aria-selected="syncDirection === 'right-to-left'" @click="syncDirection = 'right-to-left'">右侧 → 左侧补齐</button>
+            </div>
+            <p class="text-[11px] text-fg-3 leading-relaxed">此页面仅生成计划。目标独有文件保持不动，内容不同与未校验文件不会被覆盖；即使“待补齐”条目也不会在这里自动执行。</p>
+          </section>
+
+          <section class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="panel p-3 stack gap-1"><p class="eyebrow">待补齐</p><strong class="text-[18px] font-semibold text-fg tabular-nums">{{ syncPlan.copyCount }}</strong><span class="text-[11px] text-fg-3">预计 {{ formatBytes(syncPlan.copyBytes) }} · 尚未复制</span></div>
+            <div class="panel p-3 stack gap-1"><p class="eyebrow">内容冲突</p><strong class="text-[18px] font-semibold text-warn tabular-nums">{{ syncPlan.conflictCount }}</strong><span class="text-[11px] text-fg-3">两侧不同，必须人工决定</span></div>
+            <div class="panel p-3 stack gap-1"><p class="eyebrow">人工复核</p><strong class="text-[18px] font-semibold text-warn tabular-nums">{{ syncPlan.reviewCount }}</strong><span class="text-[11px] text-fg-3">未校验或路径不适合自动操作</span></div>
+          </section>
+
+          <section class="panel p-3 stack gap-2">
+            <p class="eyebrow text-warn">安全边界</p>
+            <p v-for="warning in syncPlan.warnings" :key="warning" class="text-[11px] text-fg-3 leading-relaxed">{{ warning }}</p>
+          </section>
+
+          <section v-if="syncItems.length" class="panel overflow-hidden">
+            <header class="row-between gap-3 px-3 h-11 border-b border-line"><div class="row gap-2"><AppIcon name="diff" :size="15" class="text-accent" /><strong class="text-[13px] font-medium text-fg">{{ syncActionFilters.find(item => item.id === syncFilter)?.label }}</strong><span class="text-[11px] text-fg-3">{{ syncItems.length }} 项</span></div><span class="text-[11px] text-fg-3">只读预览</span></header>
+            <div class="row gap-1.5 flex-wrap px-3 py-2 border-b border-line" role="tablist" aria-label="同步预览类型">
+              <button v-for="item in syncActionFilters" :key="item.id" class="h-7 px-2.5 rounded-full text-[11px] transition-colors" :class="syncFilter === item.id ? 'bg-accent-solid text-accent-fg font-medium' : 'text-fg-2 hover:bg-surface-2'" :aria-selected="syncFilter === item.id" role="tab" @click="syncFilter = item.id">{{ item.label }} <span class="tabular-nums opacity-70">{{ item.count(syncPlan) }}</span></button>
+            </div>
+            <ul class="stack gap-0.5 p-1.5 max-h-128 overflow-y-auto">
+              <li v-for="item in syncItems" :key="`${item.action}:${item.relativePath}`" class="row gap-2 px-2.5 py-2 rounded-sm hover:bg-surface-2">
+                <AppIcon :name="syncActionIcon(item.action)" :size="15" :class="syncActionTone(item.action)" class="shrink-0" />
+                <span class="stack gap-0.5 min-w-0 flex-1"><strong class="text-[12px] font-medium text-fg truncate" :title="item.relativePath">{{ item.relativePath }}</strong><small class="text-[11px] text-fg-3 truncate">{{ syncActionLabel(item.action) }} · {{ item.detail }}</small></span>
+                <span class="text-[11px] text-fg-3 tabular-nums shrink-0">{{ item.action === 'copy-missing' ? formatBytes(item.sourceBytes ?? 0) : item.sourceBytes === item.targetBytes ? formatBytes(item.sourceBytes ?? 0) : `${formatBytes(item.sourceBytes ?? 0)} → ${formatBytes(item.targetBytes ?? 0)}` }}</span>
+              </li>
+            </ul>
+          </section>
+          <section v-else class="panel p-8 stack items-center gap-2 text-center"><AppIcon name="check" :size="22" class="text-success" /><p class="text-[13px] font-medium text-fg">当前筛选没有项目</p><p class="text-[11px] text-fg-3">切换预览类型，或重新生成目录对比。</p></section>
+        </template>
+      </template>
+
       <template #aside>
         <template v-if="viewMode === 'health'">
         <section class="panel p-4 stack gap-4">
@@ -404,7 +530,7 @@ function directoryLabel(path: string) {
         </section>
         <section v-if="scanWarnings.length" class="panel p-4 stack gap-2"><p class="eyebrow text-warn">扫描提示</p><p v-for="warning in scanWarnings.slice(0, 5)" :key="warning" class="text-[11px] text-fg-3 leading-relaxed">{{ warning }}</p><p v-if="scanWarnings.length > 5" class="text-[11px] text-fg-3">另有 {{ scanWarnings.length - 5 }} 条提示已收起。</p></section>
         </template>
-        <template v-else>
+        <template v-else-if="viewMode === 'compare'">
           <section class="panel p-4 stack gap-4">
             <p class="eyebrow">对比设置</p>
             <p class="text-[11px] text-fg-3 leading-relaxed">左侧可理解为基准目录，右侧是待检查目录。只报告差异，不提供同步或覆盖操作。</p>
@@ -417,6 +543,22 @@ function directoryLabel(path: string) {
             <div class="row-between text-[11px] text-fg-3"><span>左侧文件</span><span class="tabular-nums">{{ compareReport.scannedLeftFiles }}</span></div>
             <div class="row-between text-[11px] text-fg-3"><span>右侧文件</span><span class="tabular-nums">{{ compareReport.scannedRightFiles }}</span></div>
             <p v-if="compareReport.truncated" class="text-[11px] text-warn leading-relaxed">结果触及上限，未校验项请人工复核。</p>
+          </section>
+          <section v-if="compareWarnings.length" class="panel p-4 stack gap-2"><p class="eyebrow text-warn">对比提示</p><p v-for="warning in compareWarnings.slice(0, 5)" :key="warning" class="text-[11px] text-fg-3 leading-relaxed">{{ warning }}</p><p v-if="compareWarnings.length > 5" class="text-[11px] text-fg-3">另有 {{ compareWarnings.length - 5 }} 条提示已收起。</p></section>
+        </template>
+        <template v-else>
+          <section class="panel p-4 stack gap-4">
+            <p class="eyebrow">预览策略</p>
+            <p class="text-[11px] text-fg-3 leading-relaxed">把一侧视为来源、另一侧视为目标。仅提示“目标缺少”的文件；不删除目标独有文件，不覆盖内容不同文件，也不在本页执行复制。</p>
+            <button class="btn-primary btn-lg w-full" :disabled="!desktop || !root || !compareRoot || busy" @click="createSyncPreview"><AppIcon name="diff" :size="15" />{{ busy ? '正在生成…' : syncPlan ? '重新生成预览' : '生成同步预览' }}</button>
+            <p class="text-[11px] text-fg-3 leading-relaxed" aria-live="polite">{{ message }}</p>
+          </section>
+          <section v-if="syncPlan" class="panel p-4 stack gap-2">
+            <p class="eyebrow">预览摘要</p>
+            <div class="row-between text-[11px] text-fg-3"><span>目标缺少</span><span class="tabular-nums">{{ syncPlan.copyCount }} · {{ formatBytes(syncPlan.copyBytes) }}</span></div>
+            <div class="row-between text-[11px] text-fg-3"><span>目标保留</span><span class="tabular-nums">{{ syncPlan.keepTargetCount }}</span></div>
+            <div class="row-between text-[11px] text-fg-3"><span>冲突 / 复核</span><span class="tabular-nums">{{ syncPlan.conflictCount }} / {{ syncPlan.reviewCount }}</span></div>
+            <p v-if="syncPlan.partial" class="text-[11px] text-warn leading-relaxed">原始对比触及安全上限，不能将此预览当作完整同步清单。</p>
           </section>
           <section v-if="compareWarnings.length" class="panel p-4 stack gap-2"><p class="eyebrow text-warn">对比提示</p><p v-for="warning in compareWarnings.slice(0, 5)" :key="warning" class="text-[11px] text-fg-3 leading-relaxed">{{ warning }}</p><p v-if="compareWarnings.length > 5" class="text-[11px] text-fg-3">另有 {{ compareWarnings.length - 5 }} 条提示已收起。</p></section>
         </template>
