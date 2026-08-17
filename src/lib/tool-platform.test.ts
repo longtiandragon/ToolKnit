@@ -31,6 +31,22 @@ describe('tool platform text pipelines', () => {
     expect(() => runTextPipeline('x'.repeat(8 * 1024 * 1024 + 1), [createPipelineStep('text.trim', 0)])).toThrow(/超过 8 MB/)
   })
 
+  it('can skip a failed step while preserving the previous output', () => {
+    const result = runTextPipeline('{broken}', [
+      { ...createPipelineStep('text.json', 0), onError: 'skip' },
+      createPipelineStep('text.trim', 1),
+    ])
+    expect(result.content).toBe('{broken}\n')
+    expect(result.steps[0]).toMatchObject({ skipped: true, attempts: 1 })
+    expect(result.steps[1].content).toBe('{broken}\n')
+  })
+
+  it('reports each bounded retry attempt before surfacing a persistent error', () => {
+    const attempts: number[] = []
+    expect(() => runTextPipeline('{broken}', [{ ...createPipelineStep('text.json', 0), onError: 'retry' }], ({ attempt }) => attempts.push(attempt))).toThrow('JSON')
+    expect(attempts).toEqual([1, 2, 3])
+  })
+
   it('recommends deterministic operations from pasted content', () => {
     expect(suggestToolDefinitions('{"ok":true}').map((tool) => tool.id).slice(0, 2)).toEqual(['text.json', 'text.trim'])
     expect(suggestToolDefinitions('https://example.com\na@example.com').map((tool) => tool.id)).toContain('text.extract-contacts')

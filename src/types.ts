@@ -303,10 +303,14 @@ export interface ToolRecipe {
 
 /** A reusable ordered set of tools. The step shape intentionally contains
  * only serializable parameters and never owns file paths or file contents. */
+export type ToolPipelineErrorPolicy = 'stop' | 'skip' | 'retry'
+
 export interface ToolPipelineStep {
   id: string
   toolId: string
   parameters?: Record<string, string | number | boolean>
+  /** What to do when this pure transformation cannot process its input. */
+  onError?: ToolPipelineErrorPolicy
 }
 
 export interface ToolPipelineRecipe {

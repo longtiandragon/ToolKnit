@@ -155,6 +155,9 @@ function validRecipe(value: Record<string, unknown>) {
 
 function validPipeline(value: Record<string, unknown>) {
   if (!hasStrings(value, ['id', 'title', 'createdAt', 'updatedAt']) || value.version !== 1 || !Array.isArray(value.steps)) return false
+  // Policy values are checked by the pipeline runner before execution. Keeping
+  // this backup validator focused on the serializable recipe shape preserves
+  // forward compatibility when a newer runner adds another policy.
   return value.steps.length > 0 && value.steps.length <= 12 && value.steps.every((step) => isRecord(step) && hasStrings(step, ['id', 'toolId']) && (step.parameters === undefined || isRecord(step.parameters)))
 }
 

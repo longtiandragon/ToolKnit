@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import type { FileReference, ToolPipelineRecipe, ToolPipelineStep } from '@/types'
+import type { FileReference, ToolPipelineRecipe, ToolPipelineStep, ToolPipelineErrorPolicy } from '@/types'
 import { cleanOutputName } from '@/lib/file-tools'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
 import { createPipelineStep, getToolDefinition, listToolDefinitions, runTextPipelineAsync, suggestToolDefinitions, ToolPipelineCancelledError, validatePipelineSteps } from '@/lib/tool-platform'
@@ -45,7 +45,7 @@ const inputLabel = computed(() => files.value[0]?.name || '粘贴文本')
 const recipeCount = computed(() => store.pipelineRecipes.length)
 
 function cloneSteps(value: readonly ToolPipelineStep[]) {
-  return value.map((step) => ({ ...step, ...(step.parameters ? { parameters: { ...step.parameters } } : {}) }))
+  return value.map((step) => ({ ...step, onError: step.onError ?? 'stop', ...(step.parameters ? { parameters: { ...step.parameters } } : {}) }))
 }
 
 function stepDefinition(step: ToolPipelineStep) {
@@ -110,7 +110,7 @@ function normalizedRecipeSteps(raw: unknown) {
   if (raw.length > 12) throw new Error('配方最多支持 12 个步骤。')
   const steps = raw.map((value, index) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`第 ${index + 1} 步格式不正确。`)
-    const candidate = value as { toolId?: unknown; parameters?: unknown }
+    const candidate = value as { toolId?: unknown; parameters?: unknown; onError?: unknown }
     if (typeof candidate.toolId !== 'string' || !getToolDefinition(candidate.toolId)) throw new Error(`第 ${index + 1} 步引用了未知工具。`)
     let parameters: ToolPipelineStep['parameters'] | undefined
     if (candidate.parameters !== undefined) {
@@ -123,7 +123,9 @@ function normalizedRecipeSteps(raw: unknown) {
       })
       parameters = Object.fromEntries(safeEntries) as ToolPipelineStep['parameters']
     }
-    return { ...createPipelineStep(candidate.toolId, index), ...(parameters ? { parameters } : {}) }
+    const onError = candidate.onError === undefined ? 'stop' : candidate.onError
+    if (!['stop', 'skip', 'retry'].includes(String(onError))) throw new Error('失败策略不正确。')
+    return { ...createPipelineStep(candidate.toolId, index), ...(parameters ? { parameters } : {}), onError: onError as ToolPipelineErrorPolicy }
   })
   validatePipelineSteps(steps)
   return steps
@@ -239,9 +241,9 @@ async function run() {
   try {
     const result = await runTextPipelineAsync(input.value, steps.value, {
       shouldCancel: () => cancellationRequested,
-      onProgress: ({ index, total, definition }) => {
+      onProgress: ({ index, total, definition, attempt }) => {
       progress.value = Math.max(progress.value, Math.round(12 + ((index + 1) / total) * 72))
-      message.value = `正在执行第 ${index + 1}/${total} 步：${definition.title}`
+      message.value = `正在执行第 ${index + 1}/${total} 步：${definition.title}${attempt > 1 ? `（重试${attempt - 1}）` : ''}`
       store.updateJob(job.id, { status: 'running', progress: progress.value, detail: message.value })
       },
     })
@@ -388,6 +390,14 @@ onBeforeUnmount(() => {
                 <button class="center w-6 h-6 rounded-sm text-fg-3 hover:bg-danger-soft hover:text-danger disabled:opacity-40" :disabled="running || steps.length <= 1" title="移除" @click="removeStep(index)"><AppIcon name="close" :size="13" /></button>
               </div>
               <p class="pl-7 text-[11px] text-fg-3 leading-snug">{{ stepDefinition(step)?.description }}</p>
+              <div class="row gap-2 pl-7">
+                <label class="text-[11px] text-fg-3 shrink-0" :for="`step-policy-${step.id}`">失败时</label>
+                <select :id="`step-policy-${step.id}`" v-model="step.onError" class="field h-7 min-w-0 flex-1 text-[11px]" :disabled="running">
+                  <option value="stop">停止流水线</option>
+                  <option value="skip">跳过（保留）</option>
+                  <option value="retry">重试 2 次</option>
+                </select>
+              </div>
             </li>
           </ol>
           <div class="row gap-2">
@@ -396,7 +406,7 @@ onBeforeUnmount(() => {
             </select>
             <button class="btn-default btn-sm shrink-0" :disabled="running || steps.length >= 12" @click="addStep()">添加</button>
           </div>
-          <p class="text-[11px] text-fg-3 leading-snug">步骤按顺序执行；每一步的输出会自动交给下一步。</p>
+          <p class="text-[11px] text-fg-3 leading-snug">步骤按顺序执行；输出会自动交给下一步。失败策略仅用于文本步骤。</p>
         </section>
 
         <section class="panel p-4 stack gap-3">
