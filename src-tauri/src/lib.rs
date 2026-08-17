@@ -3,6 +3,7 @@ mod private_tools;
 mod archive_tools;
 mod engine_registry;
 mod file_health;
+mod image_metadata;
 mod pdf_tools;
 mod transcription;
 mod vault;
@@ -6190,6 +6191,7 @@ pub fn run() {
             extract_tar_archive,
             seven_zip_engine_status,
             engine_registry_status,
+            image_metadata::inspect_image_metadata,
             pdf_tools::optimize_pdf_bytes,
             pdf_tools::protect_pdf_bytes,
             pdf_tools::decrypt_pdf_bytes,

@@ -20,6 +20,7 @@ import { normalizeVisualProjectAnnotations, visualProjectSignature } from '@/lib
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useUiStore } from '@/stores/ui'
 import type { FileReference } from '@/types'
+import type { ImageMetadataReport } from '@/lib/image-metadata-native'
 
 type LayoutKind = 'single' | 'pair' | 'grid'
 type ImageMode = 'compose' | 'stitch' | 'concat' | 'convert' | 'resize' | 'crop' | 'rotate' | 'metadata'
@@ -80,6 +81,9 @@ const cropHeight = ref(100)
 const processedPreviewUrl = ref('')
 const processedPreviewBytes = ref(0)
 const previewPending = ref(false)
+const metadataLoading = ref(false)
+const metadataError = ref('')
+const metadataReport = shallowRef<ImageMetadataReport>()
 const stitchOverlapMode = ref<'auto' | 'manual'>('auto')
 const stitchManualOverlap = ref(15)
 const concatDirection = ref<'vertical' | 'horizontal'>('vertical')
@@ -202,6 +206,7 @@ const slots = computed(() => layout.value === 'single' ? 1 : layout.value === 'p
 const visibleImages = computed(() => images.value.slice(0, slots.value))
 const activeImage = computed(() => images.value[activeImageIndex.value] ?? images.value[0])
 const activeImageFile = computed(() => imageFiles.value[activeImageIndex.value] ?? imageFiles.value[0])
+const activeImagePath = computed(() => (activeImageFile.value as (File & { path?: string }) | undefined)?.path)
 const activeBlankCanvas = computed(() => blankCanvasPresetFromName(activeImageFile.value?.name))
 const compositionDimensions = computed(() => visualCanvasDimensions(layout.value, activeImageFile.value?.name))
 const compositionForeground = computed(() => visualCanvasForeground(background.value))
@@ -370,9 +375,16 @@ watch(imageFiles, (selected) => {
   images.value.forEach((item) => URL.revokeObjectURL(item.url))
   images.value = selected.slice(0, modeFileCap.value).map((file) => ({ name: file.name, url: URL.createObjectURL(file), blank: Boolean(blankCanvasPresetFromName(file.name)) }))
   activeImageIndex.value = 0
+  metadataReport.value = undefined
+  metadataError.value = ''
   resetAnnotationHistory()
   message.value = images.value.length ? `已载入 ${images.value.length} 张图片，可以直接编辑。` : '拖入图片开始创作。'
 }, { immediate: true })
+
+watch([activeImageIndex, activeMode], () => {
+  metadataReport.value = undefined
+  metadataError.value = ''
+})
 
 watch(() => route.query.tool, (tool) => {
   activeMode.value = ['stitch', 'concat', 'convert', 'resize', 'crop', 'rotate', 'metadata'].includes(String(tool)) ? tool as ImageMode : 'compose'
@@ -2030,6 +2042,27 @@ async function ensureOutputDirectory() {
   return true
 }
 
+async function inspectMetadata() {
+  if (metadataLoading.value) return
+  const path = activeImagePath.value
+  if (!path) {
+    metadataError.value = '请在桌面版中拖入本地图片；浏览器选择的内存副本没有可供 ExifTool 读取的路径。'
+    return
+  }
+  metadataLoading.value = true
+  metadataError.value = ''
+  metadataReport.value = undefined
+  try {
+    const { inspectDesktopImageMetadata } = await import('@/lib/image-metadata-native')
+    metadataReport.value = await inspectDesktopImageMetadata(path)
+    message.value = `已读取 ${metadataReport.value.fields.length} 项图片元数据；只读查看，没有写回原图。`
+  } catch (error) {
+    metadataError.value = error instanceof Error ? error.message : '无法读取图片元数据。'
+  } finally {
+    metadataLoading.value = false
+  }
+}
+
 async function copyCard() {
   copying.value = true
   try {
@@ -2823,6 +2856,32 @@ async function openLocation(path?: string) {
           </template>
 
           <template v-else>
+            <section v-if="activeMode === 'metadata'" class="stack gap-2.5 p-3 border-b border-line">
+              <div class="row-between gap-2">
+                <h3 class="text-[11px] font-semibold text-fg-3">查看元数据（只读）</h3>
+                <button class="btn-default btn-sm" :disabled="metadataLoading || !activeImagePath" @click="inspectMetadata">
+                  <AppIcon name="search" :size="13" />{{ metadataLoading ? '读取中…' : '读取本地标签' }}
+                </button>
+              </div>
+              <p class="text-[11px] leading-relaxed text-fg-3">可查看 EXIF、XMP、IPTC 和 GPS 摘要；需要桌面版 ExifTool。读取不会加入任务历史，也不会修改原图。</p>
+              <p v-if="!activeImagePath" class="text-[11px] leading-relaxed text-warn">当前是浏览器内存副本，未关联本地路径；仍可继续清理元数据并导出。</p>
+              <p v-if="metadataError" class="row gap-1.5 p-2 rounded-sm bg-danger-soft text-[11px] leading-relaxed text-danger" role="alert">
+                <AppIcon name="warning" :size="13" class="shrink-0" />{{ metadataError }}
+              </p>
+              <div v-if="metadataReport" class="stack gap-1.5">
+                <div class="row-between gap-2 text-[11px] text-fg-3">
+                  <span>{{ metadataReport.name }} · {{ metadataReport.fields.length }} 项</span>
+                  <span class="tabular-nums">{{ metadataReport.elapsedMs }} ms</span>
+                </div>
+                <dl class="stack gap-1 max-h-56 overflow-y-auto pr-1">
+                  <div v-for="field in metadataReport.fields" :key="field.key" class="stack gap-0.5 p-1.5 rounded-sm bg-surface-2">
+                    <dt class="row gap-1.5 text-[10px] text-fg-3"><span class="chip h-4 px-1 text-[10px]">{{ field.group }}</span>{{ field.name }}</dt>
+                    <dd class="text-[11px] leading-relaxed text-fg break-all">{{ field.value }}</dd>
+                  </div>
+                </dl>
+                <p v-if="metadataReport.truncated" class="text-[10px] leading-relaxed text-warn">结果已按安全上限截断；如需完整原始标签，请直接使用 ExifTool。</p>
+              </div>
+            </section>
             <section class="stack gap-2.5 p-3 border-b border-line">
               <h3 class="text-[11px] font-semibold text-fg-3">输出</h3>
               <label class="stack gap-1.5">

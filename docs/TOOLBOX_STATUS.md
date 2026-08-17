@@ -32,6 +32,7 @@
 ### 图片与媒体
 
 - 图片裁剪、旋转、缩放/压缩、PNG/JPG/WebP 转换、拼图/长图、标注、真实马赛克和元数据清理。
+- 桌面版检测到 ExifTool 时可只读查看 EXIF、XMP、IPTC、GPS 等元数据摘要；输出字段和单次执行时间均有上限，不写入任务历史。
 - FFmpeg 媒体探测、音频抽取、M4A/WAV/MP4 转换、静音视频、普通/无损截取、MP4 重新封装。
 - FFmpeg 音量标准化：音频输出 M4A；带视频的输入复制画面与字幕轨并输出 MKV，音频使用受控 `loudnorm` 重新编码。
 - FFmpeg 只读内容检测：按固定阈值扫描静音区间（−35 dB / 0.35 秒）和黑场区间（0.40 秒 / 10%），结果限制为 256 段，不生成或覆盖媒体。
@@ -56,7 +57,7 @@
 
 下面这些是明确的后续任务，不应在发布说明中写成“已支持”：
 
-- qpdf 的签名和更完整的图片压缩策略，以及 qpdf/LibreOffice/Tesseract/ImageMagick/ExifTool/Czkawka 的更完整功能适配、版本策略和 Engine Registry 的安装/更新管理；目前已完成 qpdf 密码/权限、只读探针和受控 PDF 结构优化，以及 Czkawka 相似图片的只读结果适配，但不会自动下载或更新外部引擎。
+- qpdf 的签名和更完整的图片压缩策略，以及 qpdf/LibreOffice/Tesseract/ImageMagick/ExifTool/Czkawka 的更完整功能适配、版本策略和 Engine Registry 的安装/更新管理；目前已完成 qpdf 密码/权限、只读探针和受控 PDF 结构优化、ExifTool 受控元数据摘要，以及 Czkawka 相似图片的只读结果适配，但不会自动下载或更新外部引擎。
 - PDF 数字签名、表单、书签、附件、PDF/A 和 Office/HTML 转换。
 - 媒体字幕烧录、章节、波形、降噪和说话人分离。
 - 字幕翻译、本地模型管理、图形字幕 OCR 和更完整的 CPS 自动修复。
