@@ -1986,6 +1986,29 @@ fn validated_subtitle_input_path(value: &str) -> Result<PathBuf, String> {
     fs::canonicalize(path).map_err(|error| format!("无法定位字幕文件：{error}"))
 }
 
+/// Build an FFmpeg subtitles filter without interpolating a user path into a
+/// shell command. The process still receives one argument, but the filter
+/// parser has its own escaping rules for Windows drive letters and separators.
+fn subtitle_burn_filter(path: &Path) -> Result<String, String> {
+    let value = path
+        .to_str()
+        .ok_or("字幕文件路径包含无法处理的字符。")?;
+    let mut escaped = String::with_capacity(value.len() + 16);
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            ':' => escaped.push_str("\\:"),
+            '\'' => escaped.push_str("\\'"),
+            '[' => escaped.push_str("\\["),
+            ']' => escaped.push_str("\\]"),
+            ',' => escaped.push_str("\\,"),
+            ';' => escaped.push_str("\\;"),
+            _ => escaped.push(character),
+        }
+    }
+    Ok(format!("subtitles=filename='{escaped}'"))
+}
+
 fn media_safe_stem(path: &Path) -> String {
     let source = path
         .file_stem()
@@ -2713,6 +2736,7 @@ fn required_media_track(operation: &str) -> Option<&'static str> {
         "extract-subtitle" => Some("subtitle"),
         "remove-audio" => Some("video"),
         "remove-subtitles" | "add-subtitle" | "edit-chapters" => Some("media"),
+        "burn-subtitle" => Some("video"),
         "clean-metadata" => Some("media"),
         "trim-clip" | "lossless-clip" => Some("media"),
         _ => None,
@@ -2752,7 +2776,7 @@ fn transcode_media(
             .into());
         }
     }
-    let subtitle_input = if request.operation == "add-subtitle" {
+    let subtitle_input = if matches!(request.operation.as_str(), "add-subtitle" | "burn-subtitle") {
         let raw = request
             .subtitle_path
             .as_deref()
@@ -2764,6 +2788,15 @@ fn transcode_media(
             return Err("字幕文件不能与输入媒体文件相同。".into());
         }
         Some(subtitle)
+    } else {
+        None
+    };
+    let subtitle_filter = if request.operation == "burn-subtitle" {
+        Some(subtitle_burn_filter(
+            subtitle_input
+                .as_ref()
+                .ok_or("请选择要烧录的字幕文件。")?,
+        )?)
     } else {
         None
     };
@@ -2962,6 +2995,35 @@ fn transcode_media(
             .collect(),
             source_duration,
         ),
+        "burn-subtitle" => (
+            "subtitle-burned",
+            "mp4".into(),
+            vec![
+                "-map".into(),
+                "0:v:0".into(),
+                "-map".into(),
+                "0:a?".into(),
+                "-vf".into(),
+                subtitle_filter
+                    .clone()
+                    .ok_or("请选择要烧录的字幕文件。")?,
+                "-c:v".into(),
+                "libx264".into(),
+                "-preset".into(),
+                "medium".into(),
+                "-crf".into(),
+                "23".into(),
+                "-pix_fmt".into(),
+                "yuv420p".into(),
+                "-c:a".into(),
+                "aac".into(),
+                "-b:a".into(),
+                "160k".into(),
+                "-movflags".into(),
+                "+faststart".into(),
+            ],
+            source_duration,
+        ),
         "trim-clip" | "lossless-clip" => {
             let clip_info = media_info
                 .as_ref()
@@ -3089,7 +3151,10 @@ fn transcode_media(
         .args(input_arguments)
         .arg("-i")
         .arg(&input);
-    if let Some(subtitle) = subtitle_input.as_ref() {
+    if request.operation == "add-subtitle" {
+        let subtitle = subtitle_input
+            .as_ref()
+            .ok_or("请选择要加入的字幕文件。")?;
         command.arg("-i").arg(subtitle);
     }
     if let Some(metadata) = chapter_metadata.as_ref() {
@@ -5368,6 +5433,16 @@ mod external_markdown_tests {
     }
 
     #[test]
+    fn subtitle_burn_filter_escapes_filter_syntax_and_windows_drive_letters() {
+        let path = Path::new(r"C:\Captions\lesson, [final]; 'v1'.srt");
+        let filter = subtitle_burn_filter(path).unwrap();
+        assert_eq!(
+            filter,
+            r"subtitles=filename='C\:\\Captions\\lesson\, \[final\]\; \'v1\'.srt'"
+        );
+    }
+
+    #[test]
     fn media_progress_uses_ffmpeg_time_without_claiming_completion_early() {
         assert_eq!(media_progress_seconds("out_time_us=3000000"), Some(3.0));
         assert_eq!(media_progress_percent(3.0, Some(6.0)), Some(50));
@@ -5457,6 +5532,7 @@ mod external_markdown_tests {
         assert_eq!(required_media_track("remove-audio"), Some("video"));
         assert_eq!(required_media_track("remove-subtitles"), Some("media"));
         assert_eq!(required_media_track("add-subtitle"), Some("media"));
+        assert_eq!(required_media_track("burn-subtitle"), Some("video"));
         assert_eq!(required_media_track("clean-metadata"), Some("media"));
         assert_eq!(required_media_track("edit-chapters"), Some("media"));
         assert_eq!(required_media_track("unsupported"), None);

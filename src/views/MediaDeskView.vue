@@ -81,7 +81,7 @@ const chaptersJsonError = computed(() => {
     return ''
   } catch { return '章节 JSON 格式不正确。' }
 })
-const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !busy.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)) && (operation.value !== 'add-subtitle' || Boolean(subtitlePath.value)) && !chaptersJsonError.value)
+const canRun = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(outputDirectory.value) && !busy.value && selectedOperationAvailable.value && (!['trim-clip', 'lossless-clip'].includes(operation.value) || Boolean(clipValidation.value.range)) && (!['add-subtitle', 'burn-subtitle'].includes(operation.value) || Boolean(subtitlePath.value)) && !chaptersJsonError.value)
 const canAnalyzeSilence = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.audioCodec) && !running.value && !detectionRunning.value)
 const canAnalyzeBlack = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.videoCodec) && !running.value && !detectionRunning.value)
 const canAnalyzeWaveform = computed(() => desktop && engine.value.available && Boolean(source.value?.path) && Boolean(source.value?.audioCodec) && !running.value && !detectionRunning.value)
@@ -209,7 +209,7 @@ async function chooseSubtitle() {
   if (!desktop || selecting.value || busy.value) return
   if (qaPreview) {
     subtitlePath.value = 'F:\\Subtitles\\数据结构复习课.srt'
-    notice.value = '已选择“数据结构复习课.srt”。生成时会封装为新的 MKV 字幕轨。'
+    notice.value = operation.value === 'burn-subtitle' ? '已选择“数据结构复习课.srt”。生成时会把字幕渲染进新的视频画面。' : '已选择“数据结构复习课.srt”。生成时会封装为新的 MKV 字幕轨。'
     return
   }
   selecting.value = true
@@ -221,7 +221,9 @@ async function chooseSubtitle() {
     })
     if (typeof selected === 'string') {
       subtitlePath.value = selected
-      notice.value = `已选择“${selected.split(/[\\/]/).filter(Boolean).at(-1) || selected}”；输出会生成新的 MKV 文件。`
+      notice.value = operation.value === 'burn-subtitle'
+        ? `已选择“${selected.split(/[\\/]/).filter(Boolean).at(-1) || selected}”；输出会生成重新编码的 MP4 文件。`
+        : `已选择“${selected.split(/[\\/]/).filter(Boolean).at(-1) || selected}”；输出会生成新的 MKV 文件。`
     }
   } catch (error) { notice.value = error instanceof Error ? error.message : '无法打开字幕文件选择器。' }
   finally { selecting.value = false }
@@ -244,7 +246,7 @@ function selectClipFromSource() {
 function selectOperationFromSource(nextOperation: MediaOperation) {
   selectOperation(nextOperation)
   closeSourceMenu(true)
-  if (nextOperation === 'add-subtitle') void chooseSubtitle()
+  if (nextOperation === 'add-subtitle' || nextOperation === 'burn-subtitle') void chooseSubtitle()
 }
 
 function handleDroppedPaths(paths: string[]) {
@@ -344,7 +346,7 @@ function showSourceMenu(x: number, y: number, trigger: HTMLElement) {
   const hasVideo = Boolean(source.value.videoCodec)
   const hasSubtitle = Boolean(source.value.tracks?.some((track) => track.kind === 'subtitle'))
   const hasMedia = hasAudio || hasVideo
-  const quickActions = 1 + 3 + Number(hasAudio) * 2 + Number(hasVideo) * 3 + Number(hasSubtitle) * 2 + Number(hasMedia) * 3
+  const quickActions = 1 + 3 + Number(hasAudio) * 2 + Number(hasVideo) * 3 + Number(hasSubtitle) * 2 + Number(hasMedia) * 4
   sourceMenu.value = clampMenuPosition(x, y, { menuWidth: 212, menuHeight: 35 + quickActions * 35 })
   void nextTick(() => sourceMenuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus())
 }
@@ -614,10 +616,10 @@ onBeforeUnmount(() => {
             </p>
           </section>
 
-          <section v-if="operation === 'add-subtitle'" class="stack gap-2 p-3 rounded-md border border-accent bg-accent-soft" aria-label="加入外部字幕">
+          <section v-if="operation === 'add-subtitle' || operation === 'burn-subtitle'" class="stack gap-2 p-3 rounded-md border border-accent bg-accent-soft" aria-label="外部字幕处理">
             <header class="row-between gap-2">
-              <b class="text-[12px] font-medium text-fg">加入字幕轨</b>
-              <small class="font-mono text-[11px] text-accent">输出 MKV</small>
+              <b class="text-[12px] font-medium text-fg">{{ operation === 'burn-subtitle' ? '烧录字幕到画面' : '加入字幕轨' }}</b>
+              <small class="font-mono text-[11px] text-accent">{{ operation === 'burn-subtitle' ? '输出 MP4' : '输出 MKV' }}</small>
             </header>
             <button class="row gap-2.5 p-2.5 rounded-md border border-line bg-well text-left transition-colors duration-120 hover:not-disabled:border-line-strong disabled:opacity-45" :disabled="busy || selecting" @click="chooseSubtitle">
               <AppIcon name="file-text" :size="16" class="shrink-0 text-accent" />
@@ -627,7 +629,7 @@ onBeforeUnmount(() => {
               </span>
               <AppIcon name="arrow-right" :size="14" class="shrink-0 text-fg-3" />
             </button>
-            <p class="text-[11px] leading-relaxed text-fg-3">原媒体与字幕文件保持不变；外部字幕会作为新的文字轨封装进 MKV。</p>
+            <p class="text-[11px] leading-relaxed text-fg-3">{{ operation === 'burn-subtitle' ? '字幕会渲染进视频画面，输出会重新编码；原媒体与字幕文件保持不变。' : '原媒体与字幕文件保持不变；外部字幕会作为新的文字轨封装进 MKV。' }}</p>
           </section>
 
           <section v-if="operation === 'edit-chapters'" class="stack gap-2 p-3 rounded-md border border-accent bg-accent-soft" aria-label="编辑媒体章节">
@@ -790,6 +792,7 @@ onBeforeUnmount(() => {
         <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('clean-metadata')">清除媒体元数据</button>
         <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('edit-chapters')">编辑媒体章节…</button>
         <button v-if="source?.audioCodec || source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('add-subtitle')">加入外部字幕…</button>
+        <button v-if="source?.videoCodec" class="menu-item" role="menuitem" @click="selectOperationFromSource('burn-subtitle')">烧录外部字幕…</button>
         <button class="menu-item" role="menuitem" @click="selectClipFromSource">截取这段媒体…</button>
         <i class="menu-sep" aria-hidden="true" />
         <button class="menu-item" role="menuitem" @click="reInspect">重新读取信息</button>

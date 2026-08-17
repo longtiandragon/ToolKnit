@@ -22,6 +22,7 @@ describe('media operation catalog', () => {
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'remove-audio')!, audio)).toBe(false)
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'remove-subtitles')!, audio)).toBe(true)
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'add-subtitle')!, video)).toBe(true)
+    expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'burn-subtitle')!, video)).toBe(true)
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'edit-chapters')!, video)).toBe(true)
     expect(mediaOperationAvailable(mediaOperations.find((item) => item.id === 'extract-subtitle')!, { tracks: [{ index: 2, kind: 'subtitle', codec: 'subrip' }] })).toBe(true)
     expect(mediaOperationUnavailableReason(mediaOperations.find((item) => item.id === 'extract-subtitle')!, audio)).toBe('当前文件没有文字字幕轨')
