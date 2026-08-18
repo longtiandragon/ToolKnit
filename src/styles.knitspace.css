@@ -19,7 +19,7 @@ body {
     var(--bg);
   background-size: auto, 32px 32px, auto;
   color: var(--fg);
-  font-size: 15px;
+  font-size: 0.9375rem;
 }
 
 /* The entrance transform must not remain as a containing block after the
@@ -61,7 +61,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .rail-child .app-icon { flex: 0 0 auto; opacity: .72; }
 
-.rail-child:hover, .rail-child.active { color: var(--accent-fg); background: var(--accent-soft); }
+/* `--accent-fg` is white, meant for a filled accent background. On
+   `--accent-soft` — a 9% tint in the light theme — it is white on white, and
+   the selected entry disappears. The tint takes `--accent-strong` as its ink, which is the token tuned for
+   exactly this: accent-coloured text that still passes on a pale wash. */
+.rail-child:hover, .rail-child.active { color: var(--accent-strong); background: var(--accent-soft); }
 .rail-child.active { box-shadow: inset 2px 0 var(--accent); }
 
 
@@ -145,7 +149,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* The command center is a daily desktop surface, so even its secondary labels
    stay readable against warm paper instead of collapsing into 8px metadata. */
-.command-space-tile strong { font-size: 12px; }
+.command-space-tile strong { font-size: 0.75rem; }
 
 
 
@@ -162,7 +166,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 /* Today: a quiet command surface, not another busy dashboard. */
-.workbench-dashboard { max-width: 1540px; padding: 24px 30px 30px; }
+.workbench-dashboard { padding: 1.5rem 1.875rem 1.875rem; }
 
 
 
@@ -182,7 +186,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 
-.detail-empty__actions .primary-button, .detail-empty__actions .quiet-button { min-height: 35px; font-size: 13px; }
+.detail-empty__actions .primary-button, .detail-empty__actions .quiet-button { min-height: 35px; font-size: 0.8125rem; }
 
 .favorite-card { border-radius: 14px; background: var(--surface); }
 .favorite-card:hover { box-shadow: var(--shadow-sm); }
@@ -351,7 +355,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 
-.ai-drawer .eyebrow { color: var(--accent-strong); font-size: 12px; }
+.ai-drawer .eyebrow { color: var(--accent-strong); font-size: 0.75rem; }
 
 .ai-actions > button:hover, .ai-actions > button.active { border-color: color-mix(in srgb, var(--accent) 26%, var(--line)); color: var(--accent-strong); background: var(--accent-soft); }
 
@@ -368,14 +372,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 
 
-.review-card--word .answer-reveal > p:not(.eyebrow) { color: var(--fg-2); font-size: 13px; line-height: 1.7; }
+.review-card--word .answer-reveal > p:not(.eyebrow) { color: var(--fg-2); font-size: 0.8125rem; line-height: 1.7; }
 
 
 /* Review session: turn FSRS into an understandable, interruptible daily flow. */
-.review{width:min(1040px,calc(100% - 48px));max-width:1040px;padding:24px 0 56px}.review-head>div:first-child>.eyebrow,.review-head h2{display:block}.review-head>div:first-child>.eyebrow{color:var(--accent-strong)}.review-session{display:grid;flex:0 0 min(310px,36%);gap:9px;padding:12px 13px 11px;border:1px solid var(--accent-soft);border-radius:12px;background:linear-gradient(135deg,var(--accent-soft),var(--surface-2));box-shadow:0 9px 24px var(--accent-soft)}.review-card{display:flex;min-height:410px;flex-direction:column;overflow:hidden;border-color:var(--accent-soft);border-radius:16px;background:var(--surface-2);box-shadow:0 18px 42px var(--accent-soft)}.review-card>header{display:flex;min-height:112px;align-items:flex-start;justify-content:space-between;gap:28px;padding:23px 26px 19px;border-bottom:1px solid var(--line);background:linear-gradient(125deg,var(--accent-soft),var(--surface) 58%)}.review-card>header>div{min-width:0}.review-card>header p{color:var(--accent-strong);font:700 12px/1.4 var(--font-family-ui);letter-spacing:.045em}.review-card>header h3{margin:6px 0 7px;color:var(--fg);font:720 clamp(20px,2vw,27px)/1.26 var(--font-family-display);letter-spacing:-.035em}.review-card>.review-content{min-height:175px;flex:1;padding:25px 28px;font-size:14px;line-height:1.8}.review-card>footer{padding:18px 26px 17px;border-top:1px solid var(--line);background:var(--surface-2)}.review-card>footer>.primary-button.wide{display:flex;width:100%;min-height:46px;align-items:center;justify-content:space-between;padding:0 17px;font-size:12px;text-align:left}.review-card>footer>.primary-button.wide span{font:700 16px var(--font-family-ui)}.review-finished>div .quiet-button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;font-size:13px}
-.review-front-surface>.review-content{min-height:0;padding:0;border:0;font-size:14px;line-height:1.8}
+.review{width:min(1040px,calc(100% - 48px));max-width:1040px;padding:24px 0 56px}.review-head>div:first-child>.eyebrow,.review-head h2{display:block}.review-head>div:first-child>.eyebrow{color:var(--accent-strong)}.review-session{display:grid;flex:0 0 min(310px,36%);gap:9px;padding:12px 13px 11px;border:1px solid var(--accent-soft);border-radius:12px;background:linear-gradient(135deg,var(--accent-soft),var(--surface-2));box-shadow:0 9px 24px var(--accent-soft)}.review-card{display:flex;min-height:410px;flex-direction:column;overflow:hidden;border-color:var(--accent-soft);border-radius:16px;background:var(--surface-2);box-shadow:0 18px 42px var(--accent-soft)}.review-card>header{display:flex;min-height:112px;align-items:flex-start;justify-content:space-between;gap:28px;padding:23px 26px 19px;border-bottom:1px solid var(--line);background:linear-gradient(125deg,var(--accent-soft),var(--surface) 58%)}.review-card>header>div{min-width:0}.review-card>header p{color:var(--accent-strong);font:700 12px/1.4 var(--font-family-ui);letter-spacing:.045em}.review-card>header h3{margin:6px 0 7px;color:var(--fg);font:720 clamp(20px,2vw,27px)/1.26 var(--font-family-display);letter-spacing:-.035em}.review-card>.review-content{min-height:175px;flex:1;padding:25px 28px;font-size:0.875rem;line-height:1.8}.review-card>footer{padding:18px 26px 17px;border-top:1px solid var(--line);background:var(--surface-2)}.review-card>footer>.primary-button.wide{display:flex;width:100%;min-height:46px;align-items:center;justify-content:space-between;padding:0 17px;font-size:0.75rem;text-align:left}.review-card>footer>.primary-button.wide span{font:700 16px var(--font-family-ui)}.review-finished>div .quiet-button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;font-size:0.8125rem}
+.review-front-surface>.review-content{min-height:0;padding:0;border:0;font-size:0.875rem;line-height:1.8}
 .review-front-empty .quiet-button{min-height:34px;color:var(--accent-strong);background:var(--surface-2)}
-.review-materials>header p:not(.eyebrow){max-width:640px;margin:0;color:var(--fg-3);font-size:12px;line-height:1.5}
+.review-materials>header p:not(.eyebrow){max-width:640px;margin:0;color:var(--fg-3);font-size:0.75rem;line-height:1.5}
 @media(max-width:900px){.review-session{width:100%;flex-basis:auto}}
 @media(max-width:720px){.review{width:min(100% - 28px,1040px)}.review-card>header{padding:19px 20px}.review-front-empty .quiet-button{grid-column:2;justify-self:start}.review-card>footer{padding:16px 20px}.review-finished>div>*{width:100%}}
 
@@ -402,7 +406,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* A material library can grow for years. Keep its reading surface calm while
    a fixed-height, buffered list prevents hundreds of file rows from joining
    the desktop DOM at once. */
-.source-list{display:flex;min-height:0;flex-direction:column;overflow:hidden}.source-list>.filter-row{flex:0 0 auto}.source-search .app-icon{flex:0 0 auto;color:var(--accent-strong)}.source-list__summary .quiet-button{min-height:25px;padding:0 7px;font-size:12px}.source-list__rows .library-list-empty .quiet-button{margin-top:5px}
+.source-list{display:flex;min-height:0;flex-direction:column;overflow:hidden}.source-list>.filter-row{flex:0 0 auto}.source-search .app-icon{flex:0 0 auto;color:var(--accent-strong)}.source-list__summary .quiet-button{min-height:25px;padding:0 7px;font-size:0.75rem}.source-list__rows .library-list-empty .quiet-button{margin-top:5px}
 .source-context-menu .app-icon{color:var(--accent-strong)}
 .source-tag:focus-visible,.source-tag-input button:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:1px}.source-tag-input{display:grid;height:28px;grid-template-columns:minmax(72px,112px) 28px;overflow:hidden;border:1px solid var(--accent-soft);border-radius:999px;background:var(--surface-2)}.source-tag-input:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}.source-tag-input input{min-width:0;padding:0 4px 0 9px;border:0;outline:0;color:var(--fg);background:transparent;font:600 12px var(--font-family-ui)}.source-tag-input input::placeholder{color:var(--fg-3)}.source-tag-input button{display:grid;width:28px;height:28px;place-items:center;border:0;color:var(--accent-strong);background:transparent}.source-tag-input button:hover:not(:disabled){background:var(--accent-soft)}.source-tag-input button:disabled{cursor:not-allowed;opacity:.38}
 
@@ -430,7 +434,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Processing jobs and ordinary app activity share one ledger without sharing
  * destructive semantics. Compact tabs keep both discoverable on desktop. */
 .history-view-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:min(100%,500px);margin:-8px 0 13px}.history-view-switch button.active{border-color:var(--accent-soft);color:var(--accent-strong);background:linear-gradient(135deg,var(--accent-soft),var(--surface));box-shadow:inset 3px 0 var(--accent)}
-.history-batch-bar.active{border-color:var(--accent-soft);background:var(--accent-soft)}.history-batch-bar .quiet-button{min-height:28px;padding:0 9px;font-size:12px}.history-batch-bar .quiet-button.danger{margin-left:auto;color:var(--danger);border-color:var(--danger-soft);background:var(--danger-soft)}.history-card.selected{border-color:var(--accent)!important;background:linear-gradient(120deg,var(--accent-soft),var(--surface))!important}.history-card.selected .history-select{color:var(--accent-fg);background:var(--accent-solid-hover)}
+.history-batch-bar.active{border-color:var(--accent-soft);background:var(--accent-soft)}.history-batch-bar .quiet-button{min-height:28px;padding:0 9px;font-size:0.75rem}.history-batch-bar .quiet-button.danger{margin-left:auto;color:var(--danger);border-color:var(--danger-soft);background:var(--danger-soft)}.history-card.selected{border-color:var(--accent)!important;background:linear-gradient(120deg,var(--accent-soft),var(--surface))!important}.history-card.selected .history-select{color:var(--accent-fg);background:var(--accent-solid-hover)}
 .activity-ledger article.actionable{cursor:pointer;transition:background .15s ease,color .15s ease}.activity-ledger article.actionable:hover,.activity-ledger article.actionable:focus-visible{border-radius:7px;background:var(--accent-soft);outline:0;box-shadow:inset 3px 0 var(--accent)}.activity-ledger article.actionable:hover>svg{color:var(--accent-strong)}
 
 
@@ -456,7 +460,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* Outputs live beside the task, not behind a toast. Their card holds only
    metadata, so a long batch never attaches generated PDF/image bytes to Vue. */
-.tool-output-result{margin-top:14px;overflow:hidden;border-color:var(--accent-soft);background:linear-gradient(135deg,var(--surface),var(--surface-2))}.tool-output-result>header .quiet-button{display:inline-flex;min-height:30px;flex:0 0 auto;align-items:center;justify-content:center;padding:0 9px;font-size:12px}.tool-output-context-menu button.danger{color:var(--danger)}.tool-output-context-menu button.danger:hover,.tool-output-context-menu button.danger:focus-visible{background:var(--danger-soft)}
+.tool-output-result{margin-top:14px;overflow:hidden;border-color:var(--accent-soft);background:linear-gradient(135deg,var(--surface),var(--surface-2))}.tool-output-result>header .quiet-button{display:inline-flex;min-height:30px;flex:0 0 auto;align-items:center;justify-content:center;padding:0 9px;font-size:0.75rem}.tool-output-context-menu button.danger{color:var(--danger)}.tool-output-context-menu button.danger:hover,.tool-output-context-menu button.danger:focus-visible{background:var(--danger-soft)}
 
 /* Tauri owns the window; Knitspace owns the chrome. The titlebar is compact,
    keyboard-visible and independent from page scrolling. Resize notifications
@@ -487,9 +491,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* Backup is two deliberately distinct recovery paths: a portable workspace
    snapshot, and a complete desktop Vault archive with the original files. */
-.backup-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}.backup-option__actions .quiet-button,.backup-option__actions .primary-button{flex:1;min-width:0;min-height:32px;padding:0 8px;font-size:12px}.backup-option__actions--vault .primary-button{flex:1.3}.backup-retention .app-icon{flex:0 0 auto;margin-top:1px;color:var(--accent-strong)}.backup-panel .notice{word-break:break-word}@media(max-width:760px){.backup-option__actions .quiet-button,.backup-option__actions .primary-button{width:100%}}
+.backup-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}.backup-option__actions .quiet-button,.backup-option__actions .primary-button{flex:1;min-width:0;min-height:32px;padding:0 8px;font-size:0.75rem}.backup-option__actions--vault .primary-button{flex:1.3}.backup-retention .app-icon{flex:0 0 auto;margin-top:1px;color:var(--accent-strong)}.backup-panel .notice{word-break:break-word}@media(max-width:760px){.backup-option__actions .quiet-button,.backup-option__actions .primary-button{width:100%}}
 
-.vault-health-card>footer .quiet-button{font-size:12px}.vault-restore-progress li.done>i{border-color:var(--accent);background:var(--accent-solid)}.vault-restore-progress li.active{border-color:var(--accent-soft);background:var(--accent-soft)}.vault-restore-progress li.active>i{border:2px solid var(--accent);background:var(--surface);box-shadow:0 0 0 3px var(--accent-soft)}@keyframes vault-restore-pulse{0%,100%{opacity:.55}50%{opacity:1}}
+.vault-health-card>footer .quiet-button{font-size:0.75rem}.vault-restore-progress li.done>i{border-color:var(--accent);background:var(--accent-solid)}.vault-restore-progress li.active{border-color:var(--accent-soft);background:var(--accent-soft)}.vault-restore-progress li.active>i{border:2px solid var(--accent);background:var(--surface);box-shadow:0 0 0 3px var(--accent-soft)}@keyframes vault-restore-pulse{0%,100%{opacity:.55}50%{opacity:1}}
 
 /* External Markdown workspace: two clear sidebar sources, a lazily rendered
    tree and a desktop-sized context menu. */
@@ -571,4 +575,4 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* Vault diagnostics are fetched only when Settings is opened. This keeps the
    integrity check out of startup while making the data layer verifiable. */
-.vault-health-card{overflow:hidden;margin-bottom:17px;border:1px solid var(--accent-soft);border-radius:14px;background:linear-gradient(135deg,var(--accent-soft),var(--surface) 56%,var(--surface-2));box-shadow:0 10px 28px var(--accent-soft);cursor:context-menu}.vault-health-card>header>p.ready{color:var(--accent-strong)}.vault-health-card>header>p.ready i{background:var(--accent-solid);box-shadow:0 0 0 4px var(--accent-soft)}.vault-health-card>footer .quiet-button{min-height:30px;padding:0 9px;font-size:12px}@keyframes vault-menu-in{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:none}}@keyframes vault-health-pulse{0%{background-position:100% 0}100%{background-position:-100% 0}}
+.vault-health-card{overflow:hidden;margin-bottom:17px;border:1px solid var(--accent-soft);border-radius:14px;background:linear-gradient(135deg,var(--accent-soft),var(--surface) 56%,var(--surface-2));box-shadow:0 10px 28px var(--accent-soft);cursor:context-menu}.vault-health-card>header>p.ready{color:var(--accent-strong)}.vault-health-card>header>p.ready i{background:var(--accent-solid);box-shadow:0 0 0 4px var(--accent-soft)}.vault-health-card>footer .quiet-button{min-height:30px;padding:0 9px;font-size:0.75rem}@keyframes vault-menu-in{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:none}}@keyframes vault-health-pulse{0%{background-position:100% 0}100%{background-position:-100% 0}}
