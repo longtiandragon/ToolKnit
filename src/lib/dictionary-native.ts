@@ -50,6 +50,13 @@ export async function lookupDictionaryWords(words: string[]): Promise<Dictionary
   return invoke<DictionaryRecord[]>('lookup_dictionary_words', { words })
 }
 
+/** Words close to one the dictionary does not have. Nothing is ever corrected
+ * automatically — the reader picks, or keeps what they typed. */
+export async function suggestDictionaryWords(word: string, limit = 5): Promise<string[]> {
+  if (!isDesktop() || !word.trim()) return []
+  return invoke<string[]>('suggest_dictionary_words', { word, limit })
+}
+
 export async function listenDictionaryProgress(handler: (progress: DictionaryProgress) => void) {
   return listenDesktopEvent<DictionaryProgress>(DICTIONARY_PROGRESS_EVENT, handler)
 }

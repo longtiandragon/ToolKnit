@@ -520,6 +520,109 @@ fn lookup_in(connection: &rusqlite::Connection, words: &[String]) -> Result<Vec<
     Ok(records)
 }
 
+/// Edit distance, capped: anything past the cap is "not a suggestion" and the
+/// exact number stops mattering, so the rows are bounded rather than exact.
+fn edit_distance(left: &str, right: &str, cap: usize) -> usize {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    if left.len().abs_diff(right.len()) > cap {
+        return cap + 1;
+    }
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0_usize; right.len() + 1];
+    for (i, a) in left.iter().enumerate() {
+        current[0] = i + 1;
+        let mut row_best = current[0];
+        for (j, b) in right.iter().enumerate() {
+            let cost = usize::from(a != b);
+            current[j + 1] = (previous[j] + cost)
+                .min(previous[j + 1] + 1)
+                .min(current[j] + 1);
+            row_best = row_best.min(current[j + 1]);
+        }
+        if row_best > cap {
+            return cap + 1;
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()]
+}
+
+/// How far off a suggestion may be. A three-letter word has no near misses
+/// worth offering; a long one can absorb two typos and still be obvious.
+fn suggestion_cap(word: &str) -> usize {
+    match word.chars().count() {
+        0..=3 => 1,
+        4..=7 => 2,
+        _ => 3,
+    }
+}
+
+/// Words the reader may have meant. Candidates come from the same first letter
+/// and a similar length — a bucket small enough to rank in memory — and are
+/// ordered by distance first, then by how common the word is.
+fn suggest_in(connection: &rusqlite::Connection, word: &str, limit: usize) -> Result<Vec<String>> {
+    let query = normalized_query(word);
+    let length = query.chars().count();
+    if length < 2 {
+        return Ok(Vec::new());
+    }
+    let cap = suggestion_cap(&query);
+    let first: String = query.chars().take(1).collect();
+    let mut statement = connection
+        .prepare(
+            "SELECT word, sw, COALESCE(frq, 0) FROM stardict
+             WHERE sw >= ?1 AND sw < ?1 || 'z' AND LENGTH(sw) BETWEEN ?2 AND ?3
+             LIMIT 4000",
+        )
+        .context("词库建议查询无法准备")?;
+    let low = length.saturating_sub(cap).max(1) as i64;
+    let high = (length + cap) as i64;
+    let rows = statement
+        .query_map(rusqlite::params![first, low, high], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .context("词库建议查询失败")?;
+    let mut ranked: Vec<(usize, i64, String)> = Vec::new();
+    for row in rows {
+        let (word, stripped, frequency) = row.context("词库建议结果无法读取")?;
+        let distance = edit_distance(&query, &stripped, cap);
+        if distance == 0 || distance > cap {
+            continue;
+        }
+        // A frequent word is the likelier intention; zero means "unranked",
+        // which must sort last rather than first.
+        ranked.push((distance, if frequency > 0 { -frequency } else { 0 }, word));
+    }
+    ranked.sort();
+    ranked.dedup_by(|a, b| a.2.eq_ignore_ascii_case(&b.2));
+    Ok(ranked
+        .into_iter()
+        .take(limit.clamp(1, 10))
+        .map(|(_, _, word)| word)
+        .collect())
+}
+
+/// Words close to one the dictionary does not have. Suggesting is all this
+/// does — nothing is ever silently corrected on the reader's behalf.
+#[tauri::command]
+pub fn suggest_dictionary_words(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DictionaryState>,
+    word: String,
+    limit: Option<usize>,
+) -> Result<Vec<String>, String> {
+    with_connection(&app, &state, |connection| {
+        suggest_in(connection, &word, limit.unwrap_or(5))
+    })
+    .map_err(|error| error.to_string())
+    .map(|found| found.unwrap_or_default())
+}
+
 #[tauri::command]
 pub fn lookup_dictionary_words(
     app: tauri::AppHandle,
@@ -544,11 +647,13 @@ mod tests {
     fn fixture() -> Result<rusqlite::Connection> {
         let connection = rusqlite::Connection::open_in_memory()?;
         connection.execute_batch(
-            "CREATE TABLE stardict (word TEXT, sw TEXT, phonetic TEXT, definition TEXT, translation TEXT, exchange TEXT);
-             INSERT INTO stardict VALUES ('run','run','rʌn','to move fast','n. 奔跑\nvi. 跑；运行','d:run/p:ran/3:runs/i:running');
-             INSERT INTO stardict VALUES ('Beijing','beijing','beɪˈdʒɪŋ','the capital','n. 北京','');
-             INSERT INTO stardict VALUES ('running','running','','','','0:run/1:i');
-             INSERT INTO stardict VALUES ('orphaned','orphaned','','','','0:missingword');",
+            "CREATE TABLE stardict (word TEXT, sw TEXT, phonetic TEXT, definition TEXT, translation TEXT, exchange TEXT, frq INTEGER);
+             INSERT INTO stardict VALUES ('run','run','rʌn','to move fast','n. 奔跑\nvi. 跑；运行','d:run/p:ran/3:runs/i:running',900);
+             INSERT INTO stardict VALUES ('Beijing','beijing','beɪˈdʒɪŋ','the capital','n. 北京','',400);
+             INSERT INTO stardict VALUES ('running','running','','','','0:run/1:i',300);
+             INSERT INTO stardict VALUES ('orphaned','orphaned','','','','0:missingword',10);
+             INSERT INTO stardict VALUES ('abandon','abandon','əˈbændən','to leave','vt. 放弃；抛弃','',800);
+             INSERT INTO stardict VALUES ('abandoned','abandoned','','','','0:abandon',100);",
         )?;
         Ok(connection)
     }
@@ -637,12 +742,53 @@ mod tests {
     #[test]
     fn reports_the_entry_count_and_refuses_a_file_without_the_table() -> Result<()> {
         let connection = fixture()?;
-        if entry_count(&connection)? != 4 {
-            bail!("fixture should hold four entries")
+        if entry_count(&connection)? != 6 {
+            bail!("fixture should hold six entries")
         }
         let empty = rusqlite::Connection::open_in_memory()?;
         if entry_count(&empty).is_ok() {
             bail!("a database without `stardict` must not pass as a dictionary")
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn offers_the_word_a_typo_was_reaching_for() -> Result<()> {
+        let connection = fixture()?;
+        let suggestions = suggest_in(&connection, "abondon", 5)?;
+        if suggestions.first().map(String::as_str) != Some("abandon") {
+            bail!("expected abandon to lead, got {suggestions:?}")
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn suggests_nothing_for_a_word_that_resembles_none() -> Result<()> {
+        let connection = fixture()?;
+        if !suggest_in(&connection, "zzzzqqqq", 5)?.is_empty() {
+            bail!("a word with no near neighbour must produce no suggestion")
+        }
+        // A word the dictionary has is not its own suggestion.
+        if suggest_in(&connection, "run", 5)?.contains(&"run".to_string()) {
+            bail!("an exact match must not be offered as a correction")
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn measures_distance_only_as_far_as_it_matters() -> Result<()> {
+        if edit_distance("abondon", "abandon", 2) != 1 {
+            bail!("one substitution is one edit")
+        }
+        if edit_distance("run", "running", 2) <= 2 {
+            bail!("a far word must report past the cap rather than a real distance")
+        }
+        if edit_distance("", "ab", 2) != 2 {
+            bail!("an empty side costs the other side's length")
+        }
+        // Short words have no near misses worth offering.
+        if suggestion_cap("cat") != 1 || suggestion_cap("abandon") != 2 {
+            bail!("the cap should grow with the word")
         }
         Ok(())
     }

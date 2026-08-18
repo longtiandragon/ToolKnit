@@ -38,7 +38,7 @@ try {
   const field = page.locator('input[aria-label="加入生词本"]')
   const placeholder = await field.getAttribute('placeholder')
   if (placeholder !== '输入单词，回车加入生词本') throw new Error(`unexpected placeholder without a dictionary: ${placeholder}`)
-  if (!(await page.locator('text=装上离线词库').count())) throw new Error('the offer to install a dictionary is missing')
+  if (!(await page.locator('text=还没有离线词库').count())) throw new Error('the offer to install a dictionary is missing')
   await page.screenshot({ path: join(OUT, `${theme}-01-word-box.png`) })
 
   // A word the dictionary cannot gloss still has to become an entry.
@@ -52,7 +52,7 @@ try {
 
   await page.goto(`${BASE}/settings?section=dictionary`, { waitUntil: 'networkidle' })
   await page.waitForTimeout(1200)
-  const enable = page.getByRole('button', { name: '启用词库' })
+  const enable = page.getByRole('button', { name: '启用词库', exact: true })
   if (!(await enable.count())) throw new Error('the settings card has no enable button')
   if (!(await enable.isDisabled())) throw new Error('the browser build must not offer to download a dictionary')
   if (!(await page.locator('text=ECDICT').count())) throw new Error('the licence and source line is missing')

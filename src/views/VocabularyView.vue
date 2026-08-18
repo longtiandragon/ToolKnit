@@ -9,7 +9,7 @@ import { vocabularyToMarkdown } from '@/lib/vocabulary-markdown'
 import { matchesVocabularySearch } from '@/lib/vocabulary-search'
 import { vocabularyKnowledgeAction } from '@/lib/knowledge-workflows'
 import { newId } from '@/lib/id'
-import { lookupDictionaryWords, readDictionaryStatus } from '@/lib/dictionary-native'
+import { lookupDictionaryWords, readDictionaryStatus, suggestDictionaryWords } from '@/lib/dictionary-native'
 import { blankVocabularyRows, dictionaryRecordToRows } from '@/lib/dictionary-entry'
 import { prepareVocabularyImport, vocabularyImportDuplicateIds } from '@/lib/vocabulary-import'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
@@ -289,6 +289,9 @@ function handleListScroll() {
 const newWord = ref('')
 const addingWord = ref(false)
 const dictionaryReady = ref(false)
+/** A word the dictionary does not have, held back until the reader says what
+ * they meant. Typing `abondon` should not quietly become an entry. */
+const pendingMiss = ref<{ word: string; suggestions: string[] } | null>(null)
 
 onMounted(async () => {
   try { dictionaryReady.value = (await readDictionaryStatus()).installed }
@@ -301,32 +304,70 @@ onMounted(async () => {
  * import pipeline does the storing — merging into an entry that already exists
  * without disturbing a single review date.
  */
-async function completeWord() {
-  const word = newWord.value.trim()
+/** Writes rows through the import pipeline, which merges into an entry that
+ * already exists without disturbing a single review date. */
+async function storeVocabularyRows(rows: ReturnType<typeof blankVocabularyRows>) {
+  // Desktop list rows omit their senses; read the merge targets in full first.
+  if (store.desktopVaultActive) {
+    const duplicates = vocabularyImportDuplicateIds(rows, store.vocabulary)
+    await Promise.all(duplicates.map((id) => store.loadVocabulary(id)))
+  }
+  const snapshot = prepareVocabularyImport(rows, store.vocabulary, 'merge', ['meaning'])
+  await store.importVocabularyEntries(snapshot.entries)
+  newWord.value = ''
+  pendingMiss.value = null
+  if (snapshot.entries[0]) await pick(snapshot.entries[0])
+  return snapshot
+}
+
+async function completeWord(input = newWord.value) {
+  const word = input.trim()
   if (!word || addingWord.value) return
   addingWord.value = true
   try {
     const records = dictionaryReady.value ? await lookupDictionaryWords([word]) : []
+    if (!records.length && dictionaryReady.value) {
+      // A missing word is usually a typo, and a vocabulary book full of
+      // misspellings is worse than one that asks. Nothing is written yet.
+      pendingMiss.value = { word, suggestions: await suggestDictionaryWords(word).catch(() => []) }
+      return
+    }
     const rows = records.length ? records.flatMap((record) => dictionaryRecordToRows(record)) : blankVocabularyRows(word)
     if (!rows.length) return
-    // Desktop list rows omit their senses; read the merge targets in full first.
-    if (store.desktopVaultActive) {
-      const duplicates = vocabularyImportDuplicateIds(rows, store.vocabulary)
-      await Promise.all(duplicates.map((id) => store.loadVocabulary(id)))
-    }
-    const snapshot = prepareVocabularyImport(rows, store.vocabulary, 'merge', ['meaning'])
-    await store.importVocabularyEntries(snapshot.entries)
-    newWord.value = ''
-    const entry = snapshot.entries[0]
-    if (entry) await pick(entry)
-    if (!records.length) ui.toast('已加入生词本', dictionaryReady.value ? `词库里没有「${word}」，先建了空白词条。` : '装上离线词库后可以自动补全释义。', 'info')
-    else if (snapshot.updatedCount) ui.toast(`已补全「${rows[0].lemma}」`, `合并了 ${snapshot.addedSenseCount} 个新义项，原有复习进度不变。`, 'success')
+    const snapshot = await storeVocabularyRows(rows)
+    if (!records.length) {
+      // Saying what is missing without offering the fix is how someone ends up
+      // typing a word, getting a blank entry, and concluding it is broken.
+      ui.toast('已加入生词本，但还没有词库', `「${word}」暂时只有词形。装上离线词库后，输入单词即可补全音标、词性和释义。`, 'info', '去启用词库', () => router.push('/settings?section=dictionary'))
+    } else if (snapshot.updatedCount) ui.toast(`已补全「${rows[0].lemma}」`, `合并了 ${snapshot.addedSenseCount} 个新义项，原有复习进度不变。`, 'success')
     else ui.toast(`已收录「${rows[0].lemma}」`, `${snapshot.addedSenseCount} 个义项 · ${snapshot.reviewCardCount} 张复习卡`, 'success')
   } catch (error) {
     ui.toast('没能加入生词本', error instanceof Error ? error.message : '本地资料库没有完成这次写入。', 'error')
   } finally {
     addingWord.value = false
   }
+}
+
+/** Keeps the spelling the reader insists on. Some words are simply newer than
+ * the dictionary. */
+async function addMissingWordAnyway() {
+  const word = pendingMiss.value?.word
+  if (!word || addingWord.value) return
+  addingWord.value = true
+  try {
+    await storeVocabularyRows(blankVocabularyRows(word))
+    ui.toast(`已按你写的收录「${word}」`, '词库里没有这个词，义项留空，随时可以自己补。', 'info')
+  } catch (error) {
+    ui.toast('没能加入生词本', error instanceof Error ? error.message : '本地资料库没有完成这次写入。', 'error')
+  } finally {
+    addingWord.value = false
+  }
+}
+
+function useSuggestedWord(word: string) {
+  newWord.value = word
+  pendingMiss.value = null
+  return completeWord(word)
 }
 
 function flashSaved() { saved.value = true; window.setTimeout(() => saved.value = false, 1500) }
@@ -557,18 +598,47 @@ onBeforeUnmount(() => {
             <input
               v-model="newWord"
               class="field h-8 min-w-0 flex-1 text-[12px]"
+              @input="pendingMiss = null"
               :disabled="addingWord"
               aria-label="加入生词本"
               :placeholder="dictionaryReady ? '输入单词，回车自动补全' : '输入单词，回车加入生词本'"
-              @keydown.enter.prevent="completeWord"
+              @keydown.enter.prevent="completeWord()"
             />
-            <button class="btn-primary btn-sm shrink-0" :disabled="!newWord.trim() || addingWord" @click="completeWord">
+            <button class="btn-primary btn-sm shrink-0" :disabled="!newWord.trim() || addingWord" @click="completeWord()">
               {{ addingWord ? '处理中' : '加入' }}
             </button>
           </span>
-          <small v-if="!dictionaryReady" class="text-[11px] leading-snug text-fg-3">
-            装上离线词库，这里只要一个单词就能补全音标、词性和释义。<RouterLink class="text-accent hover:underline" to="/settings?section=dictionary">去启用</RouterLink>
-          </small>
+          <!-- The dictionary has no such word. Offering the near misses is the
+               whole point: a typo caught here never becomes an entry. -->
+          <div v-if="pendingMiss" class="stack gap-1.5 p-2 rounded-sm border border-warn bg-warn-soft" role="status" aria-live="polite">
+            <p class="text-[11px] leading-snug text-fg-2">词库里没有「<b class="font-medium">{{ pendingMiss.word }}</b>」，还没有录入。</p>
+            <p v-if="pendingMiss.suggestions.length" class="text-[11px] text-fg-3">你是不是要找：</p>
+            <span v-if="pendingMiss.suggestions.length" class="row flex-wrap gap-1">
+              <button
+                v-for="suggestion in pendingMiss.suggestions"
+                :key="suggestion"
+                class="btn-default btn-sm h-6 px-2 text-[11px]"
+                :disabled="addingWord"
+                @click="useSuggestedWord(suggestion)"
+              >{{ suggestion }}</button>
+            </span>
+            <span class="row gap-2 pt-0.5">
+              <button class="btn-tool h-6 px-1.5 text-[11px]" :disabled="addingWord" @click="addMissingWordAnyway">仍然收录这个拼写</button>
+              <button class="btn-tool h-6 px-1.5 text-[11px]" :disabled="addingWord" @click="pendingMiss = null">取消</button>
+            </span>
+          </div>
+
+          <!-- Until a dictionary is installed this box only records the word
+               itself, which reads as "nothing happened" unless the missing
+               step is stated where the typing happens. -->
+          <RouterLink
+            v-if="!dictionaryReady"
+            class="row items-start gap-2 p-2 rounded-sm border border-accent-ring bg-accent-soft text-[11px] leading-snug text-fg-2 hover:border-accent"
+            to="/settings?section=dictionary"
+          >
+            <AppIcon name="download" :size="14" class="shrink-0 mt-px text-accent" />
+            <span class="min-w-0">还没有离线词库，现在只会记下单词本身。<b class="font-medium text-accent">点此启用</b>后，输入一个词就能补全音标、词性和释义。</span>
+          </RouterLink>
         </div>
 
         <div class="shrink-0 p-2 border-b border-line">

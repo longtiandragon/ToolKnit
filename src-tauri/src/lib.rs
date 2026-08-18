@@ -7394,6 +7394,7 @@ pub fn run() {
             dictionary::cancel_dictionary_install,
             dictionary::remove_dictionary,
             dictionary::lookup_dictionary_words,
+            dictionary::suggest_dictionary_words,
             file_health::scan_file_health,
             file_health::compare_directories,
             file_health::create_file_manifest,
