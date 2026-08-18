@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Component, Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
@@ -292,25 +292,9 @@ fn run_exiftool(root: &Path) -> Result<(Vec<u8>, bool), String> {
     let mut last_error = None;
     for candidate in ["exiftool.exe", "exiftool"] {
         let mut command = Command::new(candidate);
-        command.args([
-            "-json",
-            "-G1",
-            "-s",
-            "-a",
-            "-d",
-            "%Y-%m-%dT%H:%M:%S",
-            "-DateTimeOriginal",
-            "-CreateDate",
-            "-ModifyDate",
-            "-r",
-        ]);
-        for extension in PHOTO_EXTENSIONS {
-            command.arg("-ext").arg(extension);
-        }
+        command.args(["-@", "-"]);
         let child = match command
-            .arg("--")
-            .arg(root)
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -321,6 +305,27 @@ fn run_exiftool(root: &Path) -> Result<(Vec<u8>, bool), String> {
                 continue;
             }
         };
+        let mut child = child;
+        let root = exiftool_path(root);
+        let root = root
+            .to_str()
+            .ok_or("照片源目录包含无法传给 ExifTool 的字符。")?;
+        let mut input = String::from(
+            "-json\n-G1\n-s\n-a\n-charset\nfilename=utf8\n-d\n%Y-%m-%dT%H:%M:%S\n-DateTimeOriginal\n-CreateDate\n-ModifyDate\n-r\n",
+        );
+        for extension in PHOTO_EXTENSIONS {
+            input.push_str("-ext\n");
+            input.push_str(extension);
+            input.push('\n');
+        }
+        input.push_str(root);
+        input.push('\n');
+        child
+            .stdin
+            .take()
+            .ok_or("无法写入 ExifTool 参数。")?
+            .write_all(input.as_bytes())
+            .map_err(|error| format!("无法传递 ExifTool 扫描目录：{error}"))?;
         let (status, stdout, stderr, truncated) = wait_with_timeout(child)?;
         if truncated {
             return Err("ExifTool 扫描结果超过 16 MB 安全上限；请缩小源目录后重试。".into());
@@ -348,6 +353,23 @@ fn run_exiftool(root: &Path) -> Result<(Vec<u8>, bool), String> {
             ))
             .unwrap_or_default()
     ))
+}
+
+#[cfg(windows)]
+fn exiftool_path(path: &Path) -> PathBuf {
+    let value = path.to_string_lossy();
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = value.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    path.to_path_buf()
+}
+
+#[cfg(not(windows))]
+fn exiftool_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }
 
 fn parse_date(value: &Value) -> Option<NaiveDateTime> {
@@ -610,15 +632,63 @@ fn receipt_path(directory: &Path, receipt_id: &str) -> Result<PathBuf, String> {
     Ok(directory.join(format!("{receipt_id}.json")))
 }
 
-fn write_receipt(directory: &Path, receipt: &PhotoMoveReceipt) -> Result<(), String> {
-    fs::create_dir_all(directory).map_err(|error| format!("无法创建照片整理回滚目录：{error}"))?;
-    let path = receipt_path(directory, &receipt.receipt_id)?;
-    let staging = directory.join(format!(".{}.tmp", receipt.receipt_id));
+fn pending_receipt_path(directory: &Path, receipt_id: &str) -> Result<PathBuf, String> {
+    validate_id(receipt_id, "恢复日志")?;
+    Ok(directory.join(format!("{receipt_id}.pending")))
+}
+
+fn receipt_bytes(receipt: &PhotoMoveReceipt) -> Result<Vec<u8>, String> {
     let bytes =
         serde_json::to_vec_pretty(receipt).map_err(|error| format!("无法生成回滚凭据：{error}"))?;
     if bytes.len() as u64 > MAX_RECEIPT_BYTES {
         return Err("回滚凭据超过安全上限。".into());
     }
+    Ok(bytes)
+}
+
+fn write_pending_receipt(directory: &Path, receipt: &PhotoMoveReceipt) -> Result<(), String> {
+    fs::create_dir_all(directory).map_err(|error| format!("无法创建照片整理回滚目录：{error}"))?;
+    let pending = pending_receipt_path(directory, &receipt.receipt_id)?;
+    let final_path = receipt_path(directory, &receipt.receipt_id)?;
+    if pending.exists() || final_path.exists() {
+        return Err("相同的照片整理恢复日志已经存在，请重新扫描后再试。".into());
+    }
+    let staging = directory.join(format!(".{}.pending.tmp", receipt.receipt_id));
+    let bytes = receipt_bytes(receipt)?;
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&staging)
+        .map_err(|error| format!("无法创建照片整理恢复日志：{error}"))?;
+    if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(&staging);
+        return Err(format!("无法持久化照片整理恢复日志：{error}"));
+    }
+    drop(file);
+    fs::rename(&staging, &pending).map_err(|error| {
+        let _ = fs::remove_file(&staging);
+        format!("无法保存照片整理恢复日志：{error}")
+    })
+}
+
+fn promote_pending_receipt(directory: &Path, receipt_id: &str) -> Result<(), String> {
+    let pending = pending_receipt_path(directory, receipt_id)?;
+    let final_path = receipt_path(directory, receipt_id)?;
+    if final_path.exists() {
+        return Err("照片整理回滚凭据已经存在。".into());
+    }
+    fs::rename(&pending, &final_path)
+        .map_err(|error| format!("无法完成照片整理回滚凭据：{error}"))?;
+    prune_receipts(directory, RECEIPT_KEEP_COUNT);
+    Ok(())
+}
+
+fn write_receipt(directory: &Path, receipt: &PhotoMoveReceipt) -> Result<(), String> {
+    fs::create_dir_all(directory).map_err(|error| format!("无法创建照片整理回滚目录：{error}"))?;
+    let path = receipt_path(directory, &receipt.receipt_id)?;
+    let staging = directory.join(format!(".{}.tmp", receipt.receipt_id));
+    let bytes = receipt_bytes(receipt)?;
     fs::write(&staging, bytes).map_err(|error| format!("无法写入回滚凭据：{error}"))?;
     fs::rename(&staging, &path).map_err(|error| {
         let _ = fs::remove_file(&staging);
@@ -653,7 +723,11 @@ fn prune_receipts(directory: &Path, keep: usize) {
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let path = entry.path();
-            let valid = path.extension().and_then(|value| value.to_str()) == Some("json");
+            let valid = path.extension().and_then(|value| value.to_str()) == Some("json")
+                && path
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| Uuid::parse_str(value).is_ok());
             valid
                 .then(|| {
                     entry
@@ -670,6 +744,105 @@ fn prune_receipts(directory: &Path, keep: usize) {
     for (_, path) in receipts.into_iter().skip(keep) {
         let _ = fs::remove_file(path);
     }
+}
+
+fn read_pending_receipt(directory: &Path, receipt_id: &str) -> Result<PhotoMoveReceipt, String> {
+    let path = pending_receipt_path(directory, receipt_id)?;
+    let metadata = fs::metadata(&path).map_err(|_| "没有找到该照片整理恢复日志。".to_string())?;
+    if !metadata.is_file() || metadata.len() > MAX_RECEIPT_BYTES {
+        return Err("照片整理恢复日志无效或超过安全上限。".into());
+    }
+    let receipt: PhotoMoveReceipt = serde_json::from_slice(
+        &fs::read(path).map_err(|error| format!("无法读取照片整理恢复日志：{error}"))?,
+    )
+    .map_err(|error| format!("无法解析照片整理恢复日志：{error}"))?;
+    if receipt.version != 1 || receipt.receipt_id != receipt_id || receipt.moves.len() > MAX_PHOTOS
+    {
+        return Err("照片整理恢复日志版本或内容无效。".into());
+    }
+    Ok(receipt)
+}
+
+fn recover_pending_receipt(directory: &Path, receipt: &PhotoMoveReceipt) -> Result<bool, String> {
+    let source_root = canonical_directory(&receipt.source_root, "原源目录")?;
+    let destination_root = canonical_directory(&receipt.destination_root, "原目标目录")?;
+    ensure_same_storage_root(&source_root, &destination_root)?;
+    let mut resolved = true;
+    for item in receipt.moves.iter().rev() {
+        let source = source_root.join(safe_relative_path(&item.source_relative_path)?);
+        let target = destination_root.join(safe_relative_path(&item.target_relative_path)?);
+        match (source.exists(), target.exists()) {
+            (true, false) => {}
+            (false, true) => {
+                let link_metadata = fs::symlink_metadata(&target)
+                    .map_err(|_| "无法检查待恢复的照片。".to_string())?;
+                let metadata =
+                    fs::metadata(&target).map_err(|_| "无法读取待恢复的照片。".to_string())?;
+                if link_metadata.file_type().is_symlink()
+                    || !metadata.is_file()
+                    || metadata.len() != item.size
+                    || modified_ms(&metadata)? != item.modified_ms
+                {
+                    resolved = false;
+                    continue;
+                }
+                let source_parent = source.parent().unwrap_or(&source_root);
+                if fs::create_dir_all(source_parent).is_err() {
+                    resolved = false;
+                    continue;
+                }
+                let Ok(canonical_parent) = fs::canonicalize(source_parent) else {
+                    resolved = false;
+                    continue;
+                };
+                if !canonical_parent.starts_with(&source_root)
+                    || fs::rename(&target, &source).is_err()
+                {
+                    resolved = false;
+                }
+            }
+            (true, true) | (false, false) => resolved = false,
+        }
+    }
+    if resolved {
+        fs::remove_file(pending_receipt_path(directory, &receipt.receipt_id)?)
+            .map_err(|error| format!("照片已恢复，但无法删除恢复日志：{error}"))?;
+    }
+    Ok(resolved)
+}
+
+fn recover_pending_directory(directory: &Path) -> Result<(usize, usize), String> {
+    if !directory.exists() {
+        return Ok((0, 0));
+    }
+    let mut recovered = 0;
+    let mut unresolved = 0;
+    for entry in fs::read_dir(directory)
+        .map_err(|error| format!("无法读取照片整理恢复目录：{error}"))?
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("pending") {
+            continue;
+        }
+        let Some(receipt_id) = path.file_stem().and_then(|value| value.to_str()) else {
+            unresolved += 1;
+            continue;
+        };
+        let Ok(receipt) = read_pending_receipt(directory, receipt_id) else {
+            unresolved += 1;
+            continue;
+        };
+        match recover_pending_receipt(directory, &receipt) {
+            Ok(true) => recovered += 1,
+            Ok(false) | Err(_) => unresolved += 1,
+        }
+    }
+    Ok((recovered, unresolved))
+}
+
+pub fn recover_pending_runs(app: &AppHandle) -> Result<(usize, usize), String> {
+    recover_pending_directory(&receipt_directory(app)?)
 }
 
 fn rollback_moves(
@@ -754,6 +927,15 @@ fn execute_blocking(
     receipts: &Path,
 ) -> Result<PhotoOrganizationExecutionReport, String> {
     let (source_root, destination_root, moves) = validate_move_inputs(&request)?;
+    let receipt = PhotoMoveReceipt {
+        version: 1,
+        receipt_id: request.plan_id.clone(),
+        created_at: Utc::now().to_rfc3339(),
+        source_root: source_root.to_string_lossy().into_owned(),
+        destination_root: destination_root.to_string_lossy().into_owned(),
+        moves: moves.clone(),
+    };
+    write_pending_receipt(receipts, &receipt)?;
     let mut completed = Vec::new();
     let result = (|| -> Result<(), String> {
         for item in &moves {
@@ -778,6 +960,7 @@ fn execute_blocking(
     if let Err(error) = result {
         let remaining = rollback_moves(&source_root, &destination_root, &completed);
         if remaining.is_empty() {
+            let _ = fs::remove_file(pending_receipt_path(receipts, &request.plan_id)?);
             return Err(format!("{error} 已回滚本次已完成的移动。"));
         }
         let emergency = PhotoMoveReceipt {
@@ -789,6 +972,9 @@ fn execute_blocking(
             moves: remaining,
         };
         let saved = write_receipt(receipts, &emergency).is_ok();
+        if saved {
+            let _ = fs::remove_file(pending_receipt_path(receipts, &request.plan_id)?);
+        }
         return Err(format!(
             "{error} 部分文件无法自动回滚。{}",
             if saved {
@@ -798,20 +984,18 @@ fn execute_blocking(
             }
         ));
     }
-    let receipt = PhotoMoveReceipt {
-        version: 1,
-        receipt_id: request.plan_id,
-        created_at: Utc::now().to_rfc3339(),
-        source_root: source_root.to_string_lossy().into_owned(),
-        destination_root: destination_root.to_string_lossy().into_owned(),
-        moves: completed.clone(),
-    };
-    if let Err(error) = write_receipt(receipts, &receipt) {
+    if let Err(error) = promote_pending_receipt(receipts, &receipt.receipt_id) {
         let remaining = rollback_moves(&source_root, &destination_root, &completed);
+        if remaining.is_empty() {
+            let _ = fs::remove_file(pending_receipt_path(receipts, &receipt.receipt_id)?);
+        }
         return Err(if remaining.is_empty() {
             format!("{error} 已回滚全部移动。")
         } else {
-            format!("{error} 且有 {} 个文件无法自动回滚。", remaining.len())
+            format!(
+                "{error} 且有 {} 个文件无法自动回滚；已保留异常恢复日志。",
+                remaining.len()
+            )
         });
     }
     Ok(PhotoOrganizationExecutionReport {
@@ -974,6 +1158,19 @@ pub fn list_photo_organization_receipts(
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn exiftool_path_removes_windows_verbatim_prefix() {
+        assert_eq!(
+            exiftool_path(Path::new(r"\\?\F:\照片 目录")),
+            PathBuf::from(r"F:\照片 目录")
+        );
+        assert_eq!(
+            exiftool_path(Path::new(r"\\?\UNC\server\share\照片")),
+            PathBuf::from(r"\\server\share\照片")
+        );
+    }
+
     fn fixture_candidate(
         root: &Path,
         relative: &str,
@@ -1091,6 +1288,99 @@ mod tests {
         assert_eq!(undone.restored_count, 1);
         assert!(source.join("photo.jpg").exists());
         assert!(!destination.join("2024/08/photo.jpg").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pending_journal_restores_a_move_after_interruption() {
+        let root = std::env::temp_dir().join(format!("knitspace-photo-recover-{}", Uuid::now_v7()));
+        let source = root.join("source");
+        let destination = root.join("destination");
+        let receipts = root.join("receipts");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(destination.join("2024/08")).unwrap();
+        fs::write(source.join("photo.jpg"), "photo bytes").unwrap();
+        let metadata = fs::metadata(source.join("photo.jpg")).unwrap();
+        let receipt = PhotoMoveReceipt {
+            version: 1,
+            receipt_id: Uuid::now_v7().to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            source_root: fs::canonicalize(&source)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            destination_root: fs::canonicalize(&destination)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            moves: vec![PhotoMoveReceiptItem {
+                source_relative_path: "photo.jpg".into(),
+                target_relative_path: "2024/08/photo.jpg".into(),
+                size: metadata.len(),
+                modified_ms: modified_ms(&metadata).unwrap(),
+            }],
+        };
+        write_pending_receipt(&receipts, &receipt).unwrap();
+        fs::rename(
+            source.join("photo.jpg"),
+            destination.join("2024/08/photo.jpg"),
+        )
+        .unwrap();
+
+        assert_eq!(recover_pending_directory(&receipts).unwrap(), (1, 0));
+        assert!(source.join("photo.jpg").exists());
+        assert!(!destination.join("2024/08/photo.jpg").exists());
+        assert!(!pending_receipt_path(&receipts, &receipt.receipt_id)
+            .unwrap()
+            .exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ambiguous_pending_journal_never_overwrites_and_is_retained() {
+        let root =
+            std::env::temp_dir().join(format!("knitspace-photo-ambiguous-{}", Uuid::now_v7()));
+        let source = root.join("source");
+        let destination = root.join("destination");
+        let receipts = root.join("receipts");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(destination.join("2024/08")).unwrap();
+        fs::write(source.join("photo.jpg"), "original source").unwrap();
+        fs::write(destination.join("2024/08/photo.jpg"), "moved copy").unwrap();
+        let metadata = fs::metadata(destination.join("2024/08/photo.jpg")).unwrap();
+        let receipt = PhotoMoveReceipt {
+            version: 1,
+            receipt_id: Uuid::now_v7().to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            source_root: fs::canonicalize(&source)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            destination_root: fs::canonicalize(&destination)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            moves: vec![PhotoMoveReceiptItem {
+                source_relative_path: "photo.jpg".into(),
+                target_relative_path: "2024/08/photo.jpg".into(),
+                size: metadata.len(),
+                modified_ms: modified_ms(&metadata).unwrap(),
+            }],
+        };
+        write_pending_receipt(&receipts, &receipt).unwrap();
+
+        assert_eq!(recover_pending_directory(&receipts).unwrap(), (0, 1));
+        assert_eq!(
+            fs::read(source.join("photo.jpg")).unwrap(),
+            b"original source"
+        );
+        assert_eq!(
+            fs::read(destination.join("2024/08/photo.jpg")).unwrap(),
+            b"moved copy"
+        );
+        assert!(pending_receipt_path(&receipts, &receipt.receipt_id)
+            .unwrap()
+            .exists());
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -85,6 +85,12 @@ function statusTone(status: PhotoOrganizationStatus) {
   return status === 'move' ? 'text-accent bg-accent-soft' : status === 'same' ? 'text-success bg-success-soft' : status === 'conflict' ? 'text-danger bg-danger-soft' : 'text-warn bg-warn-soft'
 }
 
+function errorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string' && error.trim()) return error
+  return fallback
+}
+
 function invalidatePlan() {
   plan.value = undefined
   selectedPaths.value = new Set()
@@ -124,7 +130,7 @@ async function scan() {
       ? `扫描完成：${result.moveCount} 张可移动，${result.conflictCount} 张冲突，${result.skippedCount} 张缺少日期。`
       : '没有找到受支持的照片。'
   } catch (error) {
-    message.value = error instanceof Error ? error.message : '照片扫描失败。'
+    message.value = errorMessage(error, '照片扫描失败。')
     ui.toast('照片扫描失败', message.value, 'error')
   } finally {
     busy.value = false
@@ -181,7 +187,7 @@ async function executePlan() {
     invalidatePlan()
     await refreshReceipts()
   } catch (error) {
-    const detail = error instanceof Error ? error.message : '照片整理失败。'
+    const detail = errorMessage(error, '照片整理失败。')
     const cancelled = cancelling.value || detail.includes('取消')
     store.updateJob(job.id, { status: cancelled ? 'cancelled' : 'failed', progress: 100, errorCode: cancelled ? 'TOOL_CANCELLED' : 'TOOL_EXECUTION_FAILED', detail })
     message.value = detail
@@ -227,7 +233,7 @@ async function undoReceipt(receipt: PhotoOrganizationReceiptSummary) {
     ui.toast('已撤销照片整理', `${result.restoredCount} 张照片已恢复`, 'success')
     await refreshReceipts()
   } catch (error) {
-    const detail = error instanceof Error ? error.message : '撤销照片整理失败。'
+    const detail = errorMessage(error, '撤销照片整理失败。')
     store.updateJob(job.id, { status: 'failed', progress: 100, errorCode: 'TOOL_EXECUTION_FAILED', detail })
     message.value = detail
     ui.toast('无法撤销照片整理', detail, 'error')

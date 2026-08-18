@@ -6676,6 +6676,7 @@ pub fn run() {
         .manage(ExternalMarkdownWatchState::default())
         .manage(PendingOpenFiles(Mutex::new(launch_paths)))
         .setup(|app| {
+            let _ = photo_organizer::recover_pending_runs(app.handle());
             let handle = app.handle().clone();
             let state = app.state::<ClipboardMonitorState>().inner().clone();
             start_clipboard_monitor(handle, state);
