@@ -30,6 +30,18 @@ describe('HTML clipboard to Markdown', () => {
     expect(htmlToMarkdown('<p>A &amp; B * [draft] &#x4E2D;</p>').markdown).toBe('A & B \\* \\[draft\\] 中')
   })
 
+  it('coalesces adjacent or nested bold wrappers from publishing systems', () => {
+    const result = htmlToMarkdown('<table><tr><td><strong>偏振模色散（PMD</strong><strong>）</strong></td></tr><tr><td><b>长途WDM</b><b>传输</b></td></tr></table><p><strong><strong>完整术语</strong></strong></p>')
+    expect(result.markdown).toContain('**偏振模色散（PMD）**')
+    expect(result.markdown).toContain('**长途WDM传输**')
+    expect(result.markdown).toContain('**完整术语**')
+    expect(result.markdown).not.toContain('****')
+  })
+
+  it('does not merge bold runs separated by ordinary text or whitespace', () => {
+    expect(htmlToMarkdown('<p><strong>左侧</strong> / <strong>右侧</strong></p>').markdown).toBe('**左侧** / **右侧**')
+  })
+
   it('reports bounded conversion work', () => {
     const oversized = `<p>${'x'.repeat(RICH_CLIPBOARD_HTML_LIMIT + 20)}</p>`
     const result = htmlToMarkdown(oversized)

@@ -192,7 +192,17 @@ function renderNode(node: HtmlNode, depth = 0, listDepth = 0): string {
 }
 
 function cleanMarkdown(value: string) {
-  return value
+  let normalized = value
+    // Some publishing systems split one visual bold run across adjacent or
+    // nested <strong> elements. Rendering each wrapper independently creates
+    // invalid runs such as **PMD****）** or ****WDM****.
+    .replace(/\*{4}([^*\n]+)\*{4}/g, '**$1**')
+  for (let pass = 0; pass < 16; pass += 1) {
+    const merged = normalized.replace(/\*\*([^*\n]+)\*\*\*\*([^*\n]+)\*\*/g, '**$1$2**')
+    if (merged === normalized) break
+    normalized = merged
+  }
+  return normalized
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^\s+|\s+$/g, '')
