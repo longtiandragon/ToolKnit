@@ -646,15 +646,28 @@ async fn create_default_vault_backup(
 async fn restore_default_vault_backup(
     app: tauri::AppHandle,
     archive_path: String,
+    watcher_state: tauri::State<'_, ExternalMarkdownWatchState>,
 ) -> Result<String, String> {
+    // Windows will not rename a directory while notify holds handles to its
+    // notes/questions children. Release the managed watcher before the atomic
+    // Vault swap; a successful restore reloads the renderer and reinstalls it.
+    watcher_state
+        .watchers
+        .lock()
+        .map_err(|_| "Vault Markdown 监听器暂不可用".to_string())?
+        .remove("managed-vault");
     let path = default_vault_path(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         VaultService::open(path)
             .and_then(|service| service.restore_backup(archive_path))
             .map_err(|error| error.to_string())
     })
     .await
-    .map_err(|error| format!("完整恢复任务失败：{error}"))?
+    .map_err(|error| format!("完整恢复任务失败：{error}"))?;
+    if result.is_err() {
+        let _ = install_default_vault_markdown_watcher(&app, &watcher_state);
+    }
+    result
 }
 
 #[tauri::command]
@@ -4595,12 +4608,11 @@ fn unwatch_external_markdown_workspace(
 /// Watches only the two managed Markdown directories. SQLite, assets and
 /// temporary write siblings are intentionally outside this surface, keeping
 /// event traffic bounded even for a large Vault.
-#[tauri::command]
-fn watch_default_vault_markdown(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, ExternalMarkdownWatchState>,
+fn install_default_vault_markdown_watcher(
+    app: &tauri::AppHandle,
+    state: &ExternalMarkdownWatchState,
 ) -> Result<(), String> {
-    let root = default_vault_path(&app)?;
+    let root = default_vault_path(app)?;
     VaultService::open(root.clone()).map_err(|error| error.to_string())?;
     let root = fs::canonicalize(root).map_err(|error| format!("无法定位 Vault：{error}"))?;
     let notes = root.join("notes");
@@ -4650,6 +4662,14 @@ fn watch_default_vault_markdown(
         .map_err(|error| format!("无法监听 Vault 题目目录：{error}"))?;
     watchers.insert("managed-vault".into(), watcher);
     Ok(())
+}
+
+#[tauri::command]
+fn watch_default_vault_markdown(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ExternalMarkdownWatchState>,
+) -> Result<(), String> {
+    install_default_vault_markdown_watcher(&app, &state)
 }
 
 #[tauri::command]
