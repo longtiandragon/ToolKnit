@@ -1,7 +1,7 @@
-import { calculateCodeLayout } from '@/lib/code-layout'
+import { calculateCodeLayout, type CodeLayoutOptions } from '@/lib/code-layout'
 
-type LayoutRequest = { id: number; source: string; linesPerPage?: number }
+type LayoutRequest = { id: number; source: string; options?: CodeLayoutOptions }
 
 self.onmessage = ({ data }: MessageEvent<LayoutRequest>) => {
-  self.postMessage({ id: data.id, layout: calculateCodeLayout(data.source, data.linesPerPage ?? 0) })
+  self.postMessage({ id: data.id, layout: calculateCodeLayout(data.source, data.options ?? {}) })
 }

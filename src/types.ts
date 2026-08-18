@@ -282,6 +282,10 @@ export interface WorkbenchSettings {
   codeImageAuthor: string
   /** Lines on one code-image page. 0 keeps the automatic page height. */
   codeImageLinesPerPage: number
+  /** Code size in the exported image. 0 keeps the automatic size. */
+  codeImageFontSize: number
+  /** Card width in the exported image; one of the offered presets. */
+  codeImageCardWidth: number
   /** Absolute path to a user-owned JSON manifest. Core never ships one. */
   privateToolsManifestPath: string
   /** User-selected whisper.cpp-compatible CLI. Knitspace never bundles or auto-runs it. */

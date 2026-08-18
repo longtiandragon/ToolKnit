@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { toBlob } from 'html-to-image'
-import { calculateCodeLayout, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages, joinCodePages, MAX_CODE_LINES_PER_PAGE, MIN_CODE_LINES_PER_PAGE, normalizeCodeLinesPerPage, type CodeLayout } from '@/lib/code-layout'
+import { calculateCodeLayout, CODE_CARD_WIDTHS, codeCharactersPerLine, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages, joinCodePages, MAX_CODE_FONT_SIZE, MAX_CODE_LINES_PER_PAGE, MIN_CODE_FONT_SIZE, MIN_CODE_LINES_PER_PAGE, normalizeCodeCardWidth, normalizeCodeFontSize, normalizeCodeLinesPerPage, type CodeLayout } from '@/lib/code-layout'
 import { getBoundedCacheValue, setBoundedCacheValue } from '@/lib/bounded-lru-cache'
 import { codeLanguages, detectCodeLanguage, highlightCode, type CodeLanguage } from '@/lib/code-highlight'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
@@ -95,13 +95,26 @@ const author = ref(store.settings.codeImageAuthor ?? '')
 const manualLinesPerPage = ref(normalizeCodeLinesPerPage(store.settings.codeImageLinesPerPage))
 // A number input hands back a number, and an emptied one hands back ''.
 const linesPerPageDraft = ref<string | number>(manualLinesPerPage.value || '')
+const manualFontSize = ref(normalizeCodeFontSize(store.settings.codeImageFontSize))
+const fontSizeDraft = ref<string | number>(manualFontSize.value || '')
+const cardWidth = ref(normalizeCodeCardWidth(store.settings.codeImageCardWidth))
+const cardWidthOptions = CODE_CARD_WIDTHS.map((width) => ({ id: String(width), label: width === 720 ? '标准' : width === 900 ? '宽版' : '高清' }))
+
+/** Every layout request carries the same three knobs, and forgetting one is
+ * how the preview and the export drift apart. */
+function layoutOptions() {
+  return { linesPerPage: manualLinesPerPage.value, fontSize: manualFontSize.value, cardWidth: cardWidth.value }
+}
 const detectedLanguage = computed(() => detectCodeLanguage(sourceName.value, renderedCode.value))
 const language = computed<CodeLanguage>(() => languageOverride.value === 'auto' ? detectedLanguage.value : languageOverride.value)
-const codeLayout = shallowRef<CodeLayout>(calculateCodeLayout(renderedCode.value, manualLinesPerPage.value))
+const codeLayout = shallowRef<CodeLayout>(calculateCodeLayout(renderedCode.value, layoutOptions()))
 const fontSize = computed(() => codeLayout.value.fontSize)
 const linesPerPage = computed(() => codeLayout.value.linesPerPage)
 const automaticLinesPerPage = computed(() => codeLayout.value.automaticLinesPerPage)
-const wrapLongLines = computed(() => codeLayout.value.longestLine > 92)
+const automaticFontSize = computed(() => codeLayout.value.automaticFontSize)
+// A wider card fits more characters, so the wrap decision is measured
+// rather than a constant tuned for the 720px card.
+const wrapLongLines = computed(() => codeLayout.value.longestLine > codeCharactersPerLine(cardWidth.value, fontSize.value, showLineNumbers.value))
 const byline = computed(() => `BY ${String(author.value ?? '').trim() || 'author'}`)
 const pages = computed(() => codeLayout.value.pages)
 const renderedLineCount = computed(() => codeLayout.value.lineCount)
@@ -197,11 +210,11 @@ function requestCodeLayout(source: string) {
   const requestId = ++codeLayoutRevision
   layoutPending.value = true
   if (!codeLayoutWorker) {
-    codeLayout.value = calculateCodeLayout(source, manualLinesPerPage.value)
+    codeLayout.value = calculateCodeLayout(source, layoutOptions())
     layoutPending.value = false
     return
   }
-  codeLayoutWorker.postMessage({ id: requestId, source, linesPerPage: manualLinesPerPage.value })
+  codeLayoutWorker.postMessage({ id: requestId, source, options: layoutOptions() })
 }
 
 function startCodeLayoutWorker() {
@@ -216,7 +229,7 @@ function startCodeLayoutWorker() {
     worker.onerror = () => {
       worker.terminate()
       if (codeLayoutWorker === worker) codeLayoutWorker = undefined
-      codeLayout.value = calculateCodeLayout(renderedCode.value, manualLinesPerPage.value)
+      codeLayout.value = calculateCodeLayout(renderedCode.value, layoutOptions())
       layoutPending.value = false
     }
     codeLayoutWorker = worker
@@ -224,12 +237,12 @@ function startCodeLayoutWorker() {
   } catch {
     // Older embedded WebViews can still use the same pure calculation without
     // losing correctness; modern desktop builds stay off the main thread.
-    codeLayout.value = calculateCodeLayout(renderedCode.value, manualLinesPerPage.value)
+    codeLayout.value = calculateCodeLayout(renderedCode.value, layoutOptions())
     layoutPending.value = false
   }
 }
 
-watch([renderedCode, languageOverride, theme, showLineNumbers, author, fontSize, linesPerPage], invalidatePageCache, { flush: 'post' })
+watch([renderedCode, languageOverride, theme, showLineNumbers, author, fontSize, linesPerPage, cardWidth], invalidatePageCache, { flush: 'post' })
 watch(renderedCode, requestCodeLayout, { immediate: true })
 watch(manualLinesPerPage, (value) => {
   store.updateSettings({ codeImageLinesPerPage: value })
@@ -238,6 +251,27 @@ watch(manualLinesPerPage, (value) => {
   // starts over rather than leaving a stale selection to be exported.
   activePage.value = 0
   selectedPages.value = new Set([0])
+})
+
+watch(manualFontSize, (value) => {
+  store.updateSettings({ codeImageFontSize: value })
+  requestCodeLayout(renderedCode.value)
+})
+
+watch(cardWidth, (value) => {
+  store.updateSettings({ codeImageCardWidth: value })
+  requestCodeLayout(renderedCode.value)
+})
+
+watch(() => store.settings.codeImageFontSize, (value) => {
+  const normalized = normalizeCodeFontSize(value)
+  if (normalized === manualFontSize.value) return
+  manualFontSize.value = normalized
+  fontSizeDraft.value = normalized || ''
+})
+
+watch(() => store.settings.codeImageCardWidth, (value) => {
+  cardWidth.value = normalizeCodeCardWidth(value)
 })
 
 watch(() => store.settings.codeImageLinesPerPage, (value) => {
@@ -263,6 +297,25 @@ function commitLinesPerPage() {
   }
   linesPerPageDraft.value = next || ''
   manualLinesPerPage.value = next
+}
+
+function commitFontSize() {
+  const raw = String(fontSizeDraft.value ?? '').trim()
+  const typed = raw === '' ? 0 : Number(raw)
+  const next = raw === '' ? 0 : normalizeCodeFontSize(typed)
+  if (raw !== '' && !next) ui.toast('字号已恢复自动', `请输入 ${MIN_CODE_FONT_SIZE}–${MAX_CODE_FONT_SIZE} 之间的字号。`, 'info')
+  else if (next && Number.isFinite(typed) && Math.round(typed) !== next) {
+    ui.toast(`字号已调整为 ${next}px`, next === MAX_CODE_FONT_SIZE
+      ? `最大 ${MAX_CODE_FONT_SIZE}px，再大一行代码就放不进卡片了。`
+      : `最小 ${MIN_CODE_FONT_SIZE}px，再小就看不清了。`, 'info')
+  }
+  fontSizeDraft.value = next || ''
+  manualFontSize.value = next
+}
+
+function useAutomaticFontSize() {
+  fontSizeDraft.value = ''
+  manualFontSize.value = 0
 }
 
 function useAutomaticLinesPerPage() {
@@ -478,11 +531,11 @@ async function writeClipboardSafely(action: () => Promise<void>) {
 }
 
 function plannedLongCaptureGroups(indexes: number[]) {
-  const outputWidth = 720 * LONG_IMAGE_PIXEL_RATIO
+  const outputWidth = cardWidth.value * LONG_IMAGE_PIXEL_RATIO
   const maximumHeight = Math.min(LONG_IMAGE_MAX_HEIGHT, Math.floor(LONG_IMAGE_MAX_PIXELS / Math.max(1, outputWidth))) / LONG_IMAGE_PIXEL_RATIO
   return groupCodeCapturePages(indexes.map((index) => ({
     index,
-    bodyHeight: estimateCodeCapturePageBodyHeight(pages.value[index] ?? '', fontSize.value, showLineNumbers.value, wrapLongLines.value)
+    bodyHeight: estimateCodeCapturePageBodyHeight(pages.value[index] ?? '', fontSize.value, showLineNumbers.value, wrapLongLines.value, cardWidth.value)
   })), maximumHeight)
 }
 
@@ -964,6 +1017,35 @@ async function exportPdf() {
           <input v-model="showLineNumbers" type="checkbox" class="accent-[var(--accent-solid)]" />显示行号
         </label>
 
+        <label class="row gap-2 shrink-0" :title="`导出图里的代码字号；留空按最长行自动决定，当前自动值 ${automaticFontSize}px`">
+          <span class="text-[11px] font-semibold text-fg-3">字号</span>
+          <input
+            v-model="fontSizeDraft"
+            type="number"
+            inputmode="numeric"
+            :min="MIN_CODE_FONT_SIZE"
+            :max="MAX_CODE_FONT_SIZE"
+            class="field h-7 w-20 px-2 text-[12px]"
+            :placeholder="`自动 ${automaticFontSize}`"
+            aria-label="代码字号；留空按内容自动决定"
+            @change="commitFontSize"
+            @blur="commitFontSize"
+            @keydown.enter.prevent="commitFontSize"
+          />
+          <button v-if="manualFontSize" type="button" class="btn-tool" @click="useAutomaticFontSize">恢复自动</button>
+        </label>
+
+        <div class="row gap-2 shrink-0">
+          <span class="text-[11px] font-semibold text-fg-3">纸张</span>
+          <SegmentedControl
+            :options="cardWidthOptions"
+            :model-value="String(cardWidth)"
+            label="纸张宽度"
+            size="compact"
+            @update:model-value="cardWidth = Number($event)"
+          />
+        </div>
+
         <label class="row gap-2 shrink-0" :title="`一张图放多少行代码；留空按内容自动决定，当前自动值 ${automaticLinesPerPage} 行`">
           <span class="text-[11px] font-semibold text-fg-3">每页行数</span>
           <input
@@ -991,7 +1073,7 @@ async function exportPdf() {
              picked is what stops you hunting for a font-size slider. -->
         <span class="row gap-1.5 ml-auto shrink-0 text-[11px] text-fg-3" :title="manualLinesPerPage ? `字号由内容自动计算；每页行数已手动设为 ${manualLinesPerPage}，自动值是 ${automaticLinesPerPage}` : '字号与分页由内容自动计算'">
           <AppIcon name="rule" :size="13" />
-          {{ manualLinesPerPage ? '手动分页' : '自动排版' }} · {{ fontSize }}px · {{ linesPerPage }} 行/张{{ wrapLongLines ? ' · 长行折行' : '' }}
+          {{ manualLinesPerPage || manualFontSize ? '手动排版' : '自动排版' }} · {{ cardWidth }}px 宽 · {{ fontSize }}px · {{ linesPerPage }} 行/张{{ wrapLongLines ? ' · 长行折行' : '' }}
         </span>
       </div>
 
@@ -1055,6 +1137,7 @@ async function exportPdf() {
               :watermark="byline"
               :theme="theme"
               :wrap-long-lines="wrapLongLines"
+              :card-width="cardWidth"
               @contextmenu.prevent.stop="openPreviewMenu($event)"
               @keydown="handlePreviewTriggerKeydown($event)"
             />
@@ -1170,10 +1253,10 @@ async function exportPdf() {
     </Teleport>
 
     <div ref="captureHost" class="codesnap-capture-host" aria-hidden="true">
-      <div class="codesnap-export-frame" data-export-frame><CodeSnapCard :code-text="pages[capturePageIndex] ?? ''" :code-html="highlightedPage(capturePageIndex)" :line-count="pageLineCount(capturePageIndex)" :start-line="capturePageIndex * linesPerPage + 1" :page-number="capturePageIndex + 1" :total-pages="pages.length" :font-size="fontSize" :show-line-numbers="showLineNumbers" :watermark="byline" :theme="theme" :wrap-long-lines="wrapLongLines"/></div>
+      <div class="codesnap-export-frame" data-export-frame :style="{ '--snap-card-width': `${cardWidth}px` }"><CodeSnapCard :code-text="pages[capturePageIndex] ?? ''" :code-html="highlightedPage(capturePageIndex)" :line-count="pageLineCount(capturePageIndex)" :start-line="capturePageIndex * linesPerPage + 1" :page-number="capturePageIndex + 1" :total-pages="pages.length" :font-size="fontSize" :show-line-numbers="showLineNumbers" :watermark="byline" :theme="theme" :wrap-long-lines="wrapLongLines" :card-width="cardWidth"/></div>
     </div>
     <div ref="longCaptureHost" class="codesnap-capture-host" aria-hidden="true">
-      <div v-for="(pageIndex, position) in longCaptureIndexes" :key="pageIndex" class="codesnap-export-frame codesnap-long-export-frame" data-long-export-frame><CodeSnapCard :code-text="pages[pageIndex] ?? ''" :code-html="highlightedPage(pageIndex)" :line-count="pageLineCount(pageIndex)" :start-line="pageIndex * linesPerPage + 1" :page-number="1" :total-pages="1" :font-size="fontSize" :show-line-numbers="showLineNumbers" :watermark="byline" :theme="theme" :wrap-long-lines="wrapLongLines" :continuous-position="longCaptureIndexes.length === 1 ? 'single' : position === 0 ? 'start' : position === longCaptureIndexes.length - 1 ? 'end' : 'middle'"/></div>
+      <div v-for="(pageIndex, position) in longCaptureIndexes" :key="pageIndex" class="codesnap-export-frame codesnap-long-export-frame" data-long-export-frame :style="{ '--snap-card-width': `${cardWidth}px` }"><CodeSnapCard :code-text="pages[pageIndex] ?? ''" :code-html="highlightedPage(pageIndex)" :line-count="pageLineCount(pageIndex)" :start-line="pageIndex * linesPerPage + 1" :page-number="1" :total-pages="1" :font-size="fontSize" :show-line-numbers="showLineNumbers" :watermark="byline" :theme="theme" :wrap-long-lines="wrapLongLines" :card-width="cardWidth" :continuous-position="longCaptureIndexes.length === 1 ? 'single' : position === 0 ? 'start' : position === longCaptureIndexes.length - 1 ? 'end' : 'middle'"/></div>
     </div>
   </div>
 </template>

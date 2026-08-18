@@ -11,8 +11,9 @@ const props = withDefaults(defineProps<{
   watermark: string
   theme: 'midnight' | 'forest' | 'paper'
   wrapLongLines?: boolean
+  cardWidth?: number
   continuousPosition?: 'single' | 'start' | 'middle' | 'end'
-}>(), { codeText: '', continuousPosition: 'single' })
+}>(), { codeText: '', cardWidth: 720, continuousPosition: 'single' })
 
 function copyExactCode(event: ClipboardEvent) {
   if (!event.clipboardData || !props.codeText) return
@@ -22,7 +23,7 @@ function copyExactCode(event: ClipboardEvent) {
 </script>
 
 <template>
-  <article class="codesnap-card" :class="[`codesnap-${theme}`, `codesnap-continuous-${continuousPosition}`, { 'codesnap-wrap-lines': wrapLongLines }]" @copy="copyExactCode">
+  <article class="codesnap-card" :class="[`codesnap-${theme}`, `codesnap-continuous-${continuousPosition}`, { 'codesnap-wrap-lines': wrapLongLines }]" :style="{ '--snap-card-width': `${cardWidth}px` }" @copy="copyExactCode">
     <header v-if="continuousPosition === 'single' || continuousPosition === 'start'" class="codesnap-titlebar">
       <span class="mac-controls" aria-hidden="true"><i></i><i></i><i></i></span>
     </header>

@@ -162,7 +162,7 @@ function validPipeline(value: Record<string, unknown>) {
 }
 
 export const defaultWorkbenchSettings: WorkbenchSettings = {
-  outputDirectory: '', markdownWorkspaceDirectory: '', codeImageAuthor: 'author', codeImageLinesPerPage: 0, privateToolsManifestPath: '',
+  outputDirectory: '', markdownWorkspaceDirectory: '', codeImageAuthor: 'author', codeImageLinesPerPage: 0, codeImageFontSize: 0, codeImageCardWidth: 720, privateToolsManifestPath: '',
   transcriptionExecutablePath: '', transcriptionModelPath: '', transcriptionLanguage: 'auto', clipboardEnabled: false, clipboardPaused: false,
   clipboardLimit: 100, clipboardRetentionDays: 30, closeBehavior: 'ask',
   notificationsEnabled: true, autoCheckUpdates: true, documentAutoSave: true,
@@ -221,6 +221,12 @@ function normalizeSettings(value: unknown): WorkbenchSettings {
     codeImageLinesPerPage: typeof input.codeImageLinesPerPage === 'number' && Number.isFinite(input.codeImageLinesPerPage) && input.codeImageLinesPerPage > 0
       ? Math.min(200, Math.max(5, Math.round(input.codeImageLinesPerPage)))
       : defaultWorkbenchSettings.codeImageLinesPerPage,
+    codeImageFontSize: typeof input.codeImageFontSize === 'number' && Number.isFinite(input.codeImageFontSize) && input.codeImageFontSize > 0
+      ? Math.min(32, Math.max(10, Math.round(input.codeImageFontSize)))
+      : defaultWorkbenchSettings.codeImageFontSize,
+    codeImageCardWidth: [720, 900, 1080].includes(input.codeImageCardWidth as number)
+      ? input.codeImageCardWidth as number
+      : defaultWorkbenchSettings.codeImageCardWidth,
     privateToolsManifestPath: typeof input.privateToolsManifestPath === 'string' ? input.privateToolsManifestPath : defaultWorkbenchSettings.privateToolsManifestPath,
     transcriptionExecutablePath: typeof input.transcriptionExecutablePath === 'string' ? input.transcriptionExecutablePath : defaultWorkbenchSettings.transcriptionExecutablePath,
     transcriptionModelPath: typeof input.transcriptionModelPath === 'string' ? input.transcriptionModelPath : defaultWorkbenchSettings.transcriptionModelPath,

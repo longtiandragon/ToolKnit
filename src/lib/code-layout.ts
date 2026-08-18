@@ -1,5 +1,20 @@
+export interface CodeLayoutOptions {
+  /** Manual page height in lines. 0 keeps the automatic one. */
+  linesPerPage?: number
+  /** Manual code size in pixels. 0 keeps the automatic one. */
+  fontSize?: number
+  /** Card width in pixels. Anything but a known preset falls back to 720. */
+  cardWidth?: number
+}
+
 export interface CodeLayout {
   fontSize: number
+  /** What the automatic rule would pick, so the toolbar can name the default
+   * even while a manual size is in force. */
+  automaticFontSize: number
+  /** The width the pages were laid out for; the card and the capture frame
+   * both follow it. */
+  cardWidth: number
   lineCount: number
   linesPerPage: number
   /** What the automatic rule would pick, so the toolbar can name the default
@@ -33,13 +48,34 @@ export function joinCodePages(pages: readonly string[], indexes: readonly number
 export const MIN_CODE_LINES_PER_PAGE = 5
 export const MAX_CODE_LINES_PER_PAGE = 200
 
+/** Below 10px the export is unreadable at a glance, which is the whole point
+ * of a code image; above 32px an ordinary line no longer fits the widest card. */
+export const MIN_CODE_FONT_SIZE = 10
+export const MAX_CODE_FONT_SIZE = 32
+
+/** Card widths, not paper sizes: a standard card, a wide one for long lines,
+ * and a high-resolution one for posts that get downscaled. */
+export const CODE_CARD_WIDTHS = [720, 900, 1080] as const
+export const DEFAULT_CODE_CARD_WIDTH = 720
+
 /** Returns a usable manual page height, or 0 for "let the layout decide". */
 export function normalizeCodeLinesPerPage(value: unknown) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0
   return Math.min(MAX_CODE_LINES_PER_PAGE, Math.max(MIN_CODE_LINES_PER_PAGE, Math.round(value)))
 }
 
-const CODE_CAPTURE_WIDTH = 720
+/** Returns a usable manual code size, or 0 for "let the layout decide". */
+export function normalizeCodeFontSize(value: unknown) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0
+  return Math.min(MAX_CODE_FONT_SIZE, Math.max(MIN_CODE_FONT_SIZE, Math.round(value)))
+}
+
+/** Only the presets are offered, so a restored or hand-edited width cannot put
+ * the capture frame at a size the stylesheet never sized. */
+export function normalizeCodeCardWidth(value: unknown): number {
+  return CODE_CARD_WIDTHS.includes(value as typeof CODE_CARD_WIDTHS[number]) ? value as number : DEFAULT_CODE_CARD_WIDTH
+}
+
 const CODE_CAPTURE_HORIZONTAL_PADDING = 60
 const CODE_CAPTURE_LINE_NUMBER_WIDTH = 59
 const CODE_CAPTURE_VERTICAL_PADDING = 58
@@ -58,9 +94,16 @@ function unicodeCodePointLength(value: string) {
  * from briefly creating hundreds of hidden DOM nodes just to learn it is too
  * tall for a single PNG.
  */
-export function estimateCodeCapturePageBodyHeight(source: string, fontSize: number, showLineNumbers: boolean, wrapLongLines: boolean) {
-  const usableWidth = CODE_CAPTURE_WIDTH - CODE_CAPTURE_HORIZONTAL_PADDING - (showLineNumbers ? CODE_CAPTURE_LINE_NUMBER_WIDTH : 0)
-  const charactersPerVisualLine = Math.max(12, Math.floor(usableWidth / Math.max(1, fontSize * .62)))
+/** How many characters fit on one visual line of the card. Both the height
+ * estimate and the wrap decision have to agree on this, or a wider card wraps
+ * text the estimate thought was flat. */
+export function codeCharactersPerLine(cardWidth: number, fontSize: number, showLineNumbers: boolean) {
+  const usableWidth = normalizeCodeCardWidth(cardWidth) - CODE_CAPTURE_HORIZONTAL_PADDING - (showLineNumbers ? CODE_CAPTURE_LINE_NUMBER_WIDTH : 0)
+  return Math.max(12, Math.floor(usableWidth / Math.max(1, fontSize * .62)))
+}
+
+export function estimateCodeCapturePageBodyHeight(source: string, fontSize: number, showLineNumbers: boolean, wrapLongLines: boolean, cardWidth = DEFAULT_CODE_CARD_WIDTH) {
+  const charactersPerVisualLine = codeCharactersPerLine(cardWidth, fontSize, showLineNumbers)
   const visualLines = source.split('\n').reduce((total, line) => {
     const lineLength = unicodeCodePointLength(line)
     return total + (wrapLongLines ? Math.max(1, Math.ceil(lineLength / charactersPerVisualLine)) : 1)
@@ -103,7 +146,8 @@ export function codeLongImageFileNames(total: number) {
  * calculation isolated so large snippets can run in a Worker instead of
  * repeatedly scanning every line in Vue's render path.
  */
-export function calculateCodeLayout(code: string, linesPerPageOverride = 0): CodeLayout {
+export function calculateCodeLayout(code: string, options: CodeLayoutOptions = {}): CodeLayout {
+  const cardWidth = normalizeCodeCardWidth(options.cardWidth)
   const lines = code.split('\n')
   let longestLine = 1
   for (const line of lines) {
@@ -113,9 +157,12 @@ export function calculateCodeLayout(code: string, linesPerPageOverride = 0): Cod
     longestLine = Math.max(longestLine, unicodeCodePointLength(line))
   }
 
-  const fontSize = Math.max(14, Math.min(20, Math.floor(700 / (longestLine * .58))))
+  // The column the text has to fit grows with the card, so the size the longest
+  // line can afford grows with it too.
+  const automaticFontSize = Math.max(14, Math.min(20, Math.floor(cardWidth * 700 / DEFAULT_CODE_CARD_WIDTH / (longestLine * .58))))
+  const fontSize = normalizeCodeFontSize(options.fontSize) || automaticFontSize
   const automaticLinesPerPage = Math.max(20, Math.min(38, Math.round(38 - Math.max(0, longestLine - 76) / 10)))
-  const linesPerPage = normalizeCodeLinesPerPage(linesPerPageOverride) || automaticLinesPerPage
+  const linesPerPage = normalizeCodeLinesPerPage(options.linesPerPage) || automaticLinesPerPage
   const pages: string[] = []
   const pageLineCounts: number[] = []
 
@@ -127,6 +174,8 @@ export function calculateCodeLayout(code: string, linesPerPageOverride = 0): Cod
 
   return {
     fontSize,
+    automaticFontSize,
+    cardWidth,
     lineCount: code ? lines.length : 0,
     linesPerPage,
     automaticLinesPerPage,

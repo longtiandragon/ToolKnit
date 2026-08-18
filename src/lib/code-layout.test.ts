@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateCodeLayout, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages, joinCodePages, MAX_CODE_LINES_PER_PAGE, MIN_CODE_LINES_PER_PAGE, normalizeCodeLinesPerPage } from './code-layout'
+import { calculateCodeLayout, codeCharactersPerLine, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages, joinCodePages, MAX_CODE_FONT_SIZE, MAX_CODE_LINES_PER_PAGE, MIN_CODE_FONT_SIZE, MIN_CODE_LINES_PER_PAGE, normalizeCodeCardWidth, normalizeCodeFontSize, normalizeCodeLinesPerPage } from './code-layout'
 
 describe('calculateCodeLayout', () => {
   it('keeps an empty snippet exportable as one blank page', () => {
@@ -23,7 +23,7 @@ describe('calculateCodeLayout', () => {
 
   it('paginates by a manual page height and still reports the automatic one', () => {
     const source = Array.from({ length: 100 }, (_, index) => `const row${index} = ${index}`).join('\n')
-    const layout = calculateCodeLayout(source, 10)
+    const layout = calculateCodeLayout(source, { linesPerPage: 10 })
     expect(layout.linesPerPage).toBe(10)
     expect(layout.automaticLinesPerPage).toBe(38)
     expect(layout.pages).toHaveLength(10)
@@ -34,9 +34,9 @@ describe('calculateCodeLayout', () => {
   it('falls back to the automatic page height for an absent or unusable manual one', () => {
     const source = Array.from({ length: 40 }, (_, index) => `line ${index}`).join('\n')
     const automatic = calculateCodeLayout(source).linesPerPage
-    expect(calculateCodeLayout(source, 0).linesPerPage).toBe(automatic)
-    expect(calculateCodeLayout(source, Number.NaN).linesPerPage).toBe(automatic)
-    expect(calculateCodeLayout(source, -12).linesPerPage).toBe(automatic)
+    expect(calculateCodeLayout(source, { linesPerPage: 0 }).linesPerPage).toBe(automatic)
+    expect(calculateCodeLayout(source, { linesPerPage: Number.NaN }).linesPerPage).toBe(automatic)
+    expect(calculateCodeLayout(source, { linesPerPage: -12 }).linesPerPage).toBe(automatic)
   })
 
   it('clamps a manual page height instead of making thousands of tiny pages', () => {
@@ -45,7 +45,7 @@ describe('calculateCodeLayout', () => {
     expect(normalizeCodeLinesPerPage(24.6)).toBe(25)
     expect(normalizeCodeLinesPerPage(0)).toBe(0)
     expect(normalizeCodeLinesPerPage('30')).toBe(0)
-    expect(calculateCodeLayout('a\nb\nc', 1).linesPerPage).toBe(MIN_CODE_LINES_PER_PAGE)
+    expect(calculateCodeLayout('a\nb\nc', { linesPerPage: 1 }).linesPerPage).toBe(MIN_CODE_LINES_PER_PAGE)
   })
 
   it('lays out a large snippet without losing lines or allocating per-line code-point arrays', () => {
@@ -54,6 +54,38 @@ describe('calculateCodeLayout', () => {
     expect(layout.lineCount).toBe(10_000)
     expect(layout.pageLineCounts.reduce((total, count) => total + count, 0)).toBe(10_000)
     expect(layout.pages.join('\n')).toBe(source)
+  })
+
+  it('takes a manual code size and still reports the automatic one', () => {
+    const layout = calculateCodeLayout('const answer = 42', { fontSize: 28 })
+    expect(layout.fontSize).toBe(28)
+    expect(layout.automaticFontSize).toBe(20)
+    expect(normalizeCodeFontSize(4)).toBe(MIN_CODE_FONT_SIZE)
+    expect(normalizeCodeFontSize(900)).toBe(MAX_CODE_FONT_SIZE)
+    expect(normalizeCodeFontSize(0)).toBe(0)
+    expect(calculateCodeLayout('const answer = 42', { fontSize: 0 }).fontSize).toBe(20)
+  })
+
+  it('lets a wider card carry a longer line before shrinking the text', () => {
+    const source = 'x'.repeat(75)
+    const standard = calculateCodeLayout(source)
+    const wide = calculateCodeLayout(source, { cardWidth: 1080 })
+    expect(standard.cardWidth).toBe(720)
+    expect(wide.cardWidth).toBe(1080)
+    expect(wide.automaticFontSize).toBeGreaterThan(standard.automaticFontSize)
+    expect(codeCharactersPerLine(1080, 16, true)).toBeGreaterThan(codeCharactersPerLine(720, 16, true))
+    expect(codeCharactersPerLine(720, 16, false)).toBeGreaterThan(codeCharactersPerLine(720, 16, true))
+    const wrapped = Array.from({ length: 30 }, () => source).join('\n')
+    expect(estimateCodeCapturePageBodyHeight(wrapped, 16, true, true, 1080))
+      .toBeLessThan(estimateCodeCapturePageBodyHeight(wrapped, 16, true, true, 720))
+  })
+
+  it('refuses a card width that is not an offered preset', () => {
+    expect(normalizeCodeCardWidth(900)).toBe(900)
+    expect(normalizeCodeCardWidth(999)).toBe(720)
+    expect(normalizeCodeCardWidth('1080')).toBe(720)
+    expect(normalizeCodeCardWidth(undefined)).toBe(720)
+    expect(calculateCodeLayout('const answer = 42', { cardWidth: 4000 }).cardWidth).toBe(720)
   })
 
   it('plans conservative continuous-image groups without changing page order', () => {
