@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { appRoutes } from '@/routes'
-import { activeWorkspaceChildTarget, searchWorkspaceCommands, workspaceCommandCatalog, workspaceContextActionGroups, workspaceContextActions, workspaceDiscoverablePaths, workspaceFeatureGroups, workspaceNavGroups, workspaceRouteOwners } from './workspace-navigation'
+import { activeWorkspaceChildTarget, activeWorkspaceSpace, workspaceSpaceOwnsRoute, searchWorkspaceCommands, workspaceCommandCatalog, workspaceContextActionGroups, workspaceContextActions, workspaceDiscoverablePaths, workspaceFeatureGroups, workspaceNavGroups, workspaceRouteOwners, workspaceSpaceTargets } from './workspace-navigation'
 
 describe('workspace navigation', () => {
   const rail = readFileSync(new URL('../components/AppRail.vue', import.meta.url), 'utf8')
@@ -61,7 +61,7 @@ describe('workspace navigation', () => {
       const actions = workspaceContextActions(space.to)
       expect(actions.length).toBeGreaterThanOrEqual(4)
       expect(actions.length).toBeLessThanOrEqual(5)
-      expect(actions.every(action => space.children.some(child => child.to === action.to))).toBe(true)
+      expect(actions.every(action => workspaceSpaceTargets(space).some(child => child.to === action.to))).toBe(true)
     }
     expect(workspaceContextActions('/review').map(action => action.label)).toContain('单词库')
     expect(workspaceRouteOwners().get('/words')).toEqual(['/knowledge', '/review'])
@@ -72,7 +72,7 @@ describe('workspace navigation', () => {
     const spaces = workspaceNavGroups.flatMap(group => group.items)
     for (const space of spaces) {
       const groups = workspaceContextActionGroups(space.to)
-      const expected = space.children.filter(action => action.to !== space.to).map(action => action.to)
+      const expected = workspaceSpaceTargets(space).filter(action => action.to !== space.to).map(action => action.to)
       const surfaced = [...groups.primary, ...groups.more].map(action => action.to)
       expect(new Set(surfaced)).toEqual(new Set(expected))
       expect(groups.primary.every(action => !groups.more.some(item => item.to === action.to))).toBe(true)
@@ -121,8 +121,85 @@ describe('workspace navigation', () => {
     expect(activeWorkspaceChildTarget(knowledge.children, { path: '/documents', query: { kind: 'note', document: 'note-1' } })).toBe('/documents?kind=note')
     expect(activeWorkspaceChildTarget(knowledge.children, { path: '/documents', query: { document: 'note-1' } })).toBe('/documents')
     expect(activeWorkspaceChildTarget(knowledge.children, { path: '/knowledge', query: { filter: 'favorites' } })).toBe('/knowledge?filter=favorites')
-    expect(activeWorkspaceChildTarget(knowledge.children, { path: '/documents', query: { kind: 'note', action: 'open-file' } })).toBe('/documents?kind=note&action=open-file')
-    expect(activeWorkspaceChildTarget(create.children, { path: '/documents', query: { kind: 'note', create: 'note', mode: 'split', insert: 'formula', recognize: 'formula' } })).toBe('/documents?kind=note&create=note&mode=split&insert=formula&recognize=formula')
+    // The rail lists places, so an action route highlights the place it acts
+    // on; ranking still prefers the exact target when one is in the list.
+    expect(activeWorkspaceChildTarget(knowledge.children, { path: '/documents', query: { kind: 'note', action: 'open-file' } })).toBe('/documents?kind=note')
+    expect(activeWorkspaceChildTarget(workspaceSpaceTargets(knowledge), { path: '/documents', query: { kind: 'note', action: 'open-file' } })).toBe('/documents?kind=note&action=open-file')
+    expect(activeWorkspaceChildTarget(workspaceSpaceTargets(create), { path: '/documents', query: { kind: 'note', create: 'note', mode: 'split', insert: 'formula', recognize: 'formula' } })).toBe('/documents?kind=note&create=note&mode=split&insert=formula&recognize=formula')
     expect(activeWorkspaceChildTarget(today.children, { path: '/today', hash: '#today-focus-ledger' })).toBe('/today#today-focus-ledger')
+  })
+})
+
+describe('active space', () => {
+  const spaces = workspaceNavGroups.flatMap(group => group.items)
+  const at = (path: string, query: Record<string, string> = {}) => ({ path, query })
+
+  it('lists places in the rail and leaves the doing to Ctrl+K', () => {
+    const spaces = workspaceNavGroups.flatMap(group => group.items)
+    const rows = spaces.reduce((total, space) => total + space.children.length, 0)
+    // The rail is a list of destinations. It held fifty-three rows, a third of
+    // which were verbs, and one page appeared four times under four filters.
+    expect(rows).toBeLessThanOrEqual(40)
+    const tools = spaces.find(space => space.to === '/')!
+    expect(tools.children.map(child => child.label)).not.toContain('失败任务')
+    expect(tools.children.map(child => child.label)).not.toContain('新建空白字幕')
+    expect(tools.children.filter(child => child.to.startsWith('/history')).length).toBe(1)
+
+    // Everything moved out stays reachable by search.
+    const catalog = workspaceCommandCatalog().map(command => command.to)
+    for (const space of spaces) {
+      for (const action of space.actions) expect(catalog).toContain(action.to)
+    }
+    expect(searchWorkspaceCommands('失败').map(command => command.to)).toContain('/history?status=failed')
+    expect(searchWorkspaceCommands('新建空白字幕').map(command => command.to)).toContain('/subtitles?action=create')
+  })
+
+  it('has no entry duplicated across two spaces', () => {
+    const owners = new Map<string, string[]>()
+    for (const space of spaces) {
+      for (const child of space.children) {
+        owners.set(child.to, [...(owners.get(child.to) ?? []), space.label])
+      }
+    }
+    // Sharing a destination is allowed; declaring the *same entry* twice is the
+    // thing that made the rail unreadable. `单词库` may appear under both
+    // 知识库 and 复习 — 批量导入单词 may not, because importing is authoring.
+    const duplicatedAuthoring = [...owners]
+      .filter(([to, holders]) => holders.length > 1 && /import|create|action=create/.test(to))
+      .map(([to]) => to)
+    expect(duplicatedAuthoring).toEqual([])
+  })
+
+  it('keeps a click inside the space it was made in', () => {
+    // `/words` is reachable from 知识库 and 复习. Opening it from 复习 must not
+    // hand the rail to 知识库, which is what a plain `find` used to do.
+    expect(activeWorkspaceSpace(spaces, at('/words'), '/review')?.label).toBe('复习')
+    expect(activeWorkspaceSpace(spaces, at('/words'), '/knowledge')?.label).toBe('知识库')
+    expect(activeWorkspaceSpace(spaces, at('/documents', { kind: 'question' }), '/review')?.label).toBe('复习')
+  })
+
+  it('moves when the open space does not own the new route', () => {
+    expect(activeWorkspaceSpace(spaces, at('/today'), '/review')?.label).toBe('今天')
+    expect(activeWorkspaceSpace(spaces, at('/visual'), '/knowledge')?.label).toBe('创作')
+  })
+
+  it('falls back to declaration order with no preference, as before', () => {
+    expect(activeWorkspaceSpace(spaces, at('/words'))?.label).toBe('知识库')
+    expect(activeWorkspaceSpace(spaces, at('/nowhere'), '/review')).toBeUndefined()
+  })
+
+  it('matches a space by its own route and by its children', () => {
+    const review = spaces.find(space => space.to === '/review')!
+    expect(workspaceSpaceOwnsRoute(review, at('/review'))).toBe(true)
+    expect(workspaceSpaceOwnsRoute(review, at('/words'))).toBe(true)
+    expect(workspaceSpaceOwnsRoute(review, at('/visual'))).toBe(false)
+  })
+
+  it('respects query parameters rather than matching the bare path', () => {
+    const knowledge = spaces.find(space => space.to === '/knowledge')!
+    expect(workspaceSpaceOwnsRoute(knowledge, at('/knowledge', { filter: 'favorites' }))).toBe(true)
+    // A child asking for `?import=1` must not be matched by a bare route.
+    const create = spaces.find(space => space.to === '/create')!
+    expect(workspaceSpaceOwnsRoute(create, at('/documents'))).toBe(false)
   })
 })

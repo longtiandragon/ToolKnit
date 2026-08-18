@@ -1,14 +1,25 @@
 import { personalPackEnabled } from '@/lib/build-profile'
 
 export type WorkspaceNavAction = { label: string; to: string; icon: string }
-export type WorkspaceNavItem = { to: string; icon: string; label: string; children: WorkspaceNavAction[]; menu: WorkspaceNavAction[] }
+/** `children` are places the rail lists; `actions` are things you do on
+ * arrival — a new subtitle, an import, a filtered view of a page that already
+ * has that filter. Both are reachable from Ctrl+K and the right-click menu, but
+ * only places belong in a permanent list of destinations. */
+export type WorkspaceNavItem = { to: string; icon: string; label: string; children: WorkspaceNavAction[]; actions: WorkspaceNavAction[]; menu: WorkspaceNavAction[] }
 export type WorkspaceCommandItem = WorkspaceNavAction & { id: string; detail: string; kind: 'space' | 'action'; keywords: string }
 export type WorkspaceFeatureGroup = { space: WorkspaceNavItem; features: WorkspaceNavAction[] }
 export type WorkspaceContextActionGroups = { primary: WorkspaceNavAction[]; more: WorkspaceNavAction[] }
 export type WorkspaceRouteLocation = { path: string; query?: Record<string, unknown>; hash?: string }
 
-function navItem(to: string, icon: string, label: string, children: WorkspaceNavAction[]): WorkspaceNavItem {
-  return { to, icon, label, children, menu: [{ label: `打开${label}`, to, icon }, ...children] }
+function navItem(to: string, icon: string, label: string, children: WorkspaceNavAction[], actions: WorkspaceNavAction[] = []): WorkspaceNavItem {
+  return { to, icon, label, children, actions, menu: [{ label: `打开${label}`, to, icon }, ...children, ...actions] }
+}
+
+/** Everything a space leads to, listed or not. Every consumer except the rail
+ * itself wants this — hiding a route from the rail must never hide it from
+ * search, from the context menu, or from the reachability check. */
+export function workspaceSpaceTargets(space: WorkspaceNavItem) {
+  return [...space.children, ...space.actions]
 }
 
 function parsedWorkspaceTarget(to: string) {
@@ -21,16 +32,52 @@ function parsedWorkspaceTarget(to: string) {
  * Vue Router's inclusive matching makes `/documents` active together with
  * `/documents?kind=note`; ranking the matching siblings keeps the more
  * specific workflow selected while still ignoring transient ids. */
+/** Whether one nav target is satisfied by the current location, and how
+ *  specifically — more matched query keys and a matched hash rank higher. */
+function targetScore(to: string, current: WorkspaceRouteLocation) {
+  const target = parsedWorkspaceTarget(to)
+  if (target.path !== current.path) return -1
+  if (target.hash && target.hash !== (current.hash ?? '')) return -1
+  if (!target.query.every(([key, value]) => String(current.query?.[key] ?? '') === value)) return -1
+  return target.query.length * 2 + Number(Boolean(target.hash))
+}
+
 export function activeWorkspaceChildTarget(children: readonly WorkspaceNavAction[], current: WorkspaceRouteLocation) {
   return children
     .flatMap((child, index) => {
-      const target = parsedWorkspaceTarget(child.to)
-      if (target.path !== current.path) return []
-      if (target.hash && target.hash !== (current.hash ?? '')) return []
-      if (!target.query.every(([key, value]) => String(current.query?.[key] ?? '') === value)) return []
-      return [{ to: child.to, score: target.query.length * 2 + Number(Boolean(target.hash)), index }]
+      const score = targetScore(child.to, current)
+      return score < 0 ? [] : [{ to: child.to, score, index }]
     })
     .sort((left, right) => right.score - left.score || left.index - right.index)[0]?.to
+}
+
+/** Whether a space owns the current route, directly or through a child. */
+export function workspaceSpaceOwnsRoute(space: WorkspaceNavItem, current: WorkspaceRouteLocation) {
+  return targetScore(space.to, current) >= 0 || workspaceSpaceTargets(space).some((child) => targetScore(child.to, current) >= 0)
+}
+
+/**
+ * Which space the rail should show as active.
+ *
+ * Several routes are legitimately reachable from more than one space: `/words`
+ * and `/documents?kind=question` are material that both 知识库 and 复习 lead to.
+ * Picking the first space that owns the route — which is all this used to do —
+ * answered with whichever was declared first, so opening 单词库 from 复习
+ * collapsed 复习 and expanded 知识库 instead. From the user's side that reads as
+ * clicking one thing and landing in another.
+ *
+ * `preferred` is the space already open. If it owns the new route, it wins; a
+ * click stays in the space it was made in. Only a route that no open space owns
+ * moves the rail, which is exactly when moving is right.
+ */
+export function activeWorkspaceSpace(
+  spaces: readonly WorkspaceNavItem[],
+  current: WorkspaceRouteLocation,
+  preferred?: string,
+) {
+  const open = preferred ? spaces.find((space) => space.to === preferred) : undefined
+  if (open && workspaceSpaceOwnsRoute(open, current)) return open
+  return spaces.find((space) => workspaceSpaceOwnsRoute(space, current))
 }
 
 export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] = [{
@@ -53,12 +100,13 @@ export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] 
       { label: '收藏内容', to: '/knowledge?filter=favorites', icon: 'star' },
       { label: '知识关系图谱', to: '/relations', icon: 'link' },
       { label: 'Markdown 笔记', to: '/documents?kind=note', icon: 'book' },
-      { label: '打开本机 Markdown', to: '/documents?kind=note&action=open-file', icon: 'folder-open' },
       { label: '全部学习内容', to: '/documents', icon: 'sort' },
       { label: '题目与错题', to: '/documents?kind=question', icon: 'review' },
-      { label: '批量导入题目', to: '/documents?kind=question&import=1', icon: 'inbox' },
       { label: '资料与摘录', to: '/library', icon: 'inbox' },
       { label: '单词库', to: '/words', icon: 'book' },
+    ], [
+      { label: '打开本机 Markdown', to: '/documents?kind=note&action=open-file', icon: 'folder-open' },
+      { label: '批量导入题目', to: '/documents?kind=question&import=1', icon: 'inbox' },
       { label: '录入新单词', to: '/words?action=create', icon: 'plus' },
       { label: '批量导入单词', to: '/words?import=1', icon: 'inbox' },
     ]),
@@ -68,47 +116,64 @@ export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] 
       { label: '思维图谱', to: '/documents?kind=note&template=mindmap&mode=mindmap', icon: 'sort' },
       { label: '流程与结构图', to: '/documents?kind=note&template=diagram&mode=split', icon: 'split' },
       { label: 'LaTeX 公式编辑', to: '/documents?kind=note&create=note&mode=split&insert=formula', icon: 'math' },
-      { label: '公式图片识别', to: '/documents?kind=note&create=note&mode=split&insert=formula&recognize=formula', icon: 'math' },
       { label: '视觉画布工作室', to: '/visual', icon: 'palette' },
-      { label: '新建自由画布', to: '/visual?canvas=blank', icon: 'plus' },
       { label: '滚动截图拼接', to: '/visual?tool=stitch', icon: 'sort' },
       { label: '代码分享工作室', to: '/code-image', icon: 'terminal' },
       { label: 'AI 内容工作台', to: '/ai', icon: 'sparkle' },
+    ], [
+      { label: '公式图片识别', to: '/documents?kind=note&create=note&mode=split&insert=formula&recognize=formula', icon: 'math' },
+      { label: '新建自由画布', to: '/visual?canvas=blank', icon: 'plus' },
     ]),
+    // 复习 is where you *do* a review; 知识库 is where the material is authored.
+    //
+    // Five of its seven entries used to be byte-identical to entries under
+    // 知识库. Three of those — 批量导入题目, 录入新单词, 批量导入单词 — are
+    // authoring, not reviewing, and belong to 知识库 alone; they are gone from
+    // here. 单词库 and 题目与错题 stay, because reaching the material is a real
+    // part of reviewing it and a space that cannot get to its own cards is
+    // worse than a shared link.
+    //
+    // Sharing a `to` used to be actively harmful: the rail picked the active
+    // space with a plain `find`, so opening 单词库 from 复习 collapsed 复习 and
+    // expanded 知识库 instead. `AppRail.vue` now prefers the space that is
+    // already open, which is what makes a shared destination safe.
     navItem('/review', 'review', '复习', [
       { label: '今日复习队列', to: '/review', icon: 'review' },
-      { label: '单词库', to: '/words', icon: 'book' },
       { label: '题目与错题', to: '/documents?kind=question', icon: 'book' },
+      { label: '单词库', to: '/words', icon: 'book' },
+    ], [
       { label: '记录新错题', to: '/documents?kind=question&create=question', icon: 'plus' },
-      { label: '批量导入题目', to: '/documents?kind=question&import=1', icon: 'inbox' },
-      { label: '录入新单词', to: '/words?action=create', icon: 'plus' },
-      { label: '批量导入单词', to: '/words?import=1', icon: 'inbox' },
     ]),
     navItem('/', 'toolbox', '工具', [
       { label: '全部工具', to: '/', icon: 'toolbox' },
       { label: '文件处理中心', to: '/tools', icon: 'toolbox' },
       { label: '音视频转换', to: '/media', icon: 'play' },
       { label: '字幕校对台', to: '/subtitles', icon: 'file-text' },
-      { label: '打开字幕文件', to: '/subtitles?action=import', icon: 'folder-open' },
-      { label: '粘贴字幕源码', to: '/subtitles?action=paste', icon: 'clipboard' },
-      { label: '新建空白字幕', to: '/subtitles?action=create', icon: 'plus' },
       { label: '本机语音转写', to: '/subtitles?transcribe=1', icon: 'play' },
       { label: '离线 OCR 识别', to: '/ocr', icon: 'file-text' },
       { label: '开发者工具', to: '/developer-tools', icon: 'code' },
       { label: '剪贴板历史', to: '/clipboard', icon: 'clipboard' },
-      { label: '读取当前剪贴板', to: '/clipboard?action=capture', icon: 'clipboard' },
-      { label: '新建常用片段', to: '/clipboard?action=create-snippet', icon: 'plus' },
       { label: '常用片段', to: '/clipboard?view=snippets', icon: 'star' },
       { label: '处理历史', to: '/history', icon: 'clock' },
+      ...(personalPackEnabled ? [
+        { label: '私人工具包', to: '/private-tools', icon: 'terminal' },
+      ] : []),
+      { label: '本机能力与实验', to: '/lab', icon: 'flask' },
+    ], [
+      { label: '打开字幕文件', to: '/subtitles?action=import', icon: 'folder-open' },
+      { label: '粘贴字幕源码', to: '/subtitles?action=paste', icon: 'clipboard' },
+      { label: '新建空白字幕', to: '/subtitles?action=create', icon: 'plus' },
+      { label: '读取当前剪贴板', to: '/clipboard?action=capture', icon: 'clipboard' },
+      { label: '新建常用片段', to: '/clipboard?action=create-snippet', icon: 'plus' },
+      // `/history` already carries a tab switcher and status filters, so these
+      // were three sidebar rows describing controls the page itself owns.
       { label: '失败任务', to: '/history?status=failed', icon: 'clock' },
       { label: '操作日志', to: '/history?view=activity', icon: 'sort' },
       ...(personalPackEnabled ? [
-        { label: '私人工具包', to: '/private-tools', icon: 'terminal' },
         { label: '加载私人工具清单', to: '/private-tools?action=choose-manifest', icon: 'folder-open' },
         { label: '复制私人工具模板', to: '/private-tools?action=copy-template', icon: 'duplicate' },
         { label: '脚本任务历史', to: '/history?kind=script', icon: 'clock' },
       ] : []),
-      { label: '本机能力与实验', to: '/lab', icon: 'flask' },
     ]),
   ],
 }]
@@ -196,7 +261,7 @@ export function workspaceCommandCatalog(): WorkspaceCommandItem[] {
       kind: 'space' as const,
       keywords: `${spaceAliases[item.to] ?? ''} ${item.children.map((child) => child.label).join(' ')}`,
     },
-    ...item.children.filter((child) => child.to !== item.to).map((child) => ({
+    ...workspaceSpaceTargets(item).filter((child) => child.to !== item.to).map((child) => ({
       id: `action:${child.to}`,
       ...child,
       detail: `${item.label} · 直接打开`,
@@ -227,7 +292,7 @@ export function searchWorkspaceCommands(query = '', limit = 10) {
 }
 
 export function workspaceNavigationPaths() {
-  return new Set(workspaceNavGroups.flatMap(group => group.items.flatMap(item => [item.to, ...item.children.map(child => child.to)]).map(to => to.split(/[?#]/, 1)[0])))
+  return new Set(workspaceNavGroups.flatMap(group => group.items.flatMap(item => [item.to, ...workspaceSpaceTargets(item).map(child => child.to)]).map(to => to.split(/[?#]/, 1)[0])))
 }
 
 /** A browsable map for people who do not yet know the command vocabulary.
@@ -235,7 +300,7 @@ export function workspaceNavigationPaths() {
 export function workspaceFeatureGroups(): WorkspaceFeatureGroup[] {
   return workspaceNavGroups.flatMap(group => group.items).map(space => ({
     space,
-    features: space.children.filter(feature => feature.to !== space.to),
+    features: workspaceSpaceTargets(space).filter(feature => feature.to !== space.to),
   }))
 }
 
@@ -253,7 +318,7 @@ const workspaceContextTargets: Record<string, readonly string[]> = {
 export function workspaceContextActions(spaceTo: string) {
   const space = workspaceNavGroups.flatMap(group => group.items).find(item => item.to === spaceTo)
   if (!space) return []
-  const children = new Map(space.children.map(action => [action.to, action]))
+  const children = new Map(workspaceSpaceTargets(space).map(action => [action.to, action]))
   return (workspaceContextTargets[spaceTo] ?? []).flatMap(target => children.get(target) ?? [])
 }
 
@@ -267,7 +332,7 @@ export function workspaceContextActionGroups(spaceTo: string): WorkspaceContextA
   const primaryTargets = new Set(primary.map(action => action.to))
   return {
     primary,
-    more: space.children.filter(action => action.to !== space.to && !primaryTargets.has(action.to)),
+    more: workspaceSpaceTargets(space).filter(action => action.to !== space.to && !primaryTargets.has(action.to)),
   }
 }
 
