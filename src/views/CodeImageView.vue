@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { toBlob } from 'html-to-image'
-import { calculateCodeLayout, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages, joinCodePages, type CodeLayout } from '@/lib/code-layout'
+import { calculateCodeLayout, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages, joinCodePages, MAX_CODE_LINES_PER_PAGE, MIN_CODE_LINES_PER_PAGE, normalizeCodeLinesPerPage, type CodeLayout } from '@/lib/code-layout'
 import { getBoundedCacheValue, setBoundedCacheValue } from '@/lib/bounded-lru-cache'
 import { codeLanguages, detectCodeLanguage, highlightCode, type CodeLanguage } from '@/lib/code-highlight'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
@@ -90,11 +90,17 @@ const cardThemeOptions = [
 // Dev HMR can preserve a settings object created before codeImageAuthor existed.
 // Normalize it here so opening this lazy route never crashes on undefined.trim().
 const author = ref(store.settings.codeImageAuthor ?? '')
+/* 0 keeps the automatic page height. Whatever is chosen here is written back to
+   settings, so it is also the default the next visit opens with. */
+const manualLinesPerPage = ref(normalizeCodeLinesPerPage(store.settings.codeImageLinesPerPage))
+// A number input hands back a number, and an emptied one hands back ''.
+const linesPerPageDraft = ref<string | number>(manualLinesPerPage.value || '')
 const detectedLanguage = computed(() => detectCodeLanguage(sourceName.value, renderedCode.value))
 const language = computed<CodeLanguage>(() => languageOverride.value === 'auto' ? detectedLanguage.value : languageOverride.value)
-const codeLayout = shallowRef<CodeLayout>(calculateCodeLayout(renderedCode.value))
+const codeLayout = shallowRef<CodeLayout>(calculateCodeLayout(renderedCode.value, manualLinesPerPage.value))
 const fontSize = computed(() => codeLayout.value.fontSize)
 const linesPerPage = computed(() => codeLayout.value.linesPerPage)
+const automaticLinesPerPage = computed(() => codeLayout.value.automaticLinesPerPage)
 const wrapLongLines = computed(() => codeLayout.value.longestLine > 92)
 const byline = computed(() => `BY ${String(author.value ?? '').trim() || 'author'}`)
 const pages = computed(() => codeLayout.value.pages)
@@ -191,11 +197,11 @@ function requestCodeLayout(source: string) {
   const requestId = ++codeLayoutRevision
   layoutPending.value = true
   if (!codeLayoutWorker) {
-    codeLayout.value = calculateCodeLayout(source)
+    codeLayout.value = calculateCodeLayout(source, manualLinesPerPage.value)
     layoutPending.value = false
     return
   }
-  codeLayoutWorker.postMessage({ id: requestId, source })
+  codeLayoutWorker.postMessage({ id: requestId, source, linesPerPage: manualLinesPerPage.value })
 }
 
 function startCodeLayoutWorker() {
@@ -210,7 +216,7 @@ function startCodeLayoutWorker() {
     worker.onerror = () => {
       worker.terminate()
       if (codeLayoutWorker === worker) codeLayoutWorker = undefined
-      codeLayout.value = calculateCodeLayout(renderedCode.value)
+      codeLayout.value = calculateCodeLayout(renderedCode.value, manualLinesPerPage.value)
       layoutPending.value = false
     }
     codeLayoutWorker = worker
@@ -218,13 +224,42 @@ function startCodeLayoutWorker() {
   } catch {
     // Older embedded WebViews can still use the same pure calculation without
     // losing correctness; modern desktop builds stay off the main thread.
-    codeLayout.value = calculateCodeLayout(renderedCode.value)
+    codeLayout.value = calculateCodeLayout(renderedCode.value, manualLinesPerPage.value)
     layoutPending.value = false
   }
 }
 
 watch([renderedCode, languageOverride, theme, showLineNumbers, author, fontSize, linesPerPage], invalidatePageCache, { flush: 'post' })
 watch(renderedCode, requestCodeLayout, { immediate: true })
+watch(manualLinesPerPage, (value) => {
+  store.updateSettings({ codeImageLinesPerPage: value })
+  requestCodeLayout(renderedCode.value)
+  // Page 3 of the old pagination is not page 3 of the new one, so the strip
+  // starts over rather than leaving a stale selection to be exported.
+  activePage.value = 0
+  selectedPages.value = new Set([0])
+})
+
+watch(() => store.settings.codeImageLinesPerPage, (value) => {
+  const normalized = normalizeCodeLinesPerPage(value)
+  if (normalized === manualLinesPerPage.value) return
+  manualLinesPerPage.value = normalized
+  linesPerPageDraft.value = normalized || ''
+})
+
+/** Empty means automatic; anything else is clamped to a usable page height so
+ * a typo cannot produce ten thousand one-line pages. */
+function commitLinesPerPage() {
+  const raw = String(linesPerPageDraft.value ?? '').trim()
+  const next = raw === '' ? 0 : normalizeCodeLinesPerPage(Number(raw))
+  linesPerPageDraft.value = next || ''
+  manualLinesPerPage.value = next
+}
+
+function useAutomaticLinesPerPage() {
+  linesPerPageDraft.value = ''
+  manualLinesPerPage.value = 0
+}
 
 watch(() => store.codeDraft, (draft) => {
   if (!draft || draft.content === code.value) return
@@ -846,7 +881,7 @@ async function exportPdf() {
        names stay: the first paints the same backdrop the exported PNG has, and
        the other two are what html-to-image captures. Those pixels leave the
        machine, so they do not follow the UI theme. -->
-  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6">
+  <div class="page-enter h-full page-shell px-8 py-6">
     <PageHeader title="代码长图" subtitle="超长代码自动分页，也能合成连续长图；导出 PNG、PDF 或直接复制">
       <template #actions>
         <button class="btn-default" :disabled="exporting || copying" @click="copySelectedImages">
@@ -920,6 +955,24 @@ async function exportPdf() {
           <input v-model="showLineNumbers" type="checkbox" class="accent-[var(--accent-solid)]" />显示行号
         </label>
 
+        <label class="row gap-2 shrink-0" :title="`一张图放多少行代码；留空按内容自动决定，当前自动值 ${automaticLinesPerPage} 行`">
+          <span class="text-[11px] font-semibold text-fg-3">每页行数</span>
+          <input
+            v-model="linesPerPageDraft"
+            type="number"
+            inputmode="numeric"
+            :min="MIN_CODE_LINES_PER_PAGE"
+            :max="MAX_CODE_LINES_PER_PAGE"
+            class="field h-7 w-20 px-2 text-[12px]"
+            :placeholder="`自动 ${automaticLinesPerPage}`"
+            aria-label="每页行数；留空按内容自动排版"
+            @change="commitLinesPerPage"
+            @blur="commitLinesPerPage"
+            @keydown.enter.prevent="commitLinesPerPage"
+          />
+          <button v-if="manualLinesPerPage" type="button" class="btn-tool" @click="useAutomaticLinesPerPage">恢复自动</button>
+        </label>
+
         <label class="row gap-2 shrink-0">
           <span class="text-[11px] font-semibold text-fg-3">署名</span>
           <input v-model="author" class="field h-7 w-32 px-2 text-[12px]" placeholder="author" aria-label="作者署名" />
@@ -927,9 +980,9 @@ async function exportPdf() {
 
         <!-- Not a control: the layout engine picked these, and knowing what it
              picked is what stops you hunting for a font-size slider. -->
-        <span class="row gap-1.5 ml-auto shrink-0 text-[11px] text-fg-3" title="字号与分页由内容自动计算">
+        <span class="row gap-1.5 ml-auto shrink-0 text-[11px] text-fg-3" :title="manualLinesPerPage ? `字号由内容自动计算；每页行数已手动设为 ${manualLinesPerPage}，自动值是 ${automaticLinesPerPage}` : '字号与分页由内容自动计算'">
           <AppIcon name="rule" :size="13" />
-          自动排版 · {{ fontSize }}px · {{ linesPerPage }} 行/张{{ wrapLongLines ? ' · 长行折行' : '' }}
+          {{ manualLinesPerPage ? '手动分页' : '自动排版' }} · {{ fontSize }}px · {{ linesPerPage }} 行/张{{ wrapLongLines ? ' · 长行折行' : '' }}
         </span>
       </div>
 

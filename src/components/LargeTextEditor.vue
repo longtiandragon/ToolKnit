@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { getCurrentInstance, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, indentWithTab, redo as redoHistory, undo as undoHistory } from '@codemirror/commands'
 import { drawSelection, dropCursor, EditorView, highlightActiveLine, keymap, placeholder as editorPlaceholder } from '@codemirror/view'
@@ -38,6 +38,10 @@ const emit = defineEmits<{
 }>()
 
 const host = ref<HTMLElement>()
+// Only the Markdown workspace renders a menu for `context-menu`. Where nobody
+// listens, swallowing the event would leave the surface with no menu at all —
+// and no way to paste by mouse — so the native one stays.
+const hasContextMenuListener = Boolean(getCurrentInstance()?.vnode.props?.onContextMenu)
 let view: EditorView | undefined
 let emitTimer: number | undefined
 let lastEmitted: string | undefined
@@ -129,9 +133,13 @@ function closeSearch() {
 function insertText(text: string) {
   if (!view || !text) return false
   const selection = view.state.selection.main
+  // Windows clipboards carry CRLF, which the document stores as a single line
+  // break. Measuring the normalized text is what keeps the cursor inside the
+  // document; `text.length` overshoots and the whole paste is rejected.
+  const insert = view.state.toText(text)
   view.dispatch({
-    changes: { from: selection.from, to: selection.to, insert: text },
-    selection: EditorSelection.cursor(selection.from + text.length),
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: EditorSelection.cursor(selection.from + insert.length),
     scrollIntoView: true,
   })
   view.focus()
@@ -239,7 +247,8 @@ async function pasteClipboard() {
   const text = await navigator.clipboard.readText()
   if (!text) return false
   const selection = view.state.selection.main
-  view.dispatch({ changes: { from: selection.from, to: selection.to, insert: text }, selection: EditorSelection.cursor(selection.from + text.length) })
+  const insert = view.state.toText(text)
+  view.dispatch({ changes: { from: selection.from, to: selection.to, insert }, selection: EditorSelection.cursor(selection.from + insert.length) })
   view.focus()
   return true
 }
@@ -313,7 +322,7 @@ function handleEditorKeydown(event: KeyboardEvent) {
 }
 
 function openContextMenu(event: MouseEvent | KeyboardEvent) {
-  if (!view) return false
+  if (!view || !hasContextMenuListener) return false
   event.preventDefault()
   event.stopPropagation()
   let selection = view.state.selection.main

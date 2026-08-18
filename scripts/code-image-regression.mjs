@@ -31,6 +31,23 @@ try {
   const copied = await page.evaluate(() => navigator.clipboard.readText())
   if (copied.replace(/\r\n/g, '\n') !== source) throw new Error(`copy roundtrip changed source:\n${JSON.stringify(copied)}`)
 
+  // A Windows clipboard carries CRLF, and the document stores one line break
+  // per line. Measuring the paste by raw string length put the cursor past the
+  // end of the document, and CodeMirror rejected the whole insertion — every
+  // multi-line paste silently did nothing.
+  await editor.click()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.press('Delete')
+  await editor.evaluate((element, plainText) => {
+    const data = new DataTransfer()
+    data.setData('text/plain', plainText)
+    element.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }))
+  }, source.replace(/\n/g, '\r\n'))
+  await page.waitForTimeout(500)
+  await page.getByRole('button', { name: '复制代码' }).click()
+  const pastedWindowsText = await page.evaluate(() => navigator.clipboard.readText())
+  if (pastedWindowsText.replace(/\r\n/g, '\n') !== source) throw new Error(`CRLF paste lost lines:\n${JSON.stringify(pastedWindowsText)}`)
+
   const backgrounds = {}
   for (const [label, className] of [['午夜', 'codesnap-midnight'], ['深林', 'codesnap-forest'], ['纸页', 'codesnap-paper']]) {
     await page.getByRole('button', { name: label, exact: true }).click()
@@ -40,7 +57,7 @@ try {
   }
   if (new Set(Object.values(backgrounds)).size !== 3) throw new Error(`themes share the same card background: ${JSON.stringify(backgrounds)}`)
 
-  console.log(JSON.stringify({ source, copied, languageText, backgrounds }, null, 2))
+  console.log(JSON.stringify({ source, copied, pastedWindowsText, languageText, backgrounds }, null, 2))
 } finally {
   await browser.close()
 }

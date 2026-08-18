@@ -72,6 +72,18 @@ describe('workspace backups', () => {
     expect(restored?.settings).toMatchObject({ codeImageAuthor: 'author', clipboardLimit: 10, closeBehavior: 'ask', documentAutoSave: true, readingScale: 'comfortable', readingWidth: 'balanced', reduceMotion: false, transcriptionExecutablePath: '', transcriptionModelPath: '', transcriptionLanguage: 'auto' })
   })
 
+  it('keeps a manual code-image page height and repairs an unusable one', () => {
+    const restore = (codeImageLinesPerPage: unknown) => parsePersistedWorkspace(JSON.stringify({
+      ...snapshot,
+      settings: { ...defaultWorkbenchSettings, codeImageLinesPerPage }
+    }))?.settings?.codeImageLinesPerPage
+    expect(restore(45)).toBe(45)
+    expect(restore(0)).toBe(0)
+    expect(restore(2)).toBe(5)
+    expect(restore(10_000)).toBe(200)
+    expect(restore('40')).toBe(0)
+  })
+
   it('keeps the scoped night reading surface when restoring a workspace', () => {
     const restored = parsePersistedWorkspace(JSON.stringify({
       ...snapshot,
@@ -155,5 +167,41 @@ describe('workspace backups', () => {
   it('does not accept arbitrary JSON or malformed workspace data', () => {
     expect(() => parseWorkspaceBackup('{}')).toThrow('不是可恢复')
     expect(() => parseWorkspaceBackup(JSON.stringify({ ...snapshot, format: 'toolknit-browser-backup', schemaVersion: 2, sources: 'wrong' }))).toThrow('未修改')
+  })
+})
+
+describe('toolbox board layout', () => {
+  const persisted = (settings: unknown) =>
+    parsePersistedWorkspace(JSON.stringify({ ...snapshot, settings }))?.settings
+
+  it('survives a save and reload', () => {
+    const board = { blockOrder: ['/ocr', '/tools:pdf'], hiddenBlocks: ['/history'], expandedBlocks: ['/tools:pdf'], toolOrder: { '/tools:pdf': ['pdf-split', 'pdf-merge'] } }
+    expect(persisted({ ...defaultWorkbenchSettings, toolboxBoard: board })?.toolboxBoard).toEqual(board)
+  })
+
+  it('stays absent for a workspace that never rearranged anything', () => {
+    expect(persisted(defaultWorkbenchSettings)?.toolboxBoard).toBeUndefined()
+    expect(persisted({ ...defaultWorkbenchSettings, toolboxBoard: { blockOrder: [], hiddenBlocks: [], expandedBlocks: [], toolOrder: {} } })?.toolboxBoard).toBeUndefined()
+  })
+
+  it('drops anything in the layout that is not a list of strings', () => {
+    const board = persisted({
+      ...defaultWorkbenchSettings,
+      toolboxBoard: { blockOrder: ['/ocr', 7, null], hiddenBlocks: 'nope', expandedBlocks: [{}], toolOrder: { '/ocr': ['a', 2], '/bad': 'x' } },
+    })?.toolboxBoard
+    expect(board).toEqual({ blockOrder: ['/ocr'], hiddenBlocks: [], expandedBlocks: [], toolOrder: { '/ocr': ['a'] } })
+  })
+
+  it('refuses a layout that is not an object at all', () => {
+    expect(persisted({ ...defaultWorkbenchSettings, toolboxBoard: 'everything' })?.toolboxBoard).toBeUndefined()
+    expect(persisted({ ...defaultWorkbenchSettings, toolboxBoard: [1, 2, 3] })?.toolboxBoard).toBeUndefined()
+  })
+
+  it('bounds a layout so a tampered backup cannot grow the settings blob', () => {
+    const board = persisted({
+      ...defaultWorkbenchSettings,
+      toolboxBoard: { blockOrder: Array.from({ length: 500 }, (_, index) => `k${index}`), hiddenBlocks: [], expandedBlocks: [], toolOrder: {} },
+    })?.toolboxBoard
+    expect(board?.blockOrder.length).toBe(40)
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateCodeLayout, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages, joinCodePages } from './code-layout'
+import { calculateCodeLayout, codeLongImageFileNames, estimateCodeCapturePageBodyHeight, groupCodeCapturePages, joinCodePages, MAX_CODE_LINES_PER_PAGE, MIN_CODE_LINES_PER_PAGE, normalizeCodeLinesPerPage } from './code-layout'
 
 describe('calculateCodeLayout', () => {
   it('keeps an empty snippet exportable as one blank page', () => {
@@ -19,6 +19,33 @@ describe('calculateCodeLayout', () => {
     const layout = calculateCodeLayout(`${'x'.repeat(240)}\nconst answer = 42`)
     expect(layout.fontSize).toBe(14)
     expect(layout.linesPerPage).toBe(22)
+  })
+
+  it('paginates by a manual page height and still reports the automatic one', () => {
+    const source = Array.from({ length: 100 }, (_, index) => `const row${index} = ${index}`).join('\n')
+    const layout = calculateCodeLayout(source, 10)
+    expect(layout.linesPerPage).toBe(10)
+    expect(layout.automaticLinesPerPage).toBe(38)
+    expect(layout.pages).toHaveLength(10)
+    expect(layout.pages.join('\n')).toBe(source)
+    expect(layout.pageLineCounts.reduce((total, count) => total + count, 0)).toBe(100)
+  })
+
+  it('falls back to the automatic page height for an absent or unusable manual one', () => {
+    const source = Array.from({ length: 40 }, (_, index) => `line ${index}`).join('\n')
+    const automatic = calculateCodeLayout(source).linesPerPage
+    expect(calculateCodeLayout(source, 0).linesPerPage).toBe(automatic)
+    expect(calculateCodeLayout(source, Number.NaN).linesPerPage).toBe(automatic)
+    expect(calculateCodeLayout(source, -12).linesPerPage).toBe(automatic)
+  })
+
+  it('clamps a manual page height instead of making thousands of tiny pages', () => {
+    expect(normalizeCodeLinesPerPage(1)).toBe(MIN_CODE_LINES_PER_PAGE)
+    expect(normalizeCodeLinesPerPage(99_999)).toBe(MAX_CODE_LINES_PER_PAGE)
+    expect(normalizeCodeLinesPerPage(24.6)).toBe(25)
+    expect(normalizeCodeLinesPerPage(0)).toBe(0)
+    expect(normalizeCodeLinesPerPage('30')).toBe(0)
+    expect(calculateCodeLayout('a\nb\nc', 1).linesPerPage).toBe(MIN_CODE_LINES_PER_PAGE)
   })
 
   it('lays out a large snippet without losing lines or allocating per-line code-point arrays', () => {

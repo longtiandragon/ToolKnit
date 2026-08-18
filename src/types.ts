@@ -257,11 +257,31 @@ export type ReadingWidth = 'focused' | 'balanced' | 'wide'
 export type ReadingPaperTone = 'warm' | 'neutral' | 'mist' | 'night'
 export type TranscriptionLanguage = 'auto' | 'zh' | 'en' | 'ja' | 'ko'
 
+/**
+ * How the user has arranged the toolbox board.
+ *
+ * Keys are workbench keys derived from the catalogue (`toolbox-board.ts`), not
+ * a second registry: anything unknown is dropped and anything new is appended
+ * when the board is built, so adding a tool never needs a migration here.
+ */
+export interface ToolboxBoardLayout {
+  /** Workbench keys in the order the user dragged them. */
+  blockOrder: string[]
+  /** Workbench keys the user removed from the board. */
+  hiddenBlocks: string[]
+  /** Workbench keys whose operation list is expanded. */
+  expandedBlocks: string[]
+  /** Per-block tool order, keyed by workbench key. */
+  toolOrder: Record<string, string[]>
+}
+
 export interface WorkbenchSettings {
   outputDirectory: string
   /** Last user-selected Markdown workspace. Only the path is remembered. */
   markdownWorkspaceDirectory: string
   codeImageAuthor: string
+  /** Lines on one code-image page. 0 keeps the automatic page height. */
+  codeImageLinesPerPage: number
   /** Absolute path to a user-owned JSON manifest. Core never ships one. */
   privateToolsManifestPath: string
   /** User-selected whisper.cpp-compatible CLI. Knitspace never bundles or auto-runs it. */
@@ -283,6 +303,8 @@ export interface WorkbenchSettings {
   readingWidth: ReadingWidth
   readingPaperTone: ReadingPaperTone
   reduceMotion: boolean
+  /** Toolbox home arrangement. Absent until the user first rearranges it. */
+  toolboxBoard?: ToolboxBoardLayout
   lastUpdateCheck?: string
   /** Legacy mixed backup timestamp retained for older JSON snapshots. */
   lastBackupAt?: string

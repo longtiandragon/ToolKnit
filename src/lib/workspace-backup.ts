@@ -1,4 +1,4 @@
-import type { ActivityRecord, AiProfile, ContentFavorite, ContentRecent, EntityRelation, FavoriteTool, Job, Source, StudyDocument, ToolPipelineRecipe, ToolRecipe, ToolUsage, VocabularyEntry, WorkbenchSettings } from '@/types'
+import type { ActivityRecord, AiProfile, ContentFavorite, ContentRecent, EntityRelation, FavoriteTool, Job, Source, StudyDocument, ToolboxBoardLayout, ToolPipelineRecipe, ToolRecipe, ToolUsage, VocabularyEntry, WorkbenchSettings } from '@/types'
 import { cloneStudyDocument } from '@/lib/study-document'
 import { cloneVocabularyEntry } from '@/lib/vocabulary'
 
@@ -162,11 +162,38 @@ function validPipeline(value: Record<string, unknown>) {
 }
 
 export const defaultWorkbenchSettings: WorkbenchSettings = {
-  outputDirectory: '', markdownWorkspaceDirectory: '', codeImageAuthor: 'author', privateToolsManifestPath: '',
+  outputDirectory: '', markdownWorkspaceDirectory: '', codeImageAuthor: 'author', codeImageLinesPerPage: 0, privateToolsManifestPath: '',
   transcriptionExecutablePath: '', transcriptionModelPath: '', transcriptionLanguage: 'auto', clipboardEnabled: false, clipboardPaused: false,
   clipboardLimit: 100, clipboardRetentionDays: 30, closeBehavior: 'ask',
   notificationsEnabled: true, autoCheckUpdates: true, documentAutoSave: true,
   readingScale: 'comfortable', readingDensity: 'comfortable', readingWidth: 'balanced', readingPaperTone: 'warm', reduceMotion: false
+}
+
+/* Shape-only. Whether a key still names a real workbench is decided when the
+   board is built (`toolbox-board.ts`), which is the only place that knows the
+   catalogue — and which lives in the toolbox route chunk rather than here, in
+   the startup bundle. This just refuses anything that is not strings. */
+function stringList(value: unknown, limit: number) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').slice(0, limit) : []
+}
+
+function normalizeToolboxBoard(value: unknown): ToolboxBoardLayout | undefined {
+  if (!isRecord(value)) return undefined
+  const toolOrder: Record<string, string[]> = {}
+  if (isRecord(value.toolOrder)) {
+    for (const [key, ids] of Object.entries(value.toolOrder).slice(0, 40)) {
+      const list = stringList(ids, 120)
+      if (list.length) toolOrder[key] = list
+    }
+  }
+  const board: ToolboxBoardLayout = {
+    blockOrder: stringList(value.blockOrder, 40),
+    hiddenBlocks: stringList(value.hiddenBlocks, 40),
+    expandedBlocks: stringList(value.expandedBlocks, 40),
+    toolOrder,
+  }
+  const empty = !board.blockOrder.length && !board.hiddenBlocks.length && !board.expandedBlocks.length && !Object.keys(toolOrder).length
+  return empty ? undefined : board
 }
 
 function normalizeSettings(value: unknown): WorkbenchSettings {
@@ -182,10 +209,18 @@ function normalizeSettings(value: unknown): WorkbenchSettings {
     : defaultWorkbenchSettings.closeBehavior
   const enumSetting = <Key extends 'readingScale' | 'readingDensity' | 'readingWidth' | 'readingPaperTone'>(key: Key, values: readonly WorkbenchSettings[Key][]) =>
     values.includes(input[key] as WorkbenchSettings[Key]) ? input[key] as WorkbenchSettings[Key] : defaultWorkbenchSettings[key]
+  const toolboxBoard = normalizeToolboxBoard(input.toolboxBoard)
   return {
     outputDirectory: typeof input.outputDirectory === 'string' ? input.outputDirectory : defaultWorkbenchSettings.outputDirectory,
     markdownWorkspaceDirectory: typeof input.markdownWorkspaceDirectory === 'string' ? input.markdownWorkspaceDirectory : defaultWorkbenchSettings.markdownWorkspaceDirectory,
     codeImageAuthor: typeof input.codeImageAuthor === 'string' ? input.codeImageAuthor : defaultWorkbenchSettings.codeImageAuthor,
+    // 0 means automatic, so this cannot go through `numberWithin`, which would
+    // pull a restored 0 up to the smallest manual page height. The bounds are
+    // repeated rather than imported: `code-layout` belongs to the code-image
+    // route chunk, and this module is in the startup bundle.
+    codeImageLinesPerPage: typeof input.codeImageLinesPerPage === 'number' && Number.isFinite(input.codeImageLinesPerPage) && input.codeImageLinesPerPage > 0
+      ? Math.min(200, Math.max(5, Math.round(input.codeImageLinesPerPage)))
+      : defaultWorkbenchSettings.codeImageLinesPerPage,
     privateToolsManifestPath: typeof input.privateToolsManifestPath === 'string' ? input.privateToolsManifestPath : defaultWorkbenchSettings.privateToolsManifestPath,
     transcriptionExecutablePath: typeof input.transcriptionExecutablePath === 'string' ? input.transcriptionExecutablePath : defaultWorkbenchSettings.transcriptionExecutablePath,
     transcriptionModelPath: typeof input.transcriptionModelPath === 'string' ? input.transcriptionModelPath : defaultWorkbenchSettings.transcriptionModelPath,
@@ -203,6 +238,7 @@ function normalizeSettings(value: unknown): WorkbenchSettings {
     readingWidth: enumSetting('readingWidth', ['focused', 'balanced', 'wide']),
     readingPaperTone: enumSetting('readingPaperTone', ['warm', 'neutral', 'mist', 'night']),
     reduceMotion: typeof input.reduceMotion === 'boolean' ? input.reduceMotion : defaultWorkbenchSettings.reduceMotion,
+    ...(toolboxBoard ? { toolboxBoard } : {}),
     ...(typeof input.lastUpdateCheck === 'string' ? { lastUpdateCheck: input.lastUpdateCheck } : {}),
     ...(typeof input.lastBackupAt === 'string' ? { lastBackupAt: input.lastBackupAt } : {}),
     ...(typeof input.lastManualBackupAt === 'string' ? { lastManualBackupAt: input.lastManualBackupAt } : {}),

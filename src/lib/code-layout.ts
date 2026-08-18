@@ -2,6 +2,9 @@ export interface CodeLayout {
   fontSize: number
   lineCount: number
   linesPerPage: number
+  /** What the automatic rule would pick, so the toolbar can name the default
+   * even while a manual count is in force. */
+  automaticLinesPerPage: number
   longestLine: number
   pageLineCounts: number[]
   pages: string[]
@@ -22,6 +25,18 @@ export function joinCodePages(pages: readonly string[], indexes: readonly number
     .filter((index) => Number.isInteger(index) && index >= 0 && index < pages.length && !seen.has(index) && seen.add(index))
     .map((index) => pages[index])
     .join('\n')
+}
+
+/** A manual page height stays inside what the card and the PNG can carry: too
+ * few lines makes hundreds of near-empty pages, too many makes one image the
+ * capture step has to split again. */
+export const MIN_CODE_LINES_PER_PAGE = 5
+export const MAX_CODE_LINES_PER_PAGE = 200
+
+/** Returns a usable manual page height, or 0 for "let the layout decide". */
+export function normalizeCodeLinesPerPage(value: unknown) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0
+  return Math.min(MAX_CODE_LINES_PER_PAGE, Math.max(MIN_CODE_LINES_PER_PAGE, Math.round(value)))
 }
 
 const CODE_CAPTURE_WIDTH = 720
@@ -88,7 +103,7 @@ export function codeLongImageFileNames(total: number) {
  * calculation isolated so large snippets can run in a Worker instead of
  * repeatedly scanning every line in Vue's render path.
  */
-export function calculateCodeLayout(code: string): CodeLayout {
+export function calculateCodeLayout(code: string, linesPerPageOverride = 0): CodeLayout {
   const lines = code.split('\n')
   let longestLine = 1
   for (const line of lines) {
@@ -99,7 +114,8 @@ export function calculateCodeLayout(code: string): CodeLayout {
   }
 
   const fontSize = Math.max(14, Math.min(20, Math.floor(700 / (longestLine * .58))))
-  const linesPerPage = Math.max(20, Math.min(38, Math.round(38 - Math.max(0, longestLine - 76) / 10)))
+  const automaticLinesPerPage = Math.max(20, Math.min(38, Math.round(38 - Math.max(0, longestLine - 76) / 10)))
+  const linesPerPage = normalizeCodeLinesPerPage(linesPerPageOverride) || automaticLinesPerPage
   const pages: string[] = []
   const pageLineCounts: number[] = []
 
@@ -113,6 +129,7 @@ export function calculateCodeLayout(code: string): CodeLayout {
     fontSize,
     lineCount: code ? lines.length : 0,
     linesPerPage,
+    automaticLinesPerPage,
     longestLine,
     pageLineCounts,
     pages: pages.length ? pages : [''],
