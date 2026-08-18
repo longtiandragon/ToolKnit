@@ -7586,9 +7586,14 @@ impl VaultService {
                 fs::remove_file(path)?;
             }
         }
-        let attachment_directory = self.source_asset_path(&format!("assets/questions/{id}"))?;
-        if attachment_directory.is_dir() {
-            fs::remove_dir_all(attachment_directory)?;
+        for relative in [
+            format!("assets/questions/{id}"),
+            format!("assets/documents/{id}"),
+        ] {
+            let attachment_directory = self.source_asset_path(&relative)?;
+            if attachment_directory.is_dir() {
+                fs::remove_dir_all(attachment_directory)?;
+            }
         }
         Ok(())
     }
@@ -9263,6 +9268,40 @@ mod tests {
         assert!(service
             .import_document_image(&document_id, &fake.to_string_lossy())
             .is_err());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_document_removes_managed_markdown_images() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-markdown-image-delete-test-{}",
+            Uuid::now_v7()
+        ));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let document_id = Uuid::now_v7().to_string();
+        service.save_document(test_document(document_id.clone(), "待删除图片笔记"))?;
+        let selected = root.join("selected.png");
+        image::save_buffer(
+            &selected,
+            &[36, 118, 95, 255, 244, 240, 231, 255],
+            2,
+            1,
+            image::ColorType::Rgba8,
+        )?;
+
+        let imported = service.import_document_image(&document_id, &selected.to_string_lossy())?;
+        let managed = service.document_image_path(&document_id, &imported.source)?;
+        let managed_directory = managed
+            .parent()
+            .expect("managed document image has a parent")
+            .to_path_buf();
+        assert!(managed.is_file());
+
+        service.delete_document(document_id)?;
+
+        assert!(!managed_directory.exists());
+        assert!(selected.is_file());
         fs::remove_dir_all(root)?;
         Ok(())
     }
