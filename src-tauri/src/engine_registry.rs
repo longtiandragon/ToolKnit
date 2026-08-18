@@ -77,7 +77,10 @@ const ENGINE_SPECS: &[EngineSpec] = &[
         id: "imagemagick",
         title: "ImageMagick",
         category: "图片",
-        candidates: &["magick.exe", "magick", "convert.exe", "convert"],
+        // Windows ships its own `convert.exe` for filesystem conversion. Treating
+        // that unrelated utility as ImageMagick produces OEM-encoded diagnostics
+        // (and a false probe attempt), so only use ImageMagick's unambiguous entry.
+        candidates: &["magick.exe", "magick"],
         args: &["-version"],
     },
     EngineSpec {
@@ -267,6 +270,15 @@ mod tests {
                 .iter()
                 .all(|argument| !argument.contains([' ', '\\', '/'])));
         }
+        let imagemagick = ENGINE_SPECS
+            .iter()
+            .find(|spec| spec.id == "imagemagick")
+            .unwrap();
+        assert!(imagemagick
+            .candidates
+            .iter()
+            .all(|candidate| !candidate.eq_ignore_ascii_case("convert.exe")
+                && !candidate.eq_ignore_ascii_case("convert")));
     }
 
     #[test]
