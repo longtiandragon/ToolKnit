@@ -251,7 +251,16 @@ watch(() => store.settings.codeImageLinesPerPage, (value) => {
  * a typo cannot produce ten thousand one-line pages. */
 function commitLinesPerPage() {
   const raw = String(linesPerPageDraft.value ?? '').trim()
-  const next = raw === '' ? 0 : normalizeCodeLinesPerPage(Number(raw))
+  const typed = raw === '' ? 0 : Number(raw)
+  const next = raw === '' ? 0 : normalizeCodeLinesPerPage(typed)
+  // Silently rewriting what someone typed reads like a broken field, so say
+  // what happened — but only when the number actually had to move.
+  if (raw !== '' && !next) ui.toast('每页行数已恢复自动', `请输入 ${MIN_CODE_LINES_PER_PAGE}–${MAX_CODE_LINES_PER_PAGE} 之间的行数。`, 'info')
+  else if (next && Number.isFinite(typed) && Math.round(typed) !== next) {
+    ui.toast(`每页行数已调整为 ${next}`, next === MAX_CODE_LINES_PER_PAGE
+      ? `一张图最多 ${MAX_CODE_LINES_PER_PAGE} 行，再长的代码请用连续长图导出。`
+      : `一张图至少 ${MIN_CODE_LINES_PER_PAGE} 行，否则会切出成百上千张近乎空白的图。`, 'info')
+  }
   linesPerPageDraft.value = next || ''
   manualLinesPerPage.value = next
 }
