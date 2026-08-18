@@ -277,6 +277,11 @@ async function downloadBackup() {
     backupExporting.value = false
   }
 }
+function desktopErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) return error.message
+  if (typeof error === 'string' && error.trim()) return error.trim()
+  return fallback
+}
 async function createVaultBackup() {
   if (!desktop || vaultBackupCreating.value) return
   const date = new Date().toISOString().slice(0, 10)
@@ -304,7 +309,7 @@ async function createVaultBackup() {
     await loadVaultHealth()
   } catch (error) {
     backupNoticeTone.value = 'error'
-    backupMessage.value = error instanceof Error ? `完整归档未完成：${error.message}` : '完整归档暂时无法创建。'
+    backupMessage.value = `完整归档未完成：${desktopErrorMessage(error, '完整归档暂时无法创建。')}`
   } finally {
     vaultBackupCreating.value = false
   }
@@ -473,7 +478,7 @@ async function restoreVaultBackup() {
   } catch (error) {
     vaultRestorePhase.value = 'error'
     backupNoticeTone.value = 'error'
-    backupMessage.value = error instanceof Error ? `归档不可恢复：${error.message}` : '无法检查所选完整 Vault 归档。'
+    backupMessage.value = `归档不可恢复：${desktopErrorMessage(error, '无法检查所选完整 Vault 归档。')}`
   } finally {
     vaultBackupInspecting.value = false
   }
@@ -503,7 +508,7 @@ async function confirmVaultRestore() {
   } catch (error) {
     vaultRestorePhase.value = 'error'
     backupNoticeTone.value = 'error'
-    vaultRestoreError.value = error instanceof Error ? `完整恢复未完成：${error.message}` : '完整 Vault 暂时无法恢复。'
+    vaultRestoreError.value = `完整恢复未完成：${desktopErrorMessage(error, '完整 Vault 暂时无法恢复。')}`
     backupMessage.value = vaultRestoreError.value
   } finally {
     vaultBackupRestoring.value = false
