@@ -68,7 +68,7 @@ function list(value = '') {
 /** Part-of-speech markers as every dictionary export writes them. A blob like
  * `n. 手段；方法 vt. 意味着` is two senses, and splitting it here is what saves
  * the reader from retyping a word list they already own. */
-const PART_OF_SPEECH_PATTERN = /(?:^|[\s；;，,、/|])((?:n|v|vt|vi|adj|adv|prep|conj|pron|num|art|aux|int|interj|abbr|pl|det|模|名|动|形|副)\.)\s*/gi
+const PART_OF_SPEECH_PATTERN = /(?:^|[\s；;，,、/|])((?:n|v|vt|vi|a|ad|adj|adv|prep|conj|pron|num|art|aux|int|interj|abbr|pl|det|模|名|动|形|副)\.)\s*/gi
 
 /** Anki writes HTML into plain-text exports, and a stray `<div>` in a
  * definition is noise the reader would have to clean up by hand. */
@@ -97,6 +97,27 @@ function extractPronunciation(value: string) {
   const match = value.match(/[[/]([^\]/]{1,120})[\]/]\s*$/)
   if (!match) return { text: value.trim(), pronunciation: '' }
   return { text: value.slice(0, match.index).trim(), pronunciation: match[0].trim() }
+}
+
+/** The vocabulary editor offers a fixed set of parts of speech. A dictionary
+ * writes `n.` / `vt.` / `a.`, and an unmapped abbreviation lands in the editor
+ * as an empty selector, so the abbreviations are translated here once.
+ * Anything unrecognised passes through untouched — a hand-written value is
+ * still the author's. */
+const PART_OF_SPEECH_VOCABULARY: Record<string, string> = {
+  n: 'noun', pl: 'noun', 名: 'noun',
+  v: 'verb', vt: 'verb', vi: 'verb', aux: 'verb', 动: 'verb',
+  a: 'adjective', adj: 'adjective', 形: 'adjective',
+  ad: 'adverb', adv: 'adverb', 副: 'adverb',
+  prep: 'phrase', conj: 'phrase', int: 'phrase', interj: 'phrase',
+  pron: 'other', num: 'other', art: 'other', det: 'other', abbr: 'other',
+}
+
+export function normalizeVocabularyPartOfSpeech(value: string) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  const key = raw.replace(/\.$/, '').toLocaleLowerCase('en-US')
+  return PART_OF_SPEECH_VOCABULARY[key] ?? raw
 }
 
 /** Returns one entry per part of speech found in a definition blob. A blob
@@ -234,7 +255,7 @@ export function parseVocabularyImport(source: string): VocabularyImportParseResu
     // nobody has to retype what the export already said.
     const senses = splitDefinitionSenses(row.definition, row.partOfSpeech)
     if (!senses.length) rows.push(row)
-    else for (const sense of senses) rows.push({ ...row, partOfSpeech: sense.partOfSpeech, definition: sense.definition })
+    else for (const sense of senses) rows.push({ ...row, partOfSpeech: normalizeVocabularyPartOfSpeech(sense.partOfSpeech), definition: sense.definition })
   }
   const truncated = sourceTruncated || meaningful.length - Number(hasHeader) > MAX_VOCABULARY_IMPORT_ROWS
   if (sourceTruncated) issues.unshift({ line: 0, message: '输入超过 1,000,000 字符，只解析了前半部分', preview: '' })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseVocabularyImport, prepareVocabularyImport, splitDefinitionSenses } from './vocabulary-import'
+import { parseVocabularyImport, prepareVocabularyImport, splitDefinitionSenses, normalizeVocabularyPartOfSpeech } from './vocabulary-import'
 import type { VocabularyEntry } from '@/types'
 
 const ids = () => { let index = 0; return () => `00000000-0000-7000-8000-${String(index++).padStart(12, '0')}` }
@@ -45,14 +45,14 @@ describe('vocabulary batch import', () => {
 
   it('reads a dictionary export that puts the phonetic in the middle column', () => {
     const parsed = parseVocabularyImport('resilient\t[rɪˈzɪliənt]\tadj. 有弹性的；能恢复的')
-    expect(parsed.rows[0]).toMatchObject({ lemma: 'resilient', pronunciation: '[rɪˈzɪliənt]', partOfSpeech: 'adj.', definition: '有弹性的；能恢复的' })
+    expect(parsed.rows[0]).toMatchObject({ lemma: 'resilient', pronunciation: '[rɪˈzɪliənt]', partOfSpeech: 'adjective', definition: '有弹性的；能恢复的' })
     expect(parseVocabularyImport('run [rʌn] - 跑').rows[0]).toMatchObject({ lemma: 'run', pronunciation: '[rʌn]', definition: '跑' })
   })
 
   it('reads an Anki plain-text export, directives and HTML included', () => {
     const parsed = parseVocabularyImport('#separator:tab\n#html:true\n#deck column:1\nresilient\t<div>adj. 有弹性的</div><br>vt. 使恢复')
     expect(parsed.rows).toHaveLength(2)
-    expect(parsed.rows.map((row) => row.partOfSpeech)).toEqual(['adj.', 'vt.'])
+    expect(parsed.rows.map((row) => row.partOfSpeech)).toEqual(['adjective', 'verb'])
     expect(parsed.rows[0].definition).toBe('有弹性的')
     expect(parsed.rows.every((row) => !row.definition.includes('<'))).toBe(true)
   })
@@ -66,7 +66,29 @@ describe('vocabulary batch import', () => {
     expect(splitDefinitionSenses('跑；运行', 'verb')).toEqual([{ partOfSpeech: 'verb', definition: '跑；运行' }])
     expect(splitDefinitionSenses('没有词性标记的释义')).toEqual([{ partOfSpeech: '', definition: '没有词性标记的释义' }])
     const prepared = prepareVocabularyImport(parseVocabularyImport('mean\tn. 手段 vt. 意味着').rows, [], 'merge', false, ids(), '2026-08-10T00:00:00.000Z')
-    expect(prepared.entries[0].senses.map((sense) => sense.partOfSpeech)).toEqual(['n.', 'vt.'])
+    expect(prepared.entries[0].senses.map((sense) => sense.partOfSpeech)).toEqual(['noun', 'verb'])
+  })
+
+  it('translates dictionary abbreviations into the vocabulary the editor offers', () => {
+    // These six are the editor's `<select>` options; anything else shows blank.
+    expect(normalizeVocabularyPartOfSpeech('n.')).toBe('noun')
+    expect(normalizeVocabularyPartOfSpeech('vt.')).toBe('verb')
+    expect(normalizeVocabularyPartOfSpeech('vi.')).toBe('verb')
+    // `a.` and `ad.` are how a dictionary writes adjective and adverb, and
+    // missing them left `a. 大的` sitting inside the meaning itself.
+    expect(normalizeVocabularyPartOfSpeech('a.')).toBe('adjective')
+    expect(normalizeVocabularyPartOfSpeech('ad.')).toBe('adverb')
+    expect(normalizeVocabularyPartOfSpeech('prep.')).toBe('phrase')
+    // A value someone wrote themselves stays theirs.
+    expect(normalizeVocabularyPartOfSpeech('名词')).toBe('名词')
+    expect(normalizeVocabularyPartOfSpeech('verb')).toBe('verb')
+    expect(normalizeVocabularyPartOfSpeech('  ')).toBe('')
+  })
+
+  it('lifts an adjective marker out of the meaning instead of leaving it in the text', () => {
+    const rows = parseVocabularyImport('big\ta. 大的, 重要的 ad. 大量地').rows
+    expect(rows.map((row) => row.partOfSpeech)).toEqual(['adjective', 'adverb'])
+    expect(rows.map((row) => row.definition)).toEqual(['大的, 重要的', '大量地'])
   })
 
   it('merges new senses without replacing existing review state', () => {

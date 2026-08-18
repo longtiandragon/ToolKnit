@@ -16,7 +16,8 @@ const run: DictionaryRecord = {
 describe('dictionary completion', () => {
   it('turns one record into a row per sense, which is what the importer eats', () => {
     const rows = dictionaryRecordToRows(run)
-    expect(rows.map((row) => row.partOfSpeech)).toEqual(['n.', 'vi.'])
+    // The editor offers a fixed vocabulary; `n.` would land there as blank.
+    expect(rows.map((row) => row.partOfSpeech)).toEqual(['noun', 'verb'])
     expect(rows.map((row) => row.definition)).toEqual(['奔跑；一段时期', '跑；运行'])
     expect(rows.every((row) => row.lemma === 'run' && row.language === '英语')).toBe(true)
     // The editor shows a bracketed phonetic; the dictionary stores a bare one.

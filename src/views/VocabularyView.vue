@@ -60,17 +60,23 @@ let listFrame: number | undefined
 let listResizeObserver: ResizeObserver | undefined
 const vocabularyRowHeight = 60
 
-/* Field metadata, so four near-identical inputs are one loop instead of four
-   hand-written labels that drift apart. */
+/* Field metadata, so near-identical inputs are one loop instead of hand-written
+   labels that drift apart. The set covers what a dictionary actually records:
+   an adjective has no past participle, and a verb has no superlative.
+   No example placeholders — grey `run` in an empty field reads as data. */
 const wordFormFields = [
-  { key: 'base', label: '原形', placeholder: 'run' },
-  { key: 'past', label: '过去式', placeholder: 'ran' },
-  { key: 'participle', label: '过去分词', placeholder: 'run' },
-  { key: 'presentParticiple', label: '现在分词', placeholder: 'running' },
+  { key: 'base', label: '原形' },
+  { key: 'past', label: '过去式' },
+  { key: 'participle', label: '过去分词' },
+  { key: 'presentParticiple', label: '现在分词' },
+  { key: 'thirdPerson', label: '三单' },
+  { key: 'plural', label: '复数' },
+  { key: 'comparative', label: '比较级' },
+  { key: 'superlative', label: '最高级' },
 ] as const
 const senseListFields = [
   { key: 'examples', label: '例句', placeholder: '每条例句用；分隔' },
-  { key: 'collocations', label: '常用搭配', placeholder: 'run a program；run out of' },
+  { key: 'collocations', label: '常用搭配', placeholder: '每项用；分隔' },
   { key: 'synonyms', label: '近义 / 易混', placeholder: '每项用；分隔' },
 ] as const
 const dictionaryReady = ref(false)
@@ -375,6 +381,16 @@ function useSuggestedWord(word: string) {
   pendingMiss.value = null
   return completeWord(word)
 }
+
+const allWordFormsOpen = ref(false)
+/** `big` is not a verb, so offering it a past participle is noise. Show what
+ * the word actually has; the full set stays one click away for anything the
+ * dictionary did not know. */
+const visibleWordFormFields = computed(() => {
+  if (allWordFormsOpen.value) return wordFormFields
+  const filled = wordFormFields.filter((form) => String(draft.value?.forms?.[form.key] ?? '').trim())
+  return filled.length ? filled : []
+})
 
 function flashSaved() { saved.value = true; window.setTimeout(() => saved.value = false, 1500) }
 async function addWord() {
@@ -707,8 +723,8 @@ onBeforeUnmount(() => {
       <section v-else-if="draft" class="pane h-full min-h-0" @input="markDraftDirty" @change="markDraftDirty">
         <header class="row-between gap-3 shrink-0 px-3 h-12 border-b border-line">
           <span class="row gap-2 min-w-0 flex-1">
-            <input v-model="draft.lemma" class="min-w-0 max-w-56 h-8 bg-transparent border-0 shadow-none! text-[16px] font-semibold text-fg focus:outline-none" aria-label="单词" placeholder="run" />
-            <input v-model="draft.pronunciation" class="field h-7 w-28 px-2 font-mono text-[12px]" aria-label="音标或读音" placeholder="/rʌn/" />
+            <input v-model="draft.lemma" class="min-w-0 max-w-56 h-8 bg-transparent border-0 shadow-none! text-[16px] font-semibold text-fg focus:outline-none" aria-label="单词" placeholder="单词" />
+            <input v-model="draft.pronunciation" class="field h-7 w-28 px-2 font-mono text-[12px]" aria-label="音标或读音" placeholder="音标" />
             <select v-model="draft.language" class="field h-7 px-2 text-[12px]" aria-label="语言">
               <option>英语</option><option>日语</option><option>其他</option>
             </select>
@@ -741,14 +757,20 @@ onBeforeUnmount(() => {
           <section class="stack gap-2">
             <div class="row-between gap-2">
               <h3 class="text-[11px] font-semibold text-fg-3">词形</h3>
-              <small class="text-[11px] text-fg-3">用于查找和复习时提示</small>
+              <span class="row gap-2">
+                <small class="text-[11px] text-fg-3">用于查找和复习时提示</small>
+                <button type="button" class="btn-tool h-6 px-1.5 text-[11px]" @click="allWordFormsOpen = !allWordFormsOpen">
+                  {{ allWordFormsOpen ? '只看已有词形' : visibleWordFormFields.length ? '全部词形' : '添加词形' }}
+                </button>
+              </span>
             </div>
-            <div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
-              <label v-for="form in wordFormFields" :key="form.key" class="stack gap-1.5">
+            <div v-if="visibleWordFormFields.length" class="grid grid-cols-2 lg:grid-cols-4 gap-2">
+              <label v-for="form in visibleWordFormFields" :key="form.key" class="stack gap-1.5">
                 <span class="text-[11px] text-fg-3">{{ form.label }}</span>
-                <input v-model="draft.forms[form.key]" class="field h-8 text-[12px]" :placeholder="form.placeholder" />
+                <input v-model="draft.forms[form.key]" class="field h-8 text-[12px]" />
               </label>
             </div>
+            <p v-else class="text-[11px] leading-snug text-fg-3">这个词没有记录到词形变化。</p>
           </section>
 
           <div class="divider" role="presentation" />
@@ -768,6 +790,10 @@ onBeforeUnmount(() => {
                 <select v-model="sense.partOfSpeech" class="field h-7 px-2 text-[12px]" :aria-label="`词义 ${index + 1} 词性`">
                   <option value="">词性</option>
                   <option>noun</option><option>verb</option><option>adjective</option><option>adverb</option><option>phrase</option><option>other</option>
+                  <!-- An imported word can carry a part of speech this list
+                       never offered; dropping it from the options would show
+                       the sense as having none at all. -->
+                  <option v-if="sense.partOfSpeech && !['noun', 'verb', 'adjective', 'adverb', 'phrase', 'other'].includes(sense.partOfSpeech)">{{ sense.partOfSpeech }}</option>
                 </select>
                 <button
                   class="center w-7 h-7 ml-auto shrink-0 rounded-sm text-fg-3 hover:not-disabled:bg-surface-2 hover:not-disabled:text-danger disabled:opacity-35 disabled:cursor-not-allowed"

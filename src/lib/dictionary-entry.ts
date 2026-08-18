@@ -1,4 +1,4 @@
-import { splitDefinitionSenses, type VocabularyImportRow } from '@/lib/vocabulary-import'
+import { normalizeVocabularyPartOfSpeech, splitDefinitionSenses, type VocabularyImportRow } from '@/lib/vocabulary-import'
 
 /** One ECDICT row, as `lookup_dictionary_words` returns it. */
 export interface DictionaryRecord {
@@ -64,7 +64,7 @@ export function dictionaryRecordToRows(record: DictionaryRecord, language = '英
   if (!senses.length) return [{ line: 1, partOfSpeech: '', definition: '', ...base }]
   return senses.map((sense, index) => ({
     line: index + 1,
-    partOfSpeech: sense.partOfSpeech,
+    partOfSpeech: normalizeVocabularyPartOfSpeech(sense.partOfSpeech),
     definition: sense.definition,
     ...base,
   }))
