@@ -10,6 +10,13 @@
  * 2. Unreadable text. Foreground against its real (composited) background,
  *    below the WCAG AA ratio for its size.
  *
+ * 3. States a screenshot never shows. The default render of a route has no
+ *    hovered control and, on most routes, no selected sidebar entry, so a
+ *    selected-state colour could be white-on-white for months without this
+ *    audit noticing — which is exactly what happened to `.rail-child.active`.
+ *    Hover is applied to each interactive element in turn, and the route list
+ *    includes locations that put a navigation entry into its selected state.
+ *
  * It also checks that every custom property referenced by the stylesheets
  * actually resolves — a `--x: var(--x)` alias is a cycle, and CSS answers a
  * cycle by silently dropping the token everywhere it is used.
@@ -30,10 +37,21 @@ const ROUTES = [
   '/media', '/subtitles', '/ocr', '/private-tools', '/history',
   '/clipboard', '/developer-tools', '/code-image', '/visual', '/create', '/ai',
   '/documents', '/words', '/review', '/lab', '/settings',
+  /* Locations that select a sidebar entry. Visiting only the bare routes left
+     `.rail-child.active` unrendered, so its colours were never measured. */
+  '/knowledge?filter=recent', '/history?view=activity', '/clipboard?view=snippets',
+  '/documents?kind=question', '/subtitles?transcribe=1', '/settings?section=dictionary',
 ]
 
-/* Runs in the page. Kept as one function so it can be handed to evaluate(). */
-function collect() {
+/* Controls whose hover and selected states carry their own colours. Bounded per
+   route: hovering is a round trip each, and a page has hundreds of elements. */
+const STATEFUL = '.rail-child, .nav-item, .btn-tool, .menu-item, .btn-default, .btn-primary, .btn-ghost, [role="tab"], .chip'
+const STATEFUL_LIMIT = 24
+
+/* Runs in the page. Kept as one function so it can be handed to evaluate().
+   With `only`, it measures just the elements matching that selector, which is
+   how one hovered control is checked without re-walking the document. */
+function collect(options) {
   /* Every colour that reaches this page through a token utility computes to
      `color(srgb …)`, not `rgb()`: presetWind4 emits `color-mix(in oklab, …)`
      for its opacity handling and Chrome reports the result in that space. An
@@ -160,7 +178,7 @@ function collect() {
   const seen = new Set()
   let checked = 0
 
-  for (const element of document.querySelectorAll('body *')) {
+  for (const element of document.querySelectorAll(options?.only || 'body *')) {
     if (isContent(element)) continue
     checked += 1
     const rect = element.getBoundingClientRect()
@@ -281,12 +299,41 @@ await page.waitForTimeout(900)
 const dead = await page.evaluate(deadTokens)
 if (dead.length) console.log(`\n!! 解析不出值的 CSS 变量 (${dead.length}): ${dead.join(', ')}\n`)
 
+/** Measures one control while it is actually hovered. `:hover` cannot be
+ * forced from script, so the pointer really goes there; the probe attribute
+ * only marks which element to read back. */
+async function hoverFindings(page, route) {
+  const targets = await page.locator(STATEFUL).all()
+  const found = []
+  for (const target of targets.slice(0, STATEFUL_LIMIT)) {
+    try {
+      if (!await target.isVisible()) continue
+      await target.evaluate((node) => node.setAttribute('data-audit-probe', ''))
+      await target.hover({ timeout: 1200 })
+      const probed = await page.evaluate(collect, { only: '[data-audit-probe]' })
+      for (const finding of probed.findings) found.push({ ...finding, el: `${finding.el}:hover` })
+    } catch {
+      // A control that moved, closed a menu under itself, or refused the
+      // pointer is not a finding — it is simply not measurable here.
+    } finally {
+      await target.evaluate((node) => node.removeAttribute('data-audit-probe')).catch(() => {})
+    }
+  }
+  return found
+}
+
 for (const route of ROUTES) {
   await page.goto(`${BASE}${route}`, { waitUntil: 'networkidle' })
+  // The hover pass leaves the pointer on its last target, and a pointer still
+  // resting over a control makes the next route measure a hover state as if it
+  // were the resting one. Park it somewhere nothing lives.
+  await page.mouse.move(4, 4)
   await page.waitForTimeout(700)
   const result = await page.evaluate(collect)
+  const hovered = await hoverFindings(page, route)
+  result.findings.push(...hovered)
   const findings = result.findings
-  checked += result.checked
+  checked += result.checked + hovered.length
   total += findings.length
   if (!findings.length) continue
   report.push({ route, findings })
