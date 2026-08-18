@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import { toolCategories } from '@/lib/toolbox-nav'
 import { applyTheme, resolveTheme, themePreference, type ThemePreference } from '@/lib/theme'
-import { activeWorkspaceChildTarget, workspaceNavGroups, type WorkspaceNavItem } from '@/lib/workspace-navigation'
+import { activeWorkspaceChildTarget, activeWorkspaceSpace, workspaceNavGroups, type WorkspaceNavItem } from '@/lib/workspace-navigation'
 
 const emit = defineEmits<{
   openCommand: [HTMLElement]
@@ -24,20 +24,31 @@ const resolved = computed(() => resolveTheme(preference.value))
 const totalTools = computed(() => toolCategories.reduce((sum, category) => sum + category.tools.length, 0))
 const spaces = workspaceNavGroups.flatMap((group) => group.items)
 const expandedSpace = ref(activeSpace()?.to ?? '/today')
+const railNav = ref<HTMLElement>()
 
-function routeMatches(to: string) {
-  const target = new URL(to, 'https://knitspace.local')
-  if (route.path !== target.pathname) return false
-  if (target.hash && route.hash !== target.hash) return false
-  return [...target.searchParams].every(([key, value]) => String(route.query[key] ?? '') === value)
+/* The rail's own callers always want the open-space preference. It is a
+   separate function because `expandedSpace` is initialised *from*
+   `activeSpace`, and a default parameter would evaluate the ref before it
+   exists — `f(undefined)` runs the default. */
+function activeSpace(preferred?: string) {
+  return activeWorkspaceSpace(spaces, { path: route.path, query: route.query, hash: route.hash }, preferred)
 }
 
-function activeSpace() {
-  return spaces.find((space) => routeMatches(space.to) || space.children.some((child) => routeMatches(child.to)))
+function currentSpace() {
+  return activeSpace(expandedSpace.value)
 }
 
 function visibleChildren(space: WorkspaceNavItem) {
   return space.children.filter((child) => child.to !== space.to)
+}
+
+/* Clicking an entry that points at the location you are already on is not a
+   navigation, so the router does nothing and the page has no way to know it was
+   asked again. The page listens for this instead. */
+function announceAnchor(to: string) {
+  const hash = to.includes('#') ? `#${to.split('#')[1]}` : ''
+  if (!hash) return
+  window.dispatchEvent(new CustomEvent('knitspace:anchor-requested', { detail: { hash } }))
 }
 
 function activeChild(space: WorkspaceNavItem) {
@@ -55,8 +66,15 @@ function handleSpaceKeydown(event: KeyboardEvent, space: WorkspaceNavItem) {
 }
 
 watch(() => route.fullPath, () => {
-  const active = activeSpace()
+  const active = currentSpace()
   if (active) expandedSpace.value = active.to
+  // A space with a dozen children is taller than the rail, so the entry that
+  // was just opened can easily be the one scrolled out of sight.
+  void nextTick(() => {
+    railNav.value
+      ?.querySelector('.rail-child.active')
+      ?.scrollIntoView({ block: 'nearest' })
+  })
 })
 
 function isActive(path: string) {
@@ -108,7 +126,7 @@ function cycleTheme() {
          expose implemented workflows without growing another top-level list;
          only the active space expands, so an ordinary desktop window remains
          compact. Right click opens the same complete menu used elsewhere. -->
-    <nav class="flex-1 min-h-0 overflow-y-auto px-2.5 pb-2" aria-label="主导航目录">
+    <nav ref="railNav" class="flex-1 min-h-0 overflow-y-auto px-2.5 pb-2" aria-label="主导航目录">
       <p class="eyebrow px-2.5 pt-1 pb-1.5">五个空间</p>
       <section
         v-for="space in spaces"
@@ -119,7 +137,7 @@ function cycleTheme() {
         <div class="row gap-0.5">
           <RouterLink
             :to="space.to"
-            :class="['nav-item min-w-0 flex-1', activeSpace()?.to === space.to && 'nav-item-active']"
+            :class="['nav-item min-w-0 flex-1', currentSpace()?.to === space.to && 'nav-item-active']"
             :title="`打开${space.label}；右键查看全部功能`"
             aria-haspopup="menu"
             @contextmenu.prevent.stop="emit('openSpaceContext', $event, space)"
@@ -140,14 +158,21 @@ function cycleTheme() {
             <span class="transition-transform duration-120"><AppIcon name="chevron-left" :size="12" class="rotate-180" /></span>
           </button>
         </div>
-        <nav v-if="expandedSpace === space.to" class="rail-space__children stack gap-0.5 max-h-64 overflow-y-auto pr-0.5 pb-1" :aria-label="`${space.label}功能`">
+        <!-- No height cap and no scroller of its own. It had `max-h-64
+             overflow-y-auto`, which nested a second scroll area inside the
+             rail's own — so a space with thirteen children showed nine and cut
+             the tenth in half against an inner edge no one could see. One
+             scroll, on the rail, is the ordinary pattern and the one that lets
+             `scrollIntoView` below actually reach an item. -->
+        <nav v-if="expandedSpace === space.to" class="rail-space__children stack gap-0.5 pr-0.5 pb-1" :aria-label="`${space.label}功能`">
           <RouterLink
             v-for="child in visibleChildren(space)"
             :key="child.to"
             :to="child.to"
-            class="rail-child row gap-2 min-h-7 pl-7 pr-2 py-1 rounded-sm text-[11px] leading-snug text-fg-2 transition-colors duration-120"
+            class="rail-child row gap-2 min-h-7 pl-7 pr-2 py-1 rounded-sm text-[11px] leading-snug text-fg-2 scroll-my-2 transition-colors duration-120"
             :class="activeChild(space) === child.to && 'active'"
             :title="child.label"
+            @click="announceAnchor(child.to)"
           >
             <AppIcon :name="child.icon" :size="12" />
             <span class="min-w-0 truncate">{{ child.label }}</span>

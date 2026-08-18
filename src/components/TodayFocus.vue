@@ -444,11 +444,33 @@ function toggleFocusHistory() {
   if (!focusHistoryOpen.value) focusHistoryExpanded.value = false
 }
 
+/* The three sidebar entries for this page are anchors into it. Two of them had
+   no handler at all, and on a screen tall enough to hold the whole page there
+   is nothing to scroll either — so clicking them did nothing whatsoever. */
+const FOCUS_ANCHORS = new Set(['#today-focus-timer', '#today-focus-ledger', '#today-anniversaries'])
+let anchorFlashTimer: number | undefined
+
+/** Scrolling is not feedback when everything already fits. Marking the section
+ * for a moment is what tells the reader where they just landed. */
+function flashAnchor(id: string) {
+  const target = document.getElementById(id)
+  if (!target) return
+  target.scrollIntoView({ block: 'start', behavior: 'auto' })
+  if (anchorFlashTimer !== undefined) window.clearTimeout(anchorFlashTimer)
+  document.querySelectorAll('.anchor-flash').forEach((node) => node.classList.remove('anchor-flash'))
+  // Restart the animation even when the same anchor is asked for twice.
+  void target.offsetWidth
+  target.classList.add('anchor-flash')
+  anchorFlashTimer = window.setTimeout(() => target.classList.remove('anchor-flash'), 1400)
+}
+
 function syncFocusAnchor(hash: string) {
-  if (hash !== '#today-focus-ledger') return
-  focusHistoryOpen.value = true
-  if (route.query.action === 'log-time' && !focusEntryOpen.value) openFocusEntryEditor()
-  void nextTick(() => document.getElementById('today-focus-ledger')?.scrollIntoView({ block: 'start', behavior: 'auto' }))
+  if (!FOCUS_ANCHORS.has(hash)) return
+  if (hash === '#today-focus-ledger') {
+    focusHistoryOpen.value = true
+    if (route.query.action === 'log-time' && !focusEntryOpen.value) openFocusEntryEditor()
+  }
+  void nextTick(() => flashAnchor(hash.slice(1)))
 }
 
 function updateDuration() {
@@ -505,6 +527,15 @@ function restoreFocusSession() {
 function closeMenuOnOutsideClick() { closeMenu() }
 watch(durationMinutes, updateDuration)
 watch(() => route.fullPath, () => syncFocusAnchor(route.hash), { immediate: true })
+
+/* Asking for the same section twice is a real request; the router treats it as
+   no navigation at all, so the rail says so directly. */
+function handleAnchorRequest(event: Event) {
+  const hash = (event as CustomEvent<{ hash: string }>).detail?.hash
+  if (hash) syncFocusAnchor(hash)
+}
+window.addEventListener('knitspace:anchor-requested', handleAnchorRequest)
+onBeforeUnmount(() => window.removeEventListener('knitspace:anchor-requested', handleAnchorRequest))
 onMounted(async () => {
   try {
     if (isDesktop()) {
@@ -534,6 +565,7 @@ onMounted(async () => {
   calendarTimer = window.setInterval(refreshCalendarDay, 60_000)
   window.addEventListener('click', closeMenuOnOutsideClick)
 })
+onBeforeUnmount(() => { if (anchorFlashTimer !== undefined) window.clearTimeout(anchorFlashTimer) })
 onBeforeUnmount(() => { clearTimer(); if (calendarTimer !== undefined) window.clearInterval(calendarTimer); window.removeEventListener('click', closeMenuOnOutsideClick) })
 </script>
 

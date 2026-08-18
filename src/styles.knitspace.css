@@ -65,6 +65,23 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
    `--accent-soft` — a 9% tint in the light theme — it is white on white, and
    the selected entry disappears. The tint takes `--accent-strong` as its ink, which is the token tuned for
    exactly this: accent-coloured text that still passes on a pale wash. */
+:root { --anchor-flash-ring: color-mix(in srgb, var(--accent) 38%, transparent); }
+
+/* A jump to a section that is already on screen has nothing to scroll, so the
+   arrival is marked instead of merely navigated to. */
+.anchor-flash { animation: anchor-flash 1.4s var(--motion-ease) 1; }
+@keyframes anchor-flash {
+  0%   { box-shadow: inset 0 0 0 2px var(--anchor-flash-ring); background-color: var(--accent-soft); }
+  70%  { box-shadow: inset 0 0 0 2px var(--anchor-flash-ring); background-color: var(--accent-soft); }
+  100% { box-shadow: inset 0 0 0 2px transparent; background-color: transparent; }
+}
+/* Someone who asked for less motion still needs to see where they landed, so
+   the mark stays — it simply does not animate. */
+@media (prefers-reduced-motion: reduce) {
+  .anchor-flash { animation: none; box-shadow: inset 0 0 0 2px var(--anchor-flash-ring); }
+}
+.reduce-motion .anchor-flash { animation: none; box-shadow: inset 0 0 0 2px var(--anchor-flash-ring); }
+
 .rail-child:hover, .rail-child.active { color: var(--accent-strong); background: var(--accent-soft); }
 .rail-child.active { box-shadow: inset 2px 0 var(--accent); }
 
