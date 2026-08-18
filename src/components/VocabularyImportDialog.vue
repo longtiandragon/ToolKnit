@@ -35,7 +35,9 @@ const includedRows = computed(() => parseResult.value.rows.filter(row => !exclud
 const prepared = computed(() => prepareVocabularyImport(includedRows.value, store.vocabulary, policy.value, reviewFacets.value))
 const previewRows = computed(() => includedRows.value.slice(0, 10))
 const canImport = computed(() => includedRows.value.length > 0 && prepared.value.entries.length > 0 && !parsing.value && !importing.value)
-const formatLabel = computed(() => parseResult.value.format === 'table' ? 'CSV / TSV 表格' : '单词—释义清单')
+const formatLabel = computed(() => parseResult.value.format === 'table'
+  ? 'CSV / TSV 表格'
+  : parseResult.value.rows.every((row) => !row.definition) && parseResult.value.rows.length ? '纯单词表' : '单词—释义清单')
 const reviewFacetChoices: Array<{ id: VocabularyReviewFacet; label: string; detail: string }> = [
   { id: 'meaning', label: '词义', detail: '单词 → 释义' },
   { id: 'spelling', label: '拼写', detail: '释义 → 单词' },
@@ -207,7 +209,7 @@ onBeforeUnmount(() => { window.clearTimeout(parseTimer); worker?.terminate(); wi
             <header class="row-between gap-3 shrink-0 px-3 py-2 border-b border-line">
               <div class="stack gap-0.5 min-w-0">
                 <b class="text-[12px] font-medium text-fg">原始词表</b>
-                <small class="text-[11px] leading-snug text-fg-3">支持词性、释义、例句、常用搭配等表头，或每行“单词 - 释义”</small>
+                <small class="text-[11px] leading-snug text-fg-3">直接粘贴背单词软件导出的词表：纯单词一行一个也可以，Anki 导出的 HTML 与表头会自动清理，释义里的 n. / vt. 会自动拆成词义</small>
               </div>
               <button class="btn-default btn-sm shrink-0" :disabled="importing" @click="fileInput?.click()"><AppIcon name="folder-open" :size="13" />读取文件</button>
             </header>

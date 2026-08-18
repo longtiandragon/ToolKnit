@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseVocabularyImport, prepareVocabularyImport } from './vocabulary-import'
+import { parseVocabularyImport, prepareVocabularyImport, splitDefinitionSenses } from './vocabulary-import'
 import type { VocabularyEntry } from '@/types'
 
 const ids = () => { let index = 0; return () => `00000000-0000-7000-8000-${String(index++).padStart(12, '0')}` }
@@ -25,6 +25,48 @@ describe('vocabulary batch import', () => {
     const parsed = parseVocabularyImport('run - 跑\nmissing definition\n - 空单词')
     expect(parsed.rows).toHaveLength(1)
     expect(parsed.issues.map(issue => issue.message)).toEqual(['缺少释义', '缺少单词'])
+  })
+
+  it('takes a bare word list, which is what every flashcard app exports', () => {
+    const parsed = parseVocabularyImport('resilient\nubiquitous\ntake for granted')
+    expect(parsed.issues).toEqual([])
+    expect(parsed.rows.map((row) => row.lemma)).toEqual(['resilient', 'ubiquitous', 'take for granted'])
+    const prepared = prepareVocabularyImport(parsed.rows, [], 'merge', false, ids(), '2026-08-10T00:00:00.000Z')
+    expect(prepared.newCount).toBe(3)
+    // The word is in; a meaning it never carried must not become a blank card.
+    expect(prepared.entries.every((entry) => entry.senses.length === 0)).toBe(true)
+  })
+
+  it('keeps rejecting a missing meaning when the file clearly has meanings', () => {
+    const parsed = parseVocabularyImport('run - 跑\nmissing definition\n - 空单词')
+    expect(parsed.rows).toHaveLength(1)
+    expect(parsed.issues.map((issue) => issue.message)).toEqual(['缺少释义', '缺少单词'])
+  })
+
+  it('reads a dictionary export that puts the phonetic in the middle column', () => {
+    const parsed = parseVocabularyImport('resilient\t[rɪˈzɪliənt]\tadj. 有弹性的；能恢复的')
+    expect(parsed.rows[0]).toMatchObject({ lemma: 'resilient', pronunciation: '[rɪˈzɪliənt]', partOfSpeech: 'adj.', definition: '有弹性的；能恢复的' })
+    expect(parseVocabularyImport('run [rʌn] - 跑').rows[0]).toMatchObject({ lemma: 'run', pronunciation: '[rʌn]', definition: '跑' })
+  })
+
+  it('reads an Anki plain-text export, directives and HTML included', () => {
+    const parsed = parseVocabularyImport('#separator:tab\n#html:true\n#deck column:1\nresilient\t<div>adj. 有弹性的</div><br>vt. 使恢复')
+    expect(parsed.rows).toHaveLength(2)
+    expect(parsed.rows.map((row) => row.partOfSpeech)).toEqual(['adj.', 'vt.'])
+    expect(parsed.rows[0].definition).toBe('有弹性的')
+    expect(parsed.rows.every((row) => !row.definition.includes('<'))).toBe(true)
+  })
+
+  it('splits one meaning blob into a sense per part of speech', () => {
+    expect(splitDefinitionSenses('n. 手段；方法 vt. 意味着')).toEqual([
+      { partOfSpeech: 'n.', definition: '手段；方法' },
+      { partOfSpeech: 'vt.', definition: '意味着' },
+    ])
+    // A column that already said the part of speech is trusted as written.
+    expect(splitDefinitionSenses('跑；运行', 'verb')).toEqual([{ partOfSpeech: 'verb', definition: '跑；运行' }])
+    expect(splitDefinitionSenses('没有词性标记的释义')).toEqual([{ partOfSpeech: '', definition: '没有词性标记的释义' }])
+    const prepared = prepareVocabularyImport(parseVocabularyImport('mean\tn. 手段 vt. 意味着').rows, [], 'merge', false, ids(), '2026-08-10T00:00:00.000Z')
+    expect(prepared.entries[0].senses.map((sense) => sense.partOfSpeech)).toEqual(['n.', 'vt.'])
   })
 
   it('merges new senses without replacing existing review state', () => {
