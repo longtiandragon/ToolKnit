@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, shallowReactive, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowReactive, shallowRef, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { checkDesktopUpdate, createDesktopAutoBackup, createDesktopVaultBackup, getDesktopVaultHealth, getDesktopVaultStorageSpace, hasStoredApiKey, inspectDesktopVaultBackup, isDesktop, openExternalUrl, probeDesktopTranscriptionEngine, removeApiKey, restoreDesktopVaultBackup, revealDesktopFile, setClipboardMonitor, storeApiKey, type DesktopStorageSpace, type DesktopVaultBackupInspection, type DesktopVaultHealth, type GitHubRelease } from '@/lib/native'
+import { cancelDictionaryInstall, installDictionary, listenDictionaryProgress, readDictionaryStatus, removeDictionary, type DictionaryStatus } from '@/lib/dictionary-native'
 import { chooseOutputDirectory } from '@/lib/output'
 import { newId } from '@/lib/id'
 import { aiErrorMessage, getSessionApiKey, removeSessionApiKey, setSessionApiKey, testAiConnection } from '@/lib/ai'
@@ -72,6 +73,63 @@ const updateResult = ref<GitHubRelease>()
 const updateMessage = ref('')
 const checkingUpdate = ref(false)
 const transcriptionChecking = ref(false)
+const dictionary = ref<DictionaryStatus>({ installed: false, path: '', version: '', entryCount: 0, sizeBytes: 0, downloadBytes: 0 })
+const dictionaryRunId = ref('')
+const dictionaryProgress = ref({ progress: 0, detail: '' })
+let dictionaryUnlisten: (() => void) | undefined
+const dictionaryBusy = computed(() => Boolean(dictionaryRunId.value))
+const dictionarySizeLabel = computed(() => `${Math.round((dictionary.value.sizeBytes || dictionary.value.downloadBytes) / (1024 * 1024))} MB`)
+const dictionaryDescription = computed(() => dictionary.value.installed
+  ? `已就绪 · ${dictionary.value.entryCount.toLocaleString('en-US')} 个词条 · ${dictionarySizeLabel.value}`
+  : dictionaryBusy.value ? dictionaryProgress.value.detail || '正在准备…' : `尚未安装，需要下载约 ${dictionarySizeLabel.value}`)
+
+async function refreshDictionary() {
+  try { dictionary.value = await readDictionaryStatus() }
+  catch { /* 未安装或读取失败时保持未安装态，设置页不该因此报错 */ }
+}
+
+async function enableDictionary() {
+  if (dictionaryBusy.value) return
+  const runId = crypto.randomUUID()
+  dictionaryRunId.value = runId
+  dictionaryProgress.value = { progress: 0, detail: '正在连接下载地址' }
+  try {
+    dictionary.value = await installDictionary(runId)
+    ui.toast('词库已就绪', `共 ${dictionary.value.entryCount.toLocaleString('en-US')} 个词条，现在输入单词即可自动补全。`, 'success')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('已取消')) ui.toast('已取消下载', '词库没有安装，随时可以重来。', 'info')
+    else ui.toast('词库安装失败', message, 'error')
+    await refreshDictionary()
+  } finally {
+    dictionaryRunId.value = ''
+    dictionaryProgress.value = { progress: 0, detail: '' }
+  }
+}
+
+async function stopDictionaryInstall() {
+  if (!dictionaryRunId.value) return
+  await cancelDictionaryInstall(dictionaryRunId.value)
+}
+
+async function deleteDictionary() {
+  try {
+    dictionary.value = await removeDictionary()
+    ui.toast('词库已删除', '磁盘空间已释放；随时可以重新下载。', 'success')
+  } catch (error) {
+    ui.toast('无法删除词库', error instanceof Error ? error.message : '删除失败。', 'error')
+  }
+}
+
+onMounted(async () => {
+  void refreshDictionary()
+  dictionaryUnlisten = await listenDictionaryProgress((payload) => {
+    if (payload.runId !== dictionaryRunId.value) return
+    dictionaryProgress.value = { progress: payload.progress, detail: payload.detail }
+  })
+})
+
+onBeforeUnmount(() => dictionaryUnlisten?.())
 const transcriptionMessage = ref('')
 const transcriptionReady = ref(false)
 const readingScaleOptions = [
@@ -581,6 +639,7 @@ const sections = [
   { id: 'clipboard', label: '剪贴板', icon: 'file-text' },
   { id: 'ai', label: 'AI 服务', icon: 'sparkle' },
   { id: 'engines', label: '本机引擎', icon: 'play' },
+  { id: 'dictionary', label: '离线词库', icon: 'book' },
   { id: 'backup', label: '数据与备份', icon: 'inbox' },
   { id: 'update', label: '版本更新', icon: 'clock' },
 ] as const
@@ -613,7 +672,7 @@ const restoreSteps = computed(() => [
 </script>
 
 <template>
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeVaultMenu(); closeBuildMenu(); closeAiProfileMenu()">
+  <div class="page-enter page-shell px-8 py-6" @click="closeVaultMenu(); closeBuildMenu(); closeAiProfileMenu()">
     <PageHeader title="设置" subtitle="桌面行为、隐私边界、服务连接与工作区数据，改动即时生效">
       <template #actions>
         <span class="row gap-1.5 h-9 px-3 rounded-sm bg-success-soft text-[12px] text-success">
@@ -908,6 +967,42 @@ const restoreSteps = computed(() => [
               </span>
             </li>
           </ul>
+        </section>
+
+        <!-- ── 离线词库 ──────────────────────────────────────────────────────
+             The vocabulary tool asks for a word and fills in the rest, which
+             only works if a dictionary is on the machine. Downloading it is a
+             deliberate click, never automatic: it is a large third-party file. -->
+        <section id="dictionary" class="panel px-5 py-4 stack gap-1 scroll-mt-6">
+          <header class="row-between gap-3 pb-2">
+            <div class="stack gap-0.5">
+              <h3 class="text-[15px] font-semibold text-fg">离线词库</h3>
+              <p class="text-[12px] text-fg-3">装好之后，生词本只要一个单词</p>
+            </div>
+            <RouterLink class="btn-ghost btn-sm shrink-0" to="/words">打开单词库</RouterLink>
+          </header>
+
+          <p class="row items-start gap-2 mb-1 text-[12px] leading-relaxed text-fg-2">
+            <AppIcon name="shield" :size="15" class="shrink-0 text-success" />
+            词库是 ECDICT（MIT 许可，约 77 万词条）。只有点击下面的按钮才会向 GitHub 发起一次下载；装好后查词全程离线，文件不进资料库、不进备份。
+          </p>
+
+          <SettingRow interactive title="ECDICT 英汉词库" :description="dictionaryDescription">
+            <span class="row gap-2">
+              <button v-if="dictionaryBusy" class="btn-default btn-sm" @click="stopDictionaryInstall">停止</button>
+              <button v-else-if="dictionary.installed" class="btn-default btn-sm" :disabled="!desktop" @click="deleteDictionary">删除</button>
+              <button v-else class="btn-primary btn-sm" :disabled="!desktop" @click="enableDictionary">启用词库</button>
+            </span>
+          </SettingRow>
+
+          <div v-if="dictionaryBusy" class="stack gap-1.5 px-1 py-2" role="status" aria-live="polite">
+            <div class="h-1.5 w-full rounded-full bg-well overflow-hidden">
+              <i class="block h-full rounded-full bg-accent transition-[width] duration-200" :style="{ width: `${dictionaryProgress.progress}%` }" />
+            </div>
+            <small class="text-[11px] tabular-nums text-fg-3">{{ dictionaryProgress.progress }}% · {{ dictionaryProgress.detail }}</small>
+          </div>
+
+          <p v-if="!desktop" class="px-1 text-[11px] leading-relaxed text-fg-3">离线词库只在桌面版可用。</p>
         </section>
 
         <!-- ── 本机引擎 ──────────────────────────────────────────────────── -->

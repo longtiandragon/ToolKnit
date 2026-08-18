@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
-import { MAX_VOCABULARY_IMPORT_CHARS, parseVocabularyImport, prepareVocabularyImport, type VocabularyImportDuplicatePolicy, type VocabularyImportParseResult, type VocabularyImportRow } from '@/lib/vocabulary-import'
+import { MAX_VOCABULARY_IMPORT_CHARS, parseVocabularyImport, prepareVocabularyImport, type VocabularyImportDuplicatePolicy, type VocabularyImportParseResult, type VocabularyImportRow, vocabularyImportDuplicateIds } from '@/lib/vocabulary-import'
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useUiStore } from '@/stores/ui'
 import type { VocabularyReviewFacet } from '@/types'
@@ -132,9 +132,8 @@ async function commitImport() {
     // Native list rows intentionally omit senses. Read only duplicate targets
     // before merging so an import can never replace unseen existing meanings.
     if (store.desktopVaultActive && policy.value === 'merge') {
-      const keys = new Set(includedRows.value.map(row => `${row.lemma.trim().toLocaleLowerCase('en-US')}\u0000${row.language.trim().toLocaleLowerCase('zh-CN')}`))
-      const duplicates = store.vocabulary.filter(entry => entry.summaryOnly && keys.has(`${entry.lemma.trim().toLocaleLowerCase('en-US')}\u0000${entry.language.trim().toLocaleLowerCase('zh-CN')}`))
-      await Promise.all(duplicates.map(entry => store.loadVocabulary(entry.id)))
+      const duplicates = vocabularyImportDuplicateIds(includedRows.value, store.vocabulary)
+      await Promise.all(duplicates.map(id => store.loadVocabulary(id)))
     }
     const snapshot = prepareVocabularyImport(includedRows.value, store.vocabulary, policy.value, reviewFacets.value)
     await store.importVocabularyEntries(snapshot.entries)

@@ -1,11 +1,14 @@
-#[cfg(not(feature = "public-core"))]
-mod private_tools;
+mod window_state;
+mod crash_log;
 mod archive_tools;
+mod dictionary;
 mod engine_registry;
 mod file_health;
 mod image_metadata;
 mod pdf_tools;
 mod photo_organizer;
+#[cfg(not(feature = "public-core"))]
+mod private_tools;
 mod transcription;
 mod vault;
 mod web_fetch;
@@ -31,7 +34,7 @@ use std::{
         mpsc, Arc, LazyLock, Mutex, Once,
     },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 type AiRequestCanceller = Arc<dyn Fn() + Send + Sync>;
@@ -63,6 +66,174 @@ fn default_vault_path(app: &tauri::AppHandle) -> Result<String, String> {
         .or_else(|_| app.path().app_data_dir())
         .map_err(|error| error.to_string())?;
     Ok(base.join("KnitspaceVault").to_string_lossy().into_owned())
+}
+
+/// Where the crash log lives. `app_log_dir` is the platform's own place for
+/// this; `app_data_dir` is the fallback so a machine without one still records
+/// something rather than silently recording nothing.
+fn crash_log_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_log_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .map_err(|error| error.to_string())
+}
+
+/// Records a renderer error. The frontend has no filesystem of its own, so its
+/// `onerror` and `unhandledrejection` handlers come through here — and through
+/// the same redaction as a Rust panic, since a stack trace is full of
+/// `file:///C:/Users/...` frames.
+#[tauri::command]
+fn record_frontend_error(app: tauri::AppHandle, kind: String, detail: String) -> Result<(), String> {
+    let directory = crash_log_directory(&app)?;
+    crash_log::append(&directory, &kind, &detail);
+    Ok(())
+}
+
+/// The redacted log, for the user to read and attach to a report.
+#[tauri::command]
+fn read_crash_log(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(crash_log::read(&crash_log_directory(&app)?))
+}
+
+/// Deletes the log. It is the user's diagnostic, so they get to discard it.
+#[tauri::command]
+fn clear_crash_log(app: tauri::AppHandle) -> Result<(), String> {
+    let path = crash_log::log_path(&crash_log_directory(&app)?);
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Sends Rust panics to the crash log instead of nowhere.
+///
+/// The previous hook is kept and still called, so a debug build keeps printing
+/// to the console and a future `catch_unwind` still sees what it expects. The
+/// payload and location are all that is recorded, and both go through the
+/// redactor: a panic from the Vault or the file tools quotes the path it failed
+/// on, and that path is the user's.
+fn install_panic_logger(directory: PathBuf) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|value| (*value).to_owned())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panic without a message".to_owned());
+        let location = info
+            .location()
+            .map(|location| format!("{}:{}", location.file(), location.line()))
+            .unwrap_or_else(|| "unknown location".to_owned());
+        crash_log::append(&directory, "panic", &format!("{location} {payload}"));
+        previous(info);
+    }));
+}
+
+/// Restores the remembered geometry, if it is still reachable.
+///
+/// Everything is read and written in *logical* pixels. Tauri hands out physical
+/// ones, so each value is divided by the window's own scale factor on the way in
+/// and multiplied back on the way out — that is what keeps a position saved on a
+/// 150% monitor meaningful on a 100% one.
+fn restore_window_geometry(window: &tauri::WebviewWindow, directory: &Path) {
+    let Some(saved) = window_state::load(directory) else {
+        return;
+    };
+    let monitors = window
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|monitor| {
+            let scale = monitor.scale_factor();
+            let position = monitor.position();
+            let size = monitor.size();
+            window_state::Bounds {
+                x: f64::from(position.x) / scale,
+                y: f64::from(position.y) / scale,
+                width: f64::from(size.width) / scale,
+                height: f64::from(size.height) / scale,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let Some(restored) = window_state::restorable(saved, &monitors) else {
+        return;
+    };
+    let _ = window.set_size(tauri::LogicalSize::new(restored.width, restored.height));
+    let _ = window.set_position(tauri::LogicalPosition::new(restored.x, restored.y));
+    if restored.maximized {
+        let _ = window.maximize();
+    }
+}
+
+/// Collects window geometry in memory and writes it at most once a second.
+///
+/// `Moved` and `Resized` fire for every pixel of a drag. Writing the file from
+/// the event handler would put thousands of disk writes into a single window
+/// drag — a worse problem than the one being fixed. The handler only updates
+/// memory; a background flush and the close handler are what touch the disk.
+struct WindowGeometryWriter {
+    directory: PathBuf,
+    /// The newest geometry not yet on disk.
+    pending: Mutex<Option<window_state::WindowState>>,
+    /// The last size the user actually chose. A maximized window reports the
+    /// screen's bounds, and saving those would lose the restored size.
+    restored_size: Mutex<Option<(f64, f64)>>,
+}
+
+impl WindowGeometryWriter {
+    fn new(directory: PathBuf) -> Self {
+        let restored_size = window_state::load(&directory).map(|state| (state.width, state.height));
+        Self {
+            directory,
+            pending: Mutex::new(None),
+            restored_size: Mutex::new(restored_size),
+        }
+    }
+
+    /// Reads the window's geometry, in logical pixels, into memory.
+    fn record(&self, window: &tauri::WebviewWindow) {
+        let maximized = window.is_maximized().unwrap_or(false);
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) else {
+            return;
+        };
+        let (x, y) = (f64::from(position.x) / scale, f64::from(position.y) / scale);
+        let (width, height) = (f64::from(size.width) / scale, f64::from(size.height) / scale);
+
+        let restored = if maximized {
+            // Keep whatever size was last chosen unmaximized; fall back to the
+            // maximized bounds only if there has never been one.
+            self.restored_size.lock().ok().and_then(|value| *value).unwrap_or((width, height))
+        } else {
+            if let Ok(mut value) = self.restored_size.lock() {
+                *value = Some((width, height));
+            }
+            (width, height)
+        };
+
+        if let Ok(mut pending) = self.pending.lock() {
+            *pending = Some(window_state::WindowState {
+                x,
+                y,
+                width: restored.0,
+                height: restored.1,
+                maximized,
+            });
+        }
+    }
+
+    /// Writes whatever is pending, if anything.
+    fn flush(&self) {
+        let Ok(mut pending) = self.pending.lock() else {
+            return;
+        };
+        if let Some(state) = pending.take() {
+            window_state::save(&self.directory, &state);
+        }
+    }
 }
 
 #[tauri::command]
@@ -690,16 +861,20 @@ async fn create_zip_archive(
     input_paths: Vec<String>,
     output_path: String,
 ) -> Result<archive_tools::ArchiveOperationSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || archive_tools::create_zip(input_paths, output_path).map_err(|error| error.to_string()))
-        .await
-        .map_err(|error| format!("ZIP 创建任务失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        archive_tools::create_zip(input_paths, output_path).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("ZIP 创建任务失败：{error}"))?
 }
 
 #[tauri::command]
 async fn list_zip_archive(archive_path: String) -> Result<archive_tools::ArchiveListing, String> {
-    tauri::async_runtime::spawn_blocking(move || archive_tools::list_zip(archive_path).map_err(|error| error.to_string()))
-        .await
-        .map_err(|error| format!("ZIP 检查任务失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        archive_tools::list_zip(archive_path).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("ZIP 检查任务失败：{error}"))?
 }
 
 #[tauri::command]
@@ -707,9 +882,12 @@ async fn extract_zip_archive(
     archive_path: String,
     output_directory: String,
 ) -> Result<archive_tools::ArchiveOperationSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || archive_tools::extract_zip(archive_path, output_directory).map_err(|error| error.to_string()))
-        .await
-        .map_err(|error| format!("ZIP 解压任务失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        archive_tools::extract_zip(archive_path, output_directory)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("ZIP 解压任务失败：{error}"))?
 }
 
 #[tauri::command]
@@ -718,16 +896,20 @@ async fn create_tar_archive(
     output_path: String,
     gzip: bool,
 ) -> Result<archive_tools::ArchiveOperationSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || archive_tools::create_tar(input_paths, output_path, gzip).map_err(|error| error.to_string()))
-        .await
-        .map_err(|error| format!("TAR 创建任务失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        archive_tools::create_tar(input_paths, output_path, gzip).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("TAR 创建任务失败：{error}"))?
 }
 
 #[tauri::command]
 async fn list_tar_archive(archive_path: String) -> Result<archive_tools::ArchiveListing, String> {
-    tauri::async_runtime::spawn_blocking(move || archive_tools::list_tar(archive_path).map_err(|error| error.to_string()))
-        .await
-        .map_err(|error| format!("TAR 检查任务失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        archive_tools::list_tar(archive_path).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("TAR 检查任务失败：{error}"))?
 }
 
 #[tauri::command]
@@ -735,9 +917,12 @@ async fn extract_tar_archive(
     archive_path: String,
     output_directory: String,
 ) -> Result<archive_tools::ArchiveOperationSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || archive_tools::extract_tar(archive_path, output_directory).map_err(|error| error.to_string()))
-        .await
-        .map_err(|error| format!("TAR 解压任务失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        archive_tools::extract_tar(archive_path, output_directory)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("TAR 解压任务失败：{error}"))?
 }
 
 #[tauri::command]
@@ -771,7 +956,9 @@ async fn create_seven_zip_archive(
 }
 
 #[tauri::command]
-async fn list_seven_zip_archive(archive_path: String) -> Result<archive_tools::ArchiveListing, String> {
+async fn list_seven_zip_archive(
+    archive_path: String,
+) -> Result<archive_tools::ArchiveListing, String> {
     tauri::async_runtime::spawn_blocking(move || {
         archive_tools::list_seven_zip(archive_path).map_err(|error| error.to_string())
     })
@@ -2005,9 +2192,7 @@ fn validated_subtitle_input_path(value: &str) -> Result<PathBuf, String> {
 /// shell command. The process still receives one argument, but the filter
 /// parser has its own escaping rules for Windows drive letters and separators.
 fn subtitle_burn_filter(path: &Path) -> Result<String, String> {
-    let value = path
-        .to_str()
-        .ok_or("字幕文件路径包含无法处理的字符。")?;
+    let value = path.to_str().ok_or("字幕文件路径包含无法处理的字符。")?;
     let mut escaped = String::with_capacity(value.len() + 16);
     for character in value.chars() {
         match character {
@@ -2222,8 +2407,8 @@ fn parse_media_chapter_json(
     if raw.len() > MAX_MEDIA_CHAPTER_JSON_BYTES {
         return Err("章节 JSON 过大，最多支持 64 KB。".into());
     }
-    let chapters: Vec<MediaChapterInput> = serde_json::from_str(raw)
-        .map_err(|error| format!("章节 JSON 无法解析：{error}"))?;
+    let chapters: Vec<MediaChapterInput> =
+        serde_json::from_str(raw).map_err(|error| format!("章节 JSON 无法解析：{error}"))?;
     if chapters.len() > MAX_MEDIA_CHAPTERS {
         return Err(format!("章节数量不能超过 {MAX_MEDIA_CHAPTERS} 条。"));
     }
@@ -2244,10 +2429,16 @@ fn parse_media_chapter_json(
             }
         }
         if index > 0 && chapter.start_seconds < previous_end {
-            return Err(format!("第 {} 条章节与上一条重叠或未按时间排序。", index + 1));
+            return Err(format!(
+                "第 {} 条章节与上一条重叠或未按时间排序。",
+                index + 1
+            ));
         }
         if chapter.title.chars().count() > MAX_MEDIA_CHAPTER_TITLE_CHARS {
-            return Err(format!("第 {} 条章节标题不能超过 {MAX_MEDIA_CHAPTER_TITLE_CHARS} 个字符。", index + 1));
+            return Err(format!(
+                "第 {} 条章节标题不能超过 {MAX_MEDIA_CHAPTER_TITLE_CHARS} 个字符。",
+                index + 1
+            ));
         }
         if chapter.title.chars().any(char::is_control) {
             return Err(format!("第 {} 条章节标题包含不可用控制字符。", index + 1));
@@ -2276,8 +2467,14 @@ fn render_media_ffmetadata(chapters: &[MediaChapterInput]) -> String {
     let mut output = String::from(";FFMETADATA1\n");
     for chapter in chapters {
         output.push_str("[CHAPTER]\nTIMEBASE=1/1000\n");
-        output.push_str(&format!("START={}\n", (chapter.start_seconds * 1_000.0).round() as i64));
-        output.push_str(&format!("END={}\n", (chapter.end_seconds * 1_000.0).round() as i64));
+        output.push_str(&format!(
+            "START={}\n",
+            (chapter.start_seconds * 1_000.0).round() as i64
+        ));
+        output.push_str(&format!(
+            "END={}\n",
+            (chapter.end_seconds * 1_000.0).round() as i64
+        ));
         let title = chapter.title.trim();
         if !title.is_empty() {
             output.push_str("title=");
@@ -2305,10 +2502,8 @@ fn create_media_chapter_metadata(
     source_duration_seconds: Option<f64>,
 ) -> Result<TemporaryMediaMetadata, String> {
     let chapters = parse_media_chapter_json(raw, source_duration_seconds)?;
-    let directory = std::env::temp_dir().join(format!(
-        "knitspace-media-chapters-{}",
-        uuid::Uuid::now_v7()
-    ));
+    let directory =
+        std::env::temp_dir().join(format!("knitspace-media-chapters-{}", uuid::Uuid::now_v7()));
     fs::create_dir_all(&directory).map_err(|error| format!("无法创建章节临时目录：{error}"))?;
     let path = directory.join("metadata.txt");
     if let Err(error) = fs::write(&path, render_media_ffmetadata(&chapters)) {
@@ -2391,14 +2586,22 @@ fn probe_media_file(path: PathBuf) -> Result<MediaFileInfo, String> {
                 .filter_map(|chapter| {
                     let start_seconds = parse_number(chapter.get("start_time"))?;
                     let end_seconds = parse_number(chapter.get("end_time"))?;
-                    if !start_seconds.is_finite() || !end_seconds.is_finite() || end_seconds <= start_seconds {
+                    if !start_seconds.is_finite()
+                        || !end_seconds.is_finite()
+                        || end_seconds <= start_seconds
+                    {
                         return None;
                     }
                     let title = chapter
                         .get("tags")
                         .and_then(|value| value.get("title"))
                         .and_then(|value| value.as_str())
-                        .map(|value| value.chars().take(MAX_MEDIA_CHAPTER_TITLE_CHARS).collect::<String>())
+                        .map(|value| {
+                            value
+                                .chars()
+                                .take(MAX_MEDIA_CHAPTER_TITLE_CHARS)
+                                .collect::<String>()
+                        })
                         .filter(|value| !value.trim().is_empty());
                     Some(MediaChapterInfo {
                         id: parse_integer(chapter.get("id"))?.try_into().ok()?,
@@ -2432,8 +2635,10 @@ fn probe_media_file(path: PathBuf) -> Result<MediaFileInfo, String> {
                     .and_then(|value| value.get("title"))
                     .and_then(|value| value.as_str())
                     .map(str::to_owned),
-                channels: parse_integer(stream.get("channels")).and_then(|value| value.try_into().ok()),
-                sample_rate: parse_integer(stream.get("sample_rate")).and_then(|value| value.try_into().ok()),
+                channels: parse_integer(stream.get("channels"))
+                    .and_then(|value| value.try_into().ok()),
+                sample_rate: parse_integer(stream.get("sample_rate"))
+                    .and_then(|value| value.try_into().ok()),
                 width: parse_integer(stream.get("width")).and_then(|value| value.try_into().ok()),
                 height: parse_integer(stream.get("height")).and_then(|value| value.try_into().ok()),
             })
@@ -2632,7 +2837,11 @@ fn run_media_waveform(path: String) -> Result<MediaWaveformReport, String> {
             message.chars().take(900).collect()
         });
     }
-    summarize_media_waveform(&pcm, media_info.duration_seconds, started.elapsed().as_millis())
+    summarize_media_waveform(
+        &pcm,
+        media_info.duration_seconds,
+        started.elapsed().as_millis(),
+    )
 }
 
 fn run_media_detection(path: String, kind: &str) -> Result<MediaDetectionReport, String> {
@@ -2747,8 +2956,11 @@ async fn analyze_media_waveform(path: String) -> Result<MediaWaveformReport, Str
 
 fn required_media_track(operation: &str) -> Option<&'static str> {
     match operation {
-        "extract-mp3" | "transcode-m4a" | "transcode-wav" | "normalize-audio" | "denoise-audio" => Some("audio"),
-        "transcode-mp4" | "make-gif" | "make-webp" | "mute-video" | "remux-mp4" | "extract-cover" => Some("video"),
+        "extract-mp3" | "transcode-m4a" | "transcode-wav" | "normalize-audio" | "denoise-audio" => {
+            Some("audio")
+        }
+        "transcode-mp4" | "make-gif" | "make-webp" | "mute-video" | "remux-mp4"
+        | "extract-cover" => Some("video"),
         "extract-subtitle" => Some("subtitle"),
         "remove-audio" => Some("video"),
         "remove-subtitles" | "add-subtitle" | "edit-chapters" => Some("media"),
@@ -2798,8 +3010,8 @@ fn transcode_media(
             .as_deref()
             .ok_or("请选择要加入的字幕文件。")?;
         let subtitle = validated_subtitle_input_path(raw)?;
-        let canonical_input = fs::canonicalize(&input)
-            .map_err(|error| format!("无法定位媒体文件：{error}"))?;
+        let canonical_input =
+            fs::canonicalize(&input).map_err(|error| format!("无法定位媒体文件：{error}"))?;
         if subtitle == canonical_input {
             return Err("字幕文件不能与输入媒体文件相同。".into());
         }
@@ -2809,9 +3021,7 @@ fn transcode_media(
     };
     let subtitle_filter = if request.operation == "burn-subtitle" {
         Some(subtitle_burn_filter(
-            subtitle_input
-                .as_ref()
-                .ok_or("请选择要烧录的字幕文件。")?,
+            subtitle_input.as_ref().ok_or("请选择要烧录的字幕文件。")?,
         )?)
     } else {
         None
@@ -2911,7 +3121,11 @@ fn transcode_media(
             };
             (
                 "audio-normalized",
-                if has_video { "mkv".into() } else { "m4a".into() },
+                if has_video {
+                    "mkv".into()
+                } else {
+                    "m4a".into()
+                },
                 arguments,
                 source_duration,
             )
@@ -2958,7 +3172,11 @@ fn transcode_media(
             };
             (
                 "audio-denoised",
-                if has_video { "mkv".into() } else { "m4a".into() },
+                if has_video {
+                    "mkv".into()
+                } else {
+                    "m4a".into()
+                },
                 arguments,
                 source_duration,
             )
@@ -3002,7 +3220,9 @@ fn transcode_media(
                 source_duration,
             )?;
             if duration > MEDIA_ANIMATION_MAX_SECONDS {
-                return Err(format!("动图区间不能超过 {MEDIA_ANIMATION_MAX_SECONDS:.0} 秒。"));
+                return Err(format!(
+                    "动图区间不能超过 {MEDIA_ANIMATION_MAX_SECONDS:.0} 秒。"
+                ));
             }
             input_arguments = vec![
                 "-ss".into(),
@@ -3044,7 +3264,11 @@ fn transcode_media(
                 ]
             };
             (
-                if is_gif { "animation-gif" } else { "animation-webp" },
+                if is_gif {
+                    "animation-gif"
+                } else {
+                    "animation-webp"
+                },
                 if is_gif { "gif".into() } else { "webp".into() },
                 arguments,
                 Some(duration),
@@ -3104,19 +3328,10 @@ fn transcode_media(
         "add-subtitle" => (
             "subtitle-added",
             "mkv".into(),
-            [
-                "-map",
-                "0",
-                "-map",
-                "1:0",
-                "-c",
-                "copy",
-                "-c:s",
-                "srt",
-            ]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
+            ["-map", "0", "-map", "1:0", "-c", "copy", "-c:s", "srt"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
             source_duration,
         ),
         "burn-subtitle" => (
@@ -3128,9 +3343,7 @@ fn transcode_media(
                 "-map".into(),
                 "0:a?".into(),
                 "-vf".into(),
-                subtitle_filter
-                    .clone()
-                    .ok_or("请选择要烧录的字幕文件。")?,
+                subtitle_filter.clone().ok_or("请选择要烧录的字幕文件。")?,
                 "-c:v".into(),
                 "libx264".into(),
                 "-preset".into(),
@@ -3177,17 +3390,54 @@ fn transcode_media(
                 ]
             } else if has_video {
                 vec![
-                    "-ss", &start, "-t", &duration_label, "-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
+                    "-ss",
+                    &start,
+                    "-t",
+                    &duration_label,
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "0:a?",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "fast",
+                    "-crf",
+                    "23",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "160k",
+                    "-movflags",
+                    "+faststart",
                 ]
             } else {
                 vec![
-                    "-ss", &start, "-t", &duration_label, "-map", "0:a:0", "-vn", "-c:a", "aac", "-b:a", "192k",
+                    "-ss",
+                    &start,
+                    "-t",
+                    &duration_label,
+                    "-map",
+                    "0:a:0",
+                    "-vn",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
                 ]
             };
             (
-                if request.operation == "lossless-clip" { "clip-lossless" } else { "clip" },
                 if request.operation == "lossless-clip" {
-                    input.extension().and_then(|value| value.to_str()).unwrap_or("mkv").to_ascii_lowercase()
+                    "clip-lossless"
+                } else {
+                    "clip"
+                },
+                if request.operation == "lossless-clip" {
+                    input
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("mkv")
+                        .to_ascii_lowercase()
                 } else if has_video {
                     "mp4".into()
                 } else {
@@ -3200,8 +3450,17 @@ fn transcode_media(
         "remux-mp4" => (
             "remux",
             "mp4".into(),
-            ["-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart"]
-                .into_iter()
+            [
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+            ]
+            .into_iter()
             .map(str::to_owned)
             .collect(),
             source_duration,
@@ -3231,9 +3490,18 @@ fn transcode_media(
                 .and_then(|value| value.to_str())
                 .unwrap_or("mkv")
                 .to_ascii_lowercase(),
-            ["-map", "0", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy"]
-                .into_iter()
-                .map(str::to_owned)
+            [
+                "-map",
+                "0",
+                "-map_metadata",
+                "-1",
+                "-map_chapters",
+                "-1",
+                "-c",
+                "copy",
+            ]
+            .into_iter()
+            .map(str::to_owned)
             .collect(),
             source_duration,
         ),
@@ -3244,10 +3512,19 @@ fn transcode_media(
                 .and_then(|value| value.to_str())
                 .unwrap_or("mkv")
                 .to_ascii_lowercase(),
-            ["-map", "0", "-map_metadata", "0", "-map_chapters", "1", "-c", "copy"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
+            [
+                "-map",
+                "0",
+                "-map_metadata",
+                "0",
+                "-map_chapters",
+                "1",
+                "-c",
+                "copy",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
             source_duration,
         ),
         _ => return Err("不支持的媒体操作。".into()),
@@ -3276,9 +3553,7 @@ fn transcode_media(
         .arg("-i")
         .arg(&input);
     if request.operation == "add-subtitle" {
-        let subtitle = subtitle_input
-            .as_ref()
-            .ok_or("请选择要加入的字幕文件。")?;
+        let subtitle = subtitle_input.as_ref().ok_or("请选择要加入的字幕文件。")?;
         command.arg("-i").arg(subtitle);
     }
     if let Some(metadata) = chapter_metadata.as_ref() {
@@ -5543,10 +5818,8 @@ mod external_markdown_tests {
 
     #[test]
     fn subtitle_input_validation_requires_a_small_supported_file() {
-        let folder = std::env::temp_dir().join(format!(
-            "knitspace-subtitle-input-{}",
-            uuid::Uuid::now_v7()
-        ));
+        let folder =
+            std::env::temp_dir().join(format!("knitspace-subtitle-input-{}", uuid::Uuid::now_v7()));
         fs::create_dir_all(&folder).unwrap();
         let valid = folder.join("captions.SRT");
         fs::write(&valid, "1\n00:00:00,000 --> 00:00:01,000\nHello\n").unwrap();
@@ -5558,7 +5831,11 @@ mod external_markdown_tests {
         assert!(validated_subtitle_input_path(&unsupported.to_string_lossy()).is_err());
 
         let oversized = folder.join("too-large.vtt");
-        fs::write(&oversized, vec![b'x'; (MAX_SUBTITLE_FILE_BYTES + 1) as usize]).unwrap();
+        fs::write(
+            &oversized,
+            vec![b'x'; (MAX_SUBTITLE_FILE_BYTES + 1) as usize],
+        )
+        .unwrap();
         assert!(validated_subtitle_input_path(&oversized.to_string_lossy()).is_err());
         fs::remove_dir_all(folder).unwrap();
     }
@@ -5628,14 +5905,18 @@ mod external_markdown_tests {
         )
         .unwrap();
         let metadata = render_media_ffmetadata(&chapters);
-        assert!(metadata.starts_with(";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=12345\n"));
+        assert!(
+            metadata.starts_with(";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=12345\n")
+        );
         assert!(metadata.contains(r#"title=开场 \= 100%\; \#1"#));
         assert!(parse_media_chapter_json(
             r#"[{"startSeconds":10,"endSeconds":12,"title":"后"},{"startSeconds":11,"endSeconds":14,"title":"重叠"}]"#,
             Some(30.0),
         )
         .is_err());
-        assert!(parse_media_chapter_json("[]", Some(30.0)).unwrap().is_empty());
+        assert!(parse_media_chapter_json("[]", Some(30.0))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -6663,6 +6944,155 @@ mod desktop_open_tests {
     }
 }
 
+#[cfg(test)]
+mod temporary_sweep_tests {
+    use super::{sweep_stale_temporary_entries, STALE_TEMPORARY_SCAN_LIMIT};
+    use std::{
+        fs,
+        time::{Duration, SystemTime},
+    };
+
+    const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+
+    /// A directory of its own, so the sweep under test can never reach the real
+    /// temp root and delete something a parallel test is using.
+    fn scratch(label: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-sweep-test-{label}-{}",
+            uuid::Uuid::now_v7()
+        ));
+        fs::create_dir_all(&root).expect("create scratch root");
+        root
+    }
+
+    #[test]
+    fn removes_only_stale_knitspace_leftovers() {
+        let root = scratch("mixed");
+        let now = SystemTime::now();
+
+        for name in ["knitspace-media-output-old", "knitspace-pdf-optimize-old"] {
+            fs::create_dir_all(root.join(name)).expect("create stale directory");
+            fs::write(root.join(name).join("payload.bin"), b"x").expect("fill stale directory");
+        }
+        fs::write(root.join("knitspace-ocr-old.png"), b"x").expect("write stale file");
+        fs::create_dir_all(root.join("someone-elses-work")).expect("create foreign directory");
+        fs::write(root.join("important.txt"), b"x").expect("write foreign file");
+
+        // Freshness has its own test below; here every entry starts new, so a
+        // one-day threshold must still remove nothing.
+        assert_eq!(sweep_stale_temporary_entries(&root, now, DAY, STALE_TEMPORARY_SCAN_LIMIT), 0);
+        assert!(root.join("knitspace-media-output-old").is_dir());
+
+        // Age every entry past the threshold by moving the clock forward instead
+        // of the files back, which Windows will not always allow.
+        let later = now + DAY + Duration::from_secs(60);
+        assert_eq!(sweep_stale_temporary_entries(&root, later, DAY, STALE_TEMPORARY_SCAN_LIMIT), 3);
+
+        // Non-empty directories go too, and nothing outside the prefix is touched.
+        assert!(!root.join("knitspace-media-output-old").exists());
+        assert!(!root.join("knitspace-pdf-optimize-old").exists());
+        assert!(!root.join("knitspace-ocr-old.png").exists());
+        assert!(root.join("someone-elses-work").is_dir());
+        assert!(root.join("important.txt").is_file());
+
+        fs::remove_dir_all(root).expect("clean scratch root");
+    }
+
+    #[test]
+    fn never_touches_a_directory_younger_than_the_threshold() {
+        let root = scratch("inflight");
+        let now = SystemTime::now();
+        // Stands in for a transcode that has been running for six hours: the
+        // guard that owns it is alive, and deleting it would break a live job.
+        fs::create_dir_all(root.join("knitspace-media-output-running")).expect("create in-flight");
+
+        let six_hours_on = now + Duration::from_secs(6 * 60 * 60);
+        assert_eq!(
+            sweep_stale_temporary_entries(&root, six_hours_on, DAY, STALE_TEMPORARY_SCAN_LIMIT),
+            0
+        );
+        assert!(root.join("knitspace-media-output-running").is_dir());
+
+        fs::remove_dir_all(root).expect("clean scratch root");
+    }
+
+    #[test]
+    fn stops_at_the_scan_limit_and_survives_a_missing_root() {
+        let root = scratch("limit");
+        let now = SystemTime::now();
+        for index in 0..6 {
+            fs::create_dir_all(root.join(format!("knitspace-media-output-{index}")))
+                .expect("create leftover");
+        }
+        let later = now + DAY + Duration::from_secs(60);
+        assert_eq!(sweep_stale_temporary_entries(&root, later, DAY, 2), 2);
+
+        fs::remove_dir_all(&root).expect("clean scratch root");
+        // A temp root that does not exist is not an error worth failing a launch.
+        assert_eq!(sweep_stale_temporary_entries(&root, later, DAY, 16), 0);
+    }
+}
+
+/// How old a leftover has to be before the sweep will touch it.
+///
+/// Age is the whole safety mechanism. The single-instance plugin makes a second
+/// Knitspace unlikely but not impossible — a second Windows user session runs
+/// its own instance — and a long FFmpeg or whisper.cpp job legitimately keeps a
+/// working directory open for hours. A day is far past any of that.
+const STALE_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// A bound so a temp directory with a hundred thousand entries in it cannot turn
+/// the sweep into a long-running scan.
+const STALE_TEMPORARY_SCAN_LIMIT: usize = 4096;
+
+/// Removes `knitspace-*` working directories and files left behind by a crash.
+///
+/// Every temporary path this build creates is named `knitspace-<job>-<uuid>` and
+/// released by an RAII guard when the job ends. A panic, a kill, or a power loss
+/// skips those guards, and nothing ever came back for the remains — after a few
+/// interrupted transcodes they are gigabytes of the user's disk.
+///
+/// Failures are deliberately silent: a leftover another process still holds open
+/// is simply skipped and collected next launch. Nothing here is worth failing a
+/// launch over, and no path may reach a log.
+fn sweep_stale_temporary_entries(
+    root: &Path,
+    now: SystemTime,
+    max_age: Duration,
+    limit: usize,
+) -> u32 {
+    let Ok(entries) = fs::read_dir(root) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten().take(limit) {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with("knitspace-") {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= max_age);
+        if !stale {
+            continue;
+        }
+        let path = entry.path();
+        let outcome = if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        if outcome.is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 pub fn run() {
     let launch_args = std::env::args().collect::<Vec<_>>();
     let launch_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -6690,13 +7120,55 @@ pub fn run() {
     #[cfg(not(feature = "public-core"))]
     let builder = builder.manage(PrivateToolRunState::default());
     builder
+        .manage(dictionary::DictionaryState::default())
         .manage(MediaTranscodeState::default())
         .manage(photo_organizer::PhotoOrganizerRunState::default())
         .manage(TranscriptionState::default())
         .manage(ExternalMarkdownWatchState::default())
         .manage(PendingOpenFiles(Mutex::new(launch_paths)))
         .setup(|app| {
+            // First, so a panic in anything below is still recorded.
+            if let Ok(directory) = crash_log_directory(app.handle()) {
+                install_panic_logger(directory);
+            }
+            if let Ok(directory) = crash_log_directory(app.handle()) {
+                if let Some(window) = app.get_webview_window("main") {
+                    restore_window_geometry(&window, &directory);
+                    // Save on move and resize rather than only on close: a crash
+                    // or a kill would otherwise lose the geometry, which is the
+                    // case this is most wanted in.
+                    let writer = Arc::new(WindowGeometryWriter::new(directory.clone()));
+                    let flusher = Arc::clone(&writer);
+                    thread::spawn(move || loop {
+                        thread::sleep(Duration::from_secs(1));
+                        flusher.flush();
+                    });
+                    let saver = window.clone();
+                    window.on_window_event(move |event| match event {
+                        tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                            writer.record(&saver)
+                        }
+                        // The last position matters most and there is no next
+                        // tick to catch it, so closing writes through.
+                        tauri::WindowEvent::CloseRequested { .. } => {
+                            writer.record(&saver);
+                            writer.flush();
+                        }
+                        _ => {}
+                    });
+                }
+            }
             let _ = photo_organizer::recover_pending_runs(app.handle());
+            // On a thread, and only here: this is the one-shot startup boundary,
+            // not something a repeatedly-called command should carry.
+            thread::spawn(|| {
+                sweep_stale_temporary_entries(
+                    &std::env::temp_dir(),
+                    SystemTime::now(),
+                    STALE_TEMPORARY_AGE,
+                    STALE_TEMPORARY_SCAN_LIMIT,
+                );
+            });
             let handle = app.handle().clone();
             let state = app.state::<ClipboardMonitorState>().inner().clone();
             start_clipboard_monitor(handle, state);
@@ -6743,6 +7215,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            record_frontend_error,
+            read_crash_log,
+            clear_crash_log,
             init_vault,
             get_default_vault_health,
             get_default_vault_storage_space,
@@ -6914,9 +7389,15 @@ pub fn run() {
             windows_ocr::read_ocr_font,
             windows_ocr::recognize_image_text,
             windows_ocr::recognize_image_bytes,
+            dictionary::dictionary_status,
+            dictionary::install_dictionary,
+            dictionary::cancel_dictionary_install,
+            dictionary::remove_dictionary,
+            dictionary::lookup_dictionary_words,
             file_health::scan_file_health,
             file_health::compare_directories,
             file_health::create_file_manifest,
+            file_health::verify_file_manifest,
             file_health::recycle_file_health_paths,
             reveal_in_folder,
             check_github_update,

@@ -279,6 +279,21 @@ function addSelectedReviewFacets(
   return { sense: next, added, skipped }
 }
 
+/**
+ * Ids of the entries a merge is about to touch. Desktop list rows omit their
+ * senses, so merging against them would re-insert meanings the row could not
+ * see; the caller reads these entries in full first.
+ */
+export function vocabularyImportDuplicateIds(
+  rows: readonly VocabularyImportRow[],
+  entries: readonly VocabularyEntry[],
+) {
+  const keys = new Set(rows.map((row) => entryKey(row.lemma, row.language)))
+  return entries
+    .filter((entry) => entry.summaryOnly && keys.has(entryKey(entry.lemma, entry.language)))
+    .map((entry) => entry.id)
+}
+
 export function prepareVocabularyImport(
   rows: VocabularyImportRow[],
   existing: VocabularyEntry[],

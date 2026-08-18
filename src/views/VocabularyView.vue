@@ -9,6 +9,9 @@ import { vocabularyToMarkdown } from '@/lib/vocabulary-markdown'
 import { matchesVocabularySearch } from '@/lib/vocabulary-search'
 import { vocabularyKnowledgeAction } from '@/lib/knowledge-workflows'
 import { newId } from '@/lib/id'
+import { lookupDictionaryWords, readDictionaryStatus } from '@/lib/dictionary-native'
+import { blankVocabularyRows, dictionaryRecordToRows } from '@/lib/dictionary-entry'
+import { prepareVocabularyImport, vocabularyImportDuplicateIds } from '@/lib/vocabulary-import'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { createVocabularyReviewState, vocabularyReviewCards, vocabularyReviewFacetLabels, vocabularyReviewForFacet, withVocabularyReviewFacet } from '@/lib/vocabulary-review'
 import AppIcon from '@/components/AppIcon.vue'
@@ -283,6 +286,49 @@ function handleListScroll() {
     listFrame = undefined
   })
 }
+const newWord = ref('')
+const addingWord = ref(false)
+const dictionaryReady = ref(false)
+
+onMounted(async () => {
+  try { dictionaryReady.value = (await readDictionaryStatus()).installed }
+  catch { dictionaryReady.value = false }
+})
+
+/**
+ * The whole point of the vocabulary tool: type a word, get an entry. The
+ * dictionary fills in pronunciation, senses and inflections, and the existing
+ * import pipeline does the storing — merging into an entry that already exists
+ * without disturbing a single review date.
+ */
+async function completeWord() {
+  const word = newWord.value.trim()
+  if (!word || addingWord.value) return
+  addingWord.value = true
+  try {
+    const records = dictionaryReady.value ? await lookupDictionaryWords([word]) : []
+    const rows = records.length ? records.flatMap((record) => dictionaryRecordToRows(record)) : blankVocabularyRows(word)
+    if (!rows.length) return
+    // Desktop list rows omit their senses; read the merge targets in full first.
+    if (store.desktopVaultActive) {
+      const duplicates = vocabularyImportDuplicateIds(rows, store.vocabulary)
+      await Promise.all(duplicates.map((id) => store.loadVocabulary(id)))
+    }
+    const snapshot = prepareVocabularyImport(rows, store.vocabulary, 'merge', ['meaning'])
+    await store.importVocabularyEntries(snapshot.entries)
+    newWord.value = ''
+    const entry = snapshot.entries[0]
+    if (entry) await pick(entry)
+    if (!records.length) ui.toast('已加入生词本', dictionaryReady.value ? `词库里没有「${word}」，先建了空白词条。` : '装上离线词库后可以自动补全释义。', 'info')
+    else if (snapshot.updatedCount) ui.toast(`已补全「${rows[0].lemma}」`, `合并了 ${snapshot.addedSenseCount} 个新义项，原有复习进度不变。`, 'success')
+    else ui.toast(`已收录「${rows[0].lemma}」`, `${snapshot.addedSenseCount} 个义项 · ${snapshot.reviewCardCount} 张复习卡`, 'success')
+  } catch (error) {
+    ui.toast('没能加入生词本', error instanceof Error ? error.message : '本地资料库没有完成这次写入。', 'error')
+  } finally {
+    addingWord.value = false
+  }
+}
+
 function flashSaved() { saved.value = true; window.setTimeout(() => saved.value = false, 1500) }
 async function addWord() {
   if (!await confirmEntryTransition('新建单词')) return
@@ -485,7 +531,7 @@ onBeforeUnmount(() => {
        had no PageHeader at all — it is a two-pane workspace, so it gets one
        header line and then gives the rest of the window to the list and the
        entry. -->
-  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6" @click="closeMenu">
+  <div class="page-enter h-full page-shell px-8 py-6" @click="closeMenu">
     <div class="flex-1 min-h-0 grid gap-4 grid-cols-[minmax(260px,300px)_minmax(0,1fr)]">
       <aside class="pane h-full min-h-0" aria-label="单词库">
         <header class="pane-head">
@@ -503,6 +549,27 @@ onBeforeUnmount(() => {
             </button>
           </span>
         </header>
+
+        <!-- The shortest path there is: a word goes in, an entry comes out.
+             Everything else on this page is for the times that is not enough. -->
+        <div class="shrink-0 p-2 border-b border-line stack gap-1.5">
+          <span class="row gap-1.5">
+            <input
+              v-model="newWord"
+              class="field h-8 min-w-0 flex-1 text-[12px]"
+              :disabled="addingWord"
+              aria-label="加入生词本"
+              :placeholder="dictionaryReady ? '输入单词，回车自动补全' : '输入单词，回车加入生词本'"
+              @keydown.enter.prevent="completeWord"
+            />
+            <button class="btn-primary btn-sm shrink-0" :disabled="!newWord.trim() || addingWord" @click="completeWord">
+              {{ addingWord ? '处理中' : '加入' }}
+            </button>
+          </span>
+          <small v-if="!dictionaryReady" class="text-[11px] leading-snug text-fg-3">
+            装上离线词库，这里只要一个单词就能补全音标、词性和释义。<RouterLink class="text-accent hover:underline" to="/settings?section=dictionary">去启用</RouterLink>
+          </small>
+        </div>
 
         <div class="shrink-0 p-2 border-b border-line">
           <input v-model="query" class="field h-8 w-full text-[12px]" aria-label="搜索单词" placeholder="词形、词义、例句…" />
