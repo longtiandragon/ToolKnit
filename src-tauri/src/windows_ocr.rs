@@ -164,7 +164,9 @@ fn bounded_image_file(path: &str) -> Result<Vec<u8>, String> {
     if !metadata.is_file() {
         return Err("请选择一个图片文件，而不是文件夹。".into());
     }
-    bounded_image_bytes(fs::read(canonical).map_err(|error| format!("无法读取待识别图片：{error}"))?)
+    bounded_image_bytes(
+        fs::read(canonical).map_err(|error| format!("无法读取待识别图片：{error}"))?,
+    )
 }
 
 #[cfg(windows)]
@@ -310,16 +312,20 @@ fn recognize_image_bytes_inner(
 
 #[cfg(windows)]
 #[tauri::command]
-pub fn recognize_image_text(
+pub async fn recognize_image_text(
     path: String,
     language_tag: Option<String>,
 ) -> Result<OcrRecognitionPayload, String> {
-    recognize_image_bytes_inner(bounded_image_file(&path)?, language_tag)
+    tauri::async_runtime::spawn_blocking(move || {
+        recognize_image_bytes_inner(bounded_image_file(&path)?, language_tag)
+    })
+    .await
+    .map_err(|error| format!("Windows OCR 后台任务失败：{error}"))?
 }
 
 #[cfg(windows)]
 #[tauri::command]
-pub fn recognize_image_bytes(
+pub async fn recognize_image_bytes(
     request: tauri::ipc::Request<'_>,
 ) -> Result<OcrRecognitionPayload, String> {
     let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
@@ -330,12 +336,15 @@ pub fn recognize_image_bytes(
         .get("x-toolknit-language")
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
-    recognize_image_bytes_inner(bounded_image_bytes(data.to_vec())?, language_tag)
+    let bytes = bounded_image_bytes(data.to_vec())?;
+    tauri::async_runtime::spawn_blocking(move || recognize_image_bytes_inner(bytes, language_tag))
+        .await
+        .map_err(|error| format!("Windows OCR 后台任务失败：{error}"))?
 }
 
 #[cfg(not(windows))]
 #[tauri::command]
-pub fn recognize_image_text(
+pub async fn recognize_image_text(
     _path: String,
     _language_tag: Option<String>,
 ) -> Result<OcrRecognitionPayload, String> {
@@ -344,7 +353,7 @@ pub fn recognize_image_text(
 
 #[cfg(not(windows))]
 #[tauri::command]
-pub fn recognize_image_bytes(
+pub async fn recognize_image_bytes(
     _request: tauri::ipc::Request<'_>,
 ) -> Result<OcrRecognitionPayload, String> {
     Err("当前平台尚未接入本机 OCR；请使用 Windows 10/11 桌面开发版。".into())
@@ -353,7 +362,7 @@ pub fn recognize_image_bytes(
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]
-    use super::{recognize_image_text, scaled_dimensions};
+    use super::{bounded_image_file, recognize_image_bytes_inner, scaled_dimensions};
 
     #[cfg(windows)]
     #[test]
@@ -398,7 +407,11 @@ mod tests {
         PngEncoder::new(file)
             .write_image(&pixels, width, height, ExtendedColorType::Rgb8)
             .unwrap();
-        let result = recognize_image_text(path.to_string_lossy().into_owned(), None).unwrap();
+        let result = recognize_image_bytes_inner(
+            bounded_image_file(path.to_string_lossy().as_ref()).unwrap(),
+            None,
+        )
+        .unwrap();
         let _ = std::fs::remove_file(path);
         assert_eq!((result.source_width, result.source_height), (width, height));
         assert_eq!(
