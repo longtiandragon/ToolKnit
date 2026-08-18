@@ -73,11 +73,18 @@ const senseListFields = [
   { key: 'collocations', label: '常用搭配', placeholder: 'run a program；run out of' },
   { key: 'synonyms', label: '近义 / 易混', placeholder: '每项用；分隔' },
 ] as const
-const onboardingSteps = [
+const dictionaryReady = ref(false)
+const manualOnboardingSteps = [
   { index: '01', title: '补全词条', detail: '拼写、读音与常用词形' },
   { index: '02', title: '按词性拆义', detail: '记录常用搭配、例句与易混词' },
   { index: '03', title: '加入复习', detail: '只让需要巩固的词义进入队列' },
 ]
+const dictionaryOnboardingSteps = [
+  { index: '01', title: '输入单词', detail: '一行一个词，回车就行' },
+  { index: '02', title: '自动补全', detail: '音标、词性、释义与词形变化' },
+  { index: '03', title: '加入复习', detail: '每条词义独立安排 FSRS' },
+]
+const onboardingSteps = computed(() => dictionaryReady.value ? dictionaryOnboardingSteps : manualOnboardingSteps)
 const vocabularyListOverscan = 8
 const reviewFacetChoices: VocabularyReviewFacet[] = ['meaning', 'spelling', 'example', 'comparison']
 const { speakingEntryId, speakVocabularyEntry: speakVocabulary, disposeVocabularySpeech } = useVocabularySpeech()
@@ -288,7 +295,6 @@ function handleListScroll() {
 }
 const newWord = ref('')
 const addingWord = ref(false)
-const dictionaryReady = ref(false)
 /** A word the dictionary does not have, held back until the reader says what
  * they meant. Typing `abondon` should not quietly become an entry. */
 const pendingMiss = ref<{ word: string; suggestions: string[] } | null>(null)
@@ -811,8 +817,29 @@ onBeforeUnmount(() => {
         <div class="stack items-center gap-4 max-w-140 px-6 text-center">
           <span class="center w-12 h-12 rounded-lg bg-accent-soft text-accent"><AppIcon name="book" :size="24" /></span>
           <div class="stack gap-1.5">
-            <strong class="text-[16px] font-semibold text-fg">把一个单词，织成多张可复习的卡</strong>
+            <strong class="text-[16px] font-semibold text-fg">{{ dictionaryReady ? '输入一个单词，其余交给词库' : '把一个单词，织成多张可复习的卡' }}</strong>
             <p class="text-[12px] leading-relaxed text-fg-3">词形、不同词性、常用搭配、例句与易混词都归在同一词条下；启用的每条词义会独立安排复习。</p>
+          </div>
+
+          <!-- Someone arriving here has no way to know a dictionary exists, let
+               alone that it has to be downloaded. Saying it once, here, is the
+               difference between "type a word" and "type a word and get a
+               blank entry". -->
+          <div v-if="!dictionaryReady" class="stack gap-2.5 w-full p-4 rounded-md border border-accent-ring bg-accent-soft text-left">
+            <span class="row items-start gap-2.5">
+              <AppIcon name="download" :size="18" class="shrink-0 mt-0.5 text-accent" />
+              <span class="stack gap-1 min-w-0">
+                <b class="text-[13px] font-semibold text-fg">先装上离线词库，之后只需要给单词</b>
+                <small class="text-[12px] leading-relaxed text-fg-2">
+                  装好后输入一个词，音标、词性、释义和过去式/分词等词形都会自动填好，拼错还会提示你要找的是哪个词。
+                  词库是 ECDICT（MIT 许可，约 77 万词条），需要下载约 207MB，装完查词全程离线，文件不进资料库也不进备份。
+                </small>
+              </span>
+            </span>
+            <span class="row flex-wrap gap-2">
+              <RouterLink class="btn-primary btn-sm" to="/settings?section=dictionary"><AppIcon name="download" :size="14" />去启用词库</RouterLink>
+              <small class="row items-center text-[11px] text-fg-3">也可以先不装，手动录入或批量导入现有词表。</small>
+            </span>
           </div>
           <ol class="grid grid-cols-3 gap-2 w-full" aria-label="单词卡录入流程">
             <li v-for="step in onboardingSteps" :key="step.index" class="stack gap-1 p-3 rounded-sm border border-line bg-well text-left">
