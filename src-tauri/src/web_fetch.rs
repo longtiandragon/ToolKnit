@@ -197,6 +197,9 @@ fn resolve_target(raw: String) -> Result<PinnedTarget, String> {
 
 fn pinned_client(target: &PinnedTarget) -> Result<Client, String> {
     Client::builder()
+        // A system/environment proxy would receive the original host and make
+        // the validated DNS pin advisory rather than authoritative.
+        .no_proxy()
         .redirect(Policy::none())
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
@@ -323,6 +326,13 @@ async fn fetch_image(raw: String, remaining: usize) -> Result<(Vec<u8>, &'static
         "image/png, image/jpeg, image/gif, image/webp, image/bmp",
     )
     .await?;
+    decode_image_response(response, remaining).await
+}
+
+async fn decode_image_response(
+    response: Response,
+    remaining: usize,
+) -> Result<(Vec<u8>, &'static str), String> {
     let mime = content_type(&response);
     let (extension, expected_format) =
         image_extension(&mime).ok_or("远程资源不是受支持的栅格图片。")?;
@@ -333,6 +343,26 @@ async fn fetch_image(raw: String, remaining: usize) -> Result<(Vec<u8>, &'static
         return Err("远程图片的 MIME 与文件签名不一致。".into());
     }
     Ok((bytes, extension))
+}
+
+fn record_image_result(
+    original_url: String,
+    result: Result<VaultMarkdownAttachment, String>,
+    localized: &mut Vec<LocalizedArticleImage>,
+    failures: &mut Vec<ArticleImageFailure>,
+) {
+    match result {
+        Ok(attachment) => localized.push(LocalizedArticleImage {
+            original_url,
+            source: attachment.source,
+            filename: attachment.filename,
+            size: attachment.size,
+        }),
+        Err(error) => failures.push(ArticleImageFailure {
+            original_url,
+            error,
+        }),
+    }
 }
 
 fn write_temporary_image(
@@ -402,18 +432,7 @@ pub async fn localize_web_article_images(
             Ok::<_, String>(attachment)
         }
         .await;
-        match result {
-            Ok(attachment) => localized.push(LocalizedArticleImage {
-                original_url,
-                source: attachment.source,
-                filename: attachment.filename,
-                size: attachment.size,
-            }),
-            Err(error) => failures.push(ArticleImageFailure {
-                original_url,
-                error,
-            }),
-        }
+        record_image_result(original_url, result, &mut localized, &mut failures);
     }
     Ok(LocalizeArticleImagesReport {
         localized,
@@ -424,6 +443,32 @@ pub async fn localize_web_article_images(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{io::Read, net::TcpListener, thread};
+
+    fn response_fixture(response: Vec<u8>) -> PinnedTarget {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind response fixture");
+        let address = listener.local_addr().expect("fixture address");
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept fixture request");
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request);
+            stream.write_all(&response).expect("write fixture response");
+        });
+        PinnedTarget {
+            url: Url::parse(&format!("http://fixture.test:{}/", address.port()))
+                .expect("fixture URL"),
+            host: "fixture.test".into(),
+            addresses: vec![address],
+        }
+    }
+
+    fn raw_response(status: u16, reason: &str, headers: &str, body: &[u8]) -> Vec<u8> {
+        let mut response =
+            format!("HTTP/1.1 {status} {reason}\r\nConnection: close\r\n{headers}\r\n")
+                .into_bytes();
+        response.extend_from_slice(body);
+        response
+    }
 
     #[test]
     fn url_policy_accepts_only_plain_https_on_port_443() {
@@ -503,5 +548,99 @@ mod tests {
             assert!(message.contains("不会绕过"));
         }
         assert_eq!(unsuccessful_status_message(500), "网页返回 HTTP 500。");
+    }
+
+    #[test]
+    fn live_response_gate_rejects_protected_statuses_and_redirects() {
+        for status in [403, 429, 521] {
+            let target = response_fixture(raw_response(
+                status,
+                "Blocked",
+                "Content-Length: 0\r\n",
+                b"",
+            ));
+            let error = tauri::async_runtime::block_on(request_target(&target, "text/html"))
+                .expect_err("protected status must fail");
+            assert!(error.contains(&format!("HTTP {status}")));
+            assert!(error.contains("不会绕过"));
+        }
+
+        let redirect = response_fixture(raw_response(
+            302,
+            "Found",
+            "Location: https://example.com/final\r\nContent-Length: 0\r\n",
+            b"",
+        ));
+        let error = tauri::async_runtime::block_on(request_target(&redirect, "text/html"))
+            .expect_err("redirect must fail");
+        assert!(error.contains("重定向"));
+        assert!(error.contains("最终 HTTPS 地址"));
+    }
+
+    #[test]
+    fn bounded_reader_rejects_declared_and_streamed_oversize_pages() {
+        let declared = response_fixture(raw_response(
+            200,
+            "OK",
+            "Content-Type: text/html\r\nContent-Length: 64\r\n",
+            &[b'x'; 64],
+        ));
+        let response = tauri::async_runtime::block_on(request_target(&declared, "text/html"))
+            .expect("declared fixture response");
+        let error = tauri::async_runtime::block_on(read_bounded(response, 32))
+            .expect_err("declared oversize must fail");
+        assert!(error.contains("安全上限"));
+
+        let streamed = response_fixture(raw_response(
+            200,
+            "OK",
+            "Content-Type: text/html\r\n",
+            &[b'y'; 64],
+        ));
+        let response = tauri::async_runtime::block_on(request_target(&streamed, "text/html"))
+            .expect("streamed fixture response");
+        let error = tauri::async_runtime::block_on(read_bounded(response, 32))
+            .expect_err("streamed oversize must fail");
+        assert!(error.contains("安全上限"));
+    }
+
+    #[test]
+    fn broken_images_fail_individually_and_do_not_hide_successes() {
+        let broken = response_fixture(raw_response(
+            200,
+            "OK",
+            "Content-Type: image/png\r\nContent-Length: 12\r\n",
+            b"not-a-png!!!",
+        ));
+        let response = tauri::async_runtime::block_on(request_target(&broken, "image/png"))
+            .expect("broken image response");
+        let error = tauri::async_runtime::block_on(decode_image_response(response, 1024))
+            .expect_err("invalid image signature must fail");
+        assert!(error.contains("文件签名无效"));
+
+        let mut localized = Vec::new();
+        let mut failures = Vec::new();
+        record_image_result(
+            "https://cdn.example.com/ok.png".into(),
+            Ok(VaultMarkdownAttachment {
+                source: "assets/documents/note/ok.png".into(),
+                filename: "ok.png".into(),
+                size: 128,
+            }),
+            &mut localized,
+            &mut failures,
+        );
+        record_image_result(
+            "https://cdn.example.com/missing.png".into(),
+            Err("网页返回 HTTP 404。".into()),
+            &mut localized,
+            &mut failures,
+        );
+        assert_eq!(localized.len(), 1);
+        assert_eq!(failures.len(), 1);
+        assert_eq!(
+            failures[0].original_url,
+            "https://cdn.example.com/missing.png"
+        );
     }
 }
