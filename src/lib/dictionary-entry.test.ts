@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { blankVocabularyRows, dictionaryFormsFromExchange, dictionaryRecordToRows, type DictionaryRecord } from './dictionary-entry'
-import { prepareVocabularyImport } from './vocabulary-import'
+import { blankVocabularyRows, dictionaryFillOnlyRows, dictionaryFormsFromExchange, dictionaryRecordToRows, type DictionaryRecord } from './dictionary-entry'
+import { matchingVocabularyEntries, prepareVocabularyImport } from './vocabulary-import'
 
 const ids = () => { let index = 0; return () => `00000000-0000-7000-8000-${String(index++).padStart(12, '0')}` }
 
@@ -51,6 +51,37 @@ describe('dictionary completion', () => {
     expect(entry.forms).toMatchObject({ past: 'ran', presentParticiple: 'running' })
     // Every sense gets its meaning card, which is the agreed behaviour.
     expect(entry.senses.every((sense) => sense.reviewEnabled && sense.review)).toBe(true)
+  })
+
+  it('does not propose a meaning again once the reader has edited it', () => {
+    const at = '2026-08-19T00:00:00.000Z'
+    const first = prepareVocabularyImport(dictionaryRecordToRows(run), [], 'merge', ['meaning'], ids(), at)
+    // The reader trims the dictionary's six-word gloss to the sense they want.
+    const edited = {
+      ...first.entries[0],
+      pronunciation: '',
+      forms: {},
+      senses: [{ ...first.entries[0].senses[0], definition: '奔跑' }],
+    }
+
+    // Completing the same word again used to add the dictionary's wording back
+    // as a second sense, because a merge compares senses by their text.
+    const naive = prepareVocabularyImport(dictionaryRecordToRows(run), [edited], 'merge', ['meaning'], ids(), at)
+    expect(naive.addedSenseCount).toBeGreaterThan(0)
+
+    const guarded = prepareVocabularyImport(dictionaryFillOnlyRows(dictionaryRecordToRows(run)), [edited], 'merge', ['meaning'], ids(), at)
+    expect(guarded.addedSenseCount).toBe(0)
+    expect(guarded.reviewCardCount).toBe(0)
+    expect(guarded.entries[0].senses.map((sense) => sense.definition)).toEqual(['奔跑'])
+    // Gaps are still filled: the reader lost nothing by having edited.
+    expect(guarded.entries[0].pronunciation).toBe('[rʌn]')
+    expect(guarded.entries[0].forms).toMatchObject({ past: 'ran' })
+  })
+
+  it('recognises the entry a word would merge into, whatever its case', () => {
+    const entry = prepareVocabularyImport(dictionaryRecordToRows(run), [], 'merge', [], ids(), '2026-08-19T00:00:00.000Z').entries[0]
+    expect(matchingVocabularyEntries(dictionaryRecordToRows({ ...run, word: 'RUN' }), [entry]).map((item) => item.id)).toEqual([entry.id])
+    expect(matchingVocabularyEntries(blankVocabularyRows('walk'), [entry])).toEqual([])
   })
 
   it('keeps an unknown word as an entry to fill in later', () => {

@@ -70,6 +70,20 @@ export function dictionaryRecordToRows(record: DictionaryRecord, language = '英
   }))
 }
 
+/**
+ * Rows that fill in what is missing without proposing meanings again.
+ *
+ * A meaning kept in a vocabulary book gets edited — the six-word gloss a
+ * dictionary gives `abandon` is trimmed to the one being learned. Merging
+ * compares a sense by its part of speech and its text, so the dictionary's
+ * original no longer matches the edited one and would be added a second time.
+ * Dropping the meanings leaves pronunciation and inflections to fill any gap,
+ * which `prepareVocabularyImport` does without creating a sense at all.
+ */
+export function dictionaryFillOnlyRows(rows: readonly VocabularyImportRow[]): VocabularyImportRow[] {
+  return rows.slice(0, 1).map((row) => ({ ...row, partOfSpeech: '', definition: '' }))
+}
+
 /** Rows for a word the dictionary does not know, so typing it still produces an
  * entry to fill in later instead of silently doing nothing. */
 export function blankVocabularyRows(word: string, language = '英语'): VocabularyImportRow[] {

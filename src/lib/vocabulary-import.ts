@@ -305,13 +305,20 @@ function addSelectedReviewFacets(
  * senses, so merging against them would re-insert meanings the row could not
  * see; the caller reads these entries in full first.
  */
-export function vocabularyImportDuplicateIds(
+export function matchingVocabularyEntries(
   rows: readonly VocabularyImportRow[],
   entries: readonly VocabularyEntry[],
 ) {
   const keys = new Set(rows.map((row) => entryKey(row.lemma, row.language)))
-  return entries
-    .filter((entry) => entry.summaryOnly && keys.has(entryKey(entry.lemma, entry.language)))
+  return entries.filter((entry) => keys.has(entryKey(entry.lemma, entry.language)))
+}
+
+export function vocabularyImportDuplicateIds(
+  rows: readonly VocabularyImportRow[],
+  entries: readonly VocabularyEntry[],
+) {
+  return matchingVocabularyEntries(rows, entries)
+    .filter((entry) => entry.summaryOnly)
     .map((entry) => entry.id)
 }
 

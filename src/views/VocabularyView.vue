@@ -10,8 +10,8 @@ import { matchesVocabularySearch } from '@/lib/vocabulary-search'
 import { vocabularyKnowledgeAction } from '@/lib/knowledge-workflows'
 import { newId } from '@/lib/id'
 import { lookupDictionaryWords, readDictionaryStatus, suggestDictionaryWords } from '@/lib/dictionary-native'
-import { blankVocabularyRows, dictionaryRecordToRows } from '@/lib/dictionary-entry'
-import { prepareVocabularyImport, vocabularyImportDuplicateIds } from '@/lib/vocabulary-import'
+import { blankVocabularyRows, dictionaryFillOnlyRows, dictionaryRecordToRows } from '@/lib/dictionary-entry'
+import { matchingVocabularyEntries, prepareVocabularyImport, vocabularyImportDuplicateIds } from '@/lib/vocabulary-import'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { createVocabularyReviewState, vocabularyReviewCards, vocabularyReviewFacetLabels, vocabularyReviewForFacet, withVocabularyReviewFacet } from '@/lib/vocabulary-review'
 import AppIcon from '@/components/AppIcon.vue'
@@ -344,10 +344,20 @@ async function completeWord(input = newWord.value) {
       pendingMiss.value = { word, suggestions: await suggestDictionaryWords(word).catch(() => []) }
       return
     }
-    const rows = records.length ? records.flatMap((record) => dictionaryRecordToRows(record)) : blankVocabularyRows(word)
-    if (!rows.length) return
+    const looked = records.length ? records.flatMap((record) => dictionaryRecordToRows(record)) : blankVocabularyRows(word)
+    if (!looked.length) return
+    // A word already carrying meanings has been read, and probably edited. Fill
+    // the gaps rather than proposing the dictionary's wording a second time.
+    const matched = matchingVocabularyEntries(looked, store.vocabulary)
+    const glossed = matched.some((entry) => (entry.senseCount ?? entry.senses.length) > 0)
+    const rows = glossed ? dictionaryFillOnlyRows(looked) : looked
     const snapshot = await storeVocabularyRows(rows)
-    if (!records.length) {
+    // Nothing to fill means nothing was written, and an unwritten entry is
+    // still the one the reader just asked for.
+    if (!snapshot.entries[0] && matched[0]) await pick(matched[0])
+    if (glossed) {
+      ui.toast(`「${looked[0].lemma}」已经在生词本里`, snapshot.updatedCount ? '补上了缺的音标或词形，没有重复添加义项。' : '词条没有变化，已为你打开。', 'info')
+    } else if (!records.length) {
       // Saying what is missing without offering the fix is how someone ends up
       // typing a word, getting a blank entry, and concluding it is broken.
       ui.toast('已加入生词本，但还没有词库', `「${word}」暂时只有词形。装上离线词库后，输入单词即可补全音标、词性和释义。`, 'info', '去启用词库', () => router.push('/settings?section=dictionary'))
