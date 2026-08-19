@@ -1,5 +1,6 @@
 import type { Job } from '@/types'
 import type { WorkspaceSnapshot } from '@/lib/workspace-backup'
+import { portableProcessingJob } from '@/lib/job-privacy'
 
 export const MAX_JOB_HISTORY = 500
 export const JOB_PROGRESS_PERSIST_DELAY_MS = 900
@@ -18,7 +19,7 @@ export function createPrimaryWorkspaceSnapshot(snapshot: WorkspaceSnapshot, desk
     vocabulary: desktopVaultActive ? [] : snapshot.vocabulary,
     relations: desktopVaultActive ? [] : snapshot.relations,
     activities: desktopVaultActive ? [] : snapshot.activities,
-    jobs: desktopJobsActive ? [] : snapshot.jobs.slice(0, MAX_JOB_HISTORY),
+    jobs: desktopJobsActive ? [] : snapshot.jobs.slice(0, MAX_JOB_HISTORY).map(portableProcessingJob),
   }
 }
 

@@ -1,6 +1,7 @@
 import type { ActivityRecord, AiProfile, ContentFavorite, ContentRecent, EntityRelation, FavoriteTool, Job, Source, StudyDocument, ToolboxBoardLayout, ToolPipelineRecipe, ToolRecipe, ToolUsage, VocabularyEntry, WorkbenchSettings } from '@/types'
 import { cloneStudyDocument } from '@/lib/study-document'
 import { cloneVocabularyEntry } from '@/lib/vocabulary'
+import { portableProcessingJob } from '@/lib/job-privacy'
 
 export interface WorkspaceSnapshot {
   sources: Source[]
@@ -21,13 +22,6 @@ export interface WorkspaceSnapshot {
   settings?: WorkbenchSettings
 }
 
-export interface WorkspaceBackup extends WorkspaceSnapshot {
-  format: 'toolknit-browser-backup'
-  schemaVersion: 7
-  exportedAt: string
-}
-
-const MAX_BACKUP_CHARACTERS = 25_000_000
 const LEGACY_DEFAULT_VAULT_NAMES = new Set(['ToolKnitVault', 'ToolKnit Vault', '我的 ToolKnitVault', '我的 ToolKnit Vault'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -129,20 +123,20 @@ function normalizeContentRecents(value: unknown): ContentRecent[] {
 
 function normalizeFileReferences(value: unknown) {
   if (!Array.isArray(value)) return undefined
-  return value.flatMap((entry) => isRecord(entry) && typeof entry.name === 'string' ? [{ name: entry.name, ...(typeof entry.path === 'string' ? { path: entry.path } : {}), ...(typeof entry.size === 'number' && Number.isFinite(entry.size) ? { size: Math.max(0, entry.size) } : {}), ...(typeof entry.mime === 'string' ? { mime: entry.mime } : {}) }] : [])
+  return value.flatMap((entry) => isRecord(entry) && typeof entry.name === 'string' ? [{ name: entry.name, ...(typeof entry.size === 'number' && Number.isFinite(entry.size) ? { size: Math.max(0, entry.size) } : {}), ...(typeof entry.mime === 'string' ? { mime: entry.mime } : {}) }] : [])
 }
 
 function normalizeJob(value: Job): Job {
   const parameters = isRecord(value.parameters) ? Object.fromEntries(Object.entries(value.parameters).filter(([, item]) => typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean' || Array.isArray(item) && item.every((part) => typeof part === 'string'))) as Job['parameters'] : undefined
-  return {
+  return portableProcessingJob({
     ...value,
     progress: Number.isFinite(value.progress) ? Math.min(100, Math.max(0, value.progress)) : 0,
     inputNames: stringArray(value.inputNames),
     outputNames: stringArray(value.outputNames),
     inputs: normalizeFileReferences(value.inputs),
     outputs: normalizeFileReferences(value.outputs),
-    parameters
-  }
+    parameters,
+  })
 }
 
 function validProfile(value: Record<string, unknown>) {
@@ -155,6 +149,7 @@ function validRecipe(value: Record<string, unknown>) {
 
 function validPipeline(value: Record<string, unknown>) {
   if (!hasStrings(value, ['id', 'title', 'createdAt', 'updatedAt']) || value.version !== 1 || !Array.isArray(value.steps)) return false
+  if (value.scope !== undefined && value.scope !== 'text' && value.scope !== 'artifact') return false
   // Policy values are checked by the pipeline runner before execution. Keeping
   // this backup validator focused on the serializable recipe shape preserves
   // forward compatibility when a newer runner adds another policy.
@@ -196,7 +191,7 @@ function normalizeToolboxBoard(value: unknown): ToolboxBoardLayout | undefined {
   return empty ? undefined : board
 }
 
-function normalizeSettings(value: unknown): WorkbenchSettings {
+export function normalizeSettings(value: unknown): WorkbenchSettings {
   const input = isRecord(value) ? value : {}
   const numberWithin = (key: string, fallback: number, minimum: number, maximum: number) => {
     const candidate = input[key]
@@ -297,21 +292,4 @@ export function parsePersistedWorkspace(serialized: string) {
   } catch {
     return undefined
   }
-}
-
-export function createWorkspaceBackup(snapshot: WorkspaceSnapshot, exportedAt = new Date().toISOString()) {
-  const backup: WorkspaceBackup = { format: 'toolknit-browser-backup', schemaVersion: 7, exportedAt, ...snapshot, favorites: snapshot.favorites ?? [], contentFavorites: snapshot.contentFavorites ?? [], contentRecents: snapshot.contentRecents ?? [], toolUsages: snapshot.toolUsages ?? [], activities: snapshot.activities ?? [], settings: normalizeSettings(snapshot.settings) }
-  return JSON.stringify(backup, null, 2)
-}
-
-export function parseWorkspaceBackup(serialized: string) {
-  if (serialized.length > MAX_BACKUP_CHARACTERS) throw new Error('备份文件超过 25 MB，浏览器版无法安全恢复。')
-  let parsed: unknown
-  try { parsed = JSON.parse(serialized) } catch { throw new Error('备份文件不是有效的 JSON。') }
-  if (!isRecord(parsed) || parsed.format !== 'toolknit-browser-backup' || ![1, 2, 3, 4, 5, 6, 7].includes(Number(parsed.schemaVersion))) {
-    throw new Error('这不是可恢复的 Knitspace 浏览器备份。')
-  }
-  const snapshot = normalizeWorkspace(parsed)
-  if (!snapshot) throw new Error('备份结构不完整或包含无效数据，未修改当前资料库。')
-  return snapshot
 }

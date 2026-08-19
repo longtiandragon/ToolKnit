@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createWorkspaceBackup, defaultWorkbenchSettings, normalizeWorkspace, parsePersistedWorkspace, parseWorkspaceBackup, type WorkspaceSnapshot } from './workspace-backup'
+import { defaultWorkbenchSettings, normalizeWorkspace, parsePersistedWorkspace, type WorkspaceSnapshot } from './workspace-backup'
+import { createWorkspaceBackup, parseWorkspaceBackup } from './workspace-backup-transfer'
 
 const snapshot: WorkspaceSnapshot = {
   sources: [],
@@ -43,6 +44,34 @@ describe('workspace backups', () => {
     expect(restored.pipelineRecipes).toEqual(snapshot.pipelineRecipes)
     expect(restored.contentFavorites).toEqual(snapshot.contentFavorites)
     expect(restored.contentRecents).toEqual(snapshot.contentRecents)
+  })
+
+  it('removes processing paths from new and legacy backups', () => {
+    const job = {
+      id: 'job-private', kind: 'archive' as const, label: '交付', status: 'failed' as const,
+      progress: 100, createdAt: '2026-08-19', inputNames: ['Z:\\private\\input.pdf'],
+      inputs: [{ name: 'input.pdf', path: 'Z:\\private\\input.pdf' }],
+      outputs: [{ name: 'output.zip', path: 'Z:\\private\\output.zip' }],
+      parameters: { outputDirectory: 'Z:\\private', quality: 90 },
+      detail: '无法读取 Z:\\private\\input.pdf',
+    }
+    const serialized = createWorkspaceBackup({
+      ...snapshot,
+      jobs: [job],
+      activities: [{ id: 'activity-private', kind: 'job', title: '处理 Z:\\private\\input.pdf', detail: '无法读取 Z:\\private\\input.pdf', createdAt: '2026-08-19' }],
+      settings: { ...defaultWorkbenchSettings, outputDirectory: 'Z:\\private', transcriptionModelPath: 'Z:\\private\\model.bin' },
+    }, '2026-08-19T00:00:00.000Z')
+    expect(serialized).not.toContain('Z:\\\\private')
+    const restored = parseWorkspaceBackup(serialized)
+    expect(restored.jobs[0]).toMatchObject({
+      inputNames: ['input.pdf'], inputs: [{ name: 'input.pdf' }], outputs: [{ name: 'output.zip' }],
+      parameters: { quality: 90 }, detail: '任务详情已省略（包含本机路径）。',
+    })
+    expect(restored.activities?.[0]).toMatchObject({ title: '本机活动', detail: '活动详情已省略（包含本机路径）。' })
+    expect(restored.settings).toMatchObject({ outputDirectory: '', transcriptionModelPath: '' })
+
+    const legacy = parseWorkspaceBackup(JSON.stringify({ ...snapshot, jobs: [job], format: 'toolknit-browser-backup', schemaVersion: 7, exportedAt: '2026-08-19' }))
+    expect(JSON.stringify(legacy.jobs)).not.toContain('Z:\\\\private')
   })
 
   it('keeps the code image author in workspace settings', () => {

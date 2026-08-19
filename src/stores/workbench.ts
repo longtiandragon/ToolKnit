@@ -1,9 +1,10 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { ActivityRecord, AiProfile, ClipboardItem, ContentFavorite, ContentFavoriteKind, ContentRecent, EntityRelation, FavoriteTool, FileReference, Job, QuestionReviewFacet, QuestionType, ReviewRating, ReviewState, Source, SourceAnchor, StudyDocument, ToolPipelineRecipe, ToolRecipe, ToolUsage, VocabularyEntry, VocabularyReviewFacet, WorkbenchSettings } from '@/types'
+import { portableJobDetail, portableProcessingJob } from '@/lib/job-privacy'
 import { newId } from '@/lib/id'
 import { questionTemplate } from '@/lib/question-template'
-import { createWorkspaceBackup, defaultWorkbenchSettings, parsePersistedWorkspace, parseWorkspaceBackup, type WorkspaceSnapshot } from '@/lib/workspace-backup'
+import { defaultWorkbenchSettings, parsePersistedWorkspace, type WorkspaceSnapshot } from '@/lib/workspace-backup'
 import { normalizeClipboardHistory, normalizeFavoriteOrder, pruneClipboardHistory } from '@/lib/workbench-utils'
 import { cloneStudyDocument, insertStudyDocument, normalizeDocumentFolder } from '@/lib/study-document'
 import { cloneVocabularyEntry } from '@/lib/vocabulary'
@@ -435,14 +436,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   }
 
   function cloneJob(job: Job): Job {
-    return {
-      ...job,
-      inputNames: job.inputNames ? [...job.inputNames] : undefined,
-      outputNames: job.outputNames ? [...job.outputNames] : undefined,
-      inputs: job.inputs?.map((item) => ({ ...item })),
-      outputs: job.outputs?.map((item) => ({ ...item })),
-      parameters: job.parameters ? { ...job.parameters } : undefined,
-    }
+    return portableProcessingJob(job)
   }
 
   function flushPendingJobSaves() {
@@ -727,10 +721,12 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       : activities.value
     const backupJobs = desktopJobsActive.value ? await listDesktopProcessingJobs(500) : jobs.value
     const backupVocabulary = desktopVaultActive.value ? await exportDesktopVocabulary() : vocabulary.value
+    const { createWorkspaceBackup } = await import('@/lib/workspace-backup-transfer')
     return createWorkspaceBackup({ sources: sources.value, documents: backupDocuments, vocabulary: backupVocabulary, relations: relations.value, jobs: backupJobs, aiProfiles: aiProfiles.value, activeVaultName: activeVaultName.value, codeDraft: codeDraft.value, recipes: recipes.value, pipelineRecipes: pipelineRecipes.value, favorites: favorites.value, contentFavorites: contentFavorites.value, contentRecents: contentRecents.value, toolUsages: toolUsages.value, activities: backupActivities, settings: settings.value })
   }
 
   async function restoreBrowserBackup(serialized: string) {
+    const { parseWorkspaceBackup } = await import('@/lib/workspace-backup-transfer')
     const backup = parseWorkspaceBackup(serialized)
     sources.value = backup.sources; documents.value = backup.documents.map(cloneStudyDocument); loadedDesktopDocumentIds.clear(); documents.value.forEach((document) => loadedDesktopDocumentIds.add(document.id)); vocabulary.value = (backup.vocabulary ?? []).map(cloneVocabularyEntry); loadedDesktopVocabularyIds.clear(); vocabulary.value.forEach((entry) => loadedDesktopVocabularyIds.add(entry.id)); relations.value = (backup.relations ?? []).map((relation) => ({ ...relation })); jobs.value = boundedJobHistory(backup.jobs); aiProfiles.value = backup.aiProfiles; recipes.value = backup.recipes; pipelineRecipes.value = backup.pipelineRecipes ?? []; favorites.value = backup.favorites ?? []; contentFavorites.value = backup.contentFavorites ?? []; contentRecents.value = backup.contentRecents ?? []; toolUsages.value = backup.toolUsages ?? []; activities.value = backup.activities ?? []; settings.value = { ...defaultWorkbenchSettings, ...backup.settings }; activeVaultName.value = backup.activeVaultName; codeDraft.value = backup.codeDraft; persistCodeDraft(); persist()
     jobsHasMore.value = false
@@ -1198,7 +1194,8 @@ export const useWorkbenchStore = defineStore('workbench', () => {
 
   function addJob(kind: Job['kind'], label: string, inputNames: string[] = [], meta: Partial<Job> = {}) {
     const job: Job = { id: newId(), kind, label, inputNames, status: 'queued', progress: 0, createdAt: now(), retryable: false, ...meta }
-    jobs.value = boundedJobHistory([job, ...jobs.value]); queueJobSave(job, true); addActivity('job', `创建任务：${label}`, inputNames.join('、'), meta.route, job.id); return job
+    const portableJob = portableProcessingJob(job)
+    jobs.value = boundedJobHistory([job, ...jobs.value]); queueJobSave(job, true); addActivity('job', `创建任务：${portableJob.label}`, portableJob.inputNames?.join('、'), meta.route, job.id); return job
   }
 
   function updateJob(id: string, patch: Partial<Job>) {
@@ -1209,7 +1206,8 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     if (patch.status === 'succeeded' || patch.status === 'failed' || patch.status === 'cancelled') {
       job.completedAt = now()
       const label = patch.status === 'succeeded' ? '完成' : patch.status === 'cancelled' ? '已取消' : '失败'
-      addActivity(patch.status === 'succeeded' ? 'output' : 'job', `${label}：${job.label}`, patch.detail, job.route, job.id)
+      const portableJob = portableProcessingJob(job)
+      addActivity(patch.status === 'succeeded' ? 'output' : 'job', `${label}：${portableJob.label}`, portableJobDetail(patch.detail), job.route, job.id)
       queueJobSave(job, true)
     } else { queueJobSave(job, patch.status === 'running'); schedulePersist() }
   }

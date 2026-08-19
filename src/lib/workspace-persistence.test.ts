@@ -38,6 +38,20 @@ describe('workspace persistence boundaries', () => {
     expect(createPrimaryWorkspaceSnapshot(withJob, true, true).jobs).toEqual([])
   })
 
+  it('keeps absolute paths out of the browser job fallback', () => {
+    const withJob = {
+      ...snapshot,
+      jobs: [{
+        id: 'job-private', kind: 'media' as const, label: '转码', status: 'queued' as const,
+        progress: 0, createdAt: '2026-08-19', inputs: [{ name: 'video.mp4', path: 'Z:\\private\\video.mp4' }],
+        parameters: { outputDirectory: 'Z:\\private', operation: 'clean-metadata' },
+      }],
+    }
+    const primary = createPrimaryWorkspaceSnapshot(withJob, false)
+    expect(primary.jobs[0]).toMatchObject({ inputs: [{ name: 'video.mp4' }], parameters: { operation: 'clean-metadata' } })
+    expect(JSON.stringify(primary.jobs)).not.toContain('Z:\\\\private')
+  })
+
   it('bounds job history while retaining the newest entries', () => {
     const jobs = Array.from({ length: MAX_JOB_HISTORY + 3 }, (_, index) => ({ id: `job-${index}`, kind: 'image' as const, label: `任务 ${index}`, status: 'succeeded' as const, progress: 100, createdAt: '2026-08-10' }))
     expect(boundedJobHistory(jobs)).toHaveLength(MAX_JOB_HISTORY)

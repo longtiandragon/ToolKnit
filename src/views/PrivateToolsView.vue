@@ -241,7 +241,12 @@ async function run(mode: 'preview' | 'apply') {
   running.value = true
   cancelling.value = false
   const label = `${tool.title} · ${operation.title}${mode === 'preview' ? '（预览）' : ''}`
-  const job = store.addJob('script', label, currentFields.value.filter((field) => field.kind === 'file' || field.kind === 'directory').map((field) => normalizedValues.value[field.key]).filter(Boolean), {
+  const inputNames = currentFields.value
+    .filter((field) => field.kind === 'file' || field.kind === 'directory')
+    .map((field) => normalizedValues.value[field.key])
+    .filter(Boolean)
+    .map((value) => value.split(/[\\/]/).filter(Boolean).at(-1) ?? '本机输入')
+  const job = store.addJob('script', label, inputNames, {
     toolId: `private:${tool.id}:${operation.id}`,
     route: `/private-tools?tool=${tool.id}&operation=${operation.id}`,
     retryable: true,

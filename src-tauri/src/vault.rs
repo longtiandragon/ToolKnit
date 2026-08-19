@@ -24,7 +24,7 @@ pub struct VaultService {
     root: PathBuf,
 }
 
-const SCHEMA_VERSION: i64 = 24;
+const SCHEMA_VERSION: i64 = 25;
 const DOCUMENT_VERSION_LIMIT: i64 = 40;
 const DOCUMENT_VERSION_COALESCE_SECONDS: i64 = 5 * 60;
 const EDITOR_CRASH_DRAFT_LIMIT: i64 = 8;
@@ -650,8 +650,9 @@ fn processing_session_id() -> &'static str {
 }
 
 /// A small reference to an input or output file. Bytes never cross this
-/// boundary: the history stores only display metadata and an optional local
-/// path, so listing hundreds of tool runs remains cheap.
+/// boundary: durable history stores display metadata only. `path` remains in
+/// the wire shape solely so schema v24/browser payloads deserialize safely;
+/// normalization always clears it before SQLite writes or command responses.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultFileReference {
@@ -2049,6 +2050,104 @@ impl VaultService {
                 (24, Utc::now().to_rfc3339()),
             )?;
         }
+        if current_version < 25 {
+            // Processing history is portable audit metadata. Version 24 still
+            // accepted renderer file paths, so purge both explicit reference
+            // fields and path-bearing replay parameters in this transaction.
+            let jobs = {
+                let mut statement = transaction.prepare(
+                    "SELECT id, input_names_json, output_names_json, inputs_json, outputs_json,
+                            parameters_json, detail
+                     FROM processing_jobs",
+                )?;
+                let rows = statement
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                            row.get::<_, Option<String>>(6)?,
+                        ))
+                    })?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                rows
+            };
+            for (
+                id,
+                input_names_json,
+                output_names_json,
+                inputs_json,
+                outputs_json,
+                parameters_json,
+                detail,
+            ) in jobs
+            {
+                let mut input_names =
+                    serde_json::from_str::<Vec<String>>(&input_names_json).unwrap_or_default();
+                let mut output_names =
+                    serde_json::from_str::<Vec<String>>(&output_names_json).unwrap_or_default();
+                Self::normalize_processing_name_list(&mut input_names, "输入文件")?;
+                Self::normalize_processing_name_list(&mut output_names, "输出文件")?;
+                let mut inputs = serde_json::from_str::<Vec<VaultFileReference>>(&inputs_json)
+                    .unwrap_or_default();
+                let mut outputs = serde_json::from_str::<Vec<VaultFileReference>>(&outputs_json)
+                    .unwrap_or_default();
+                for reference in inputs.iter_mut().chain(outputs.iter_mut()) {
+                    reference.path = None;
+                }
+                let mut parameters = serde_json::from_str::<serde_json::Value>(&parameters_json)
+                    .unwrap_or_else(|_| json!({}));
+                Self::sanitize_processing_parameters(&mut parameters);
+                let detail = detail.map(|value| {
+                    if Self::processing_text_contains_absolute_path(&value) {
+                        "任务详情已省略（包含本机路径）。".to_owned()
+                    } else {
+                        value
+                    }
+                });
+                transaction.execute(
+                    "UPDATE processing_jobs
+                     SET input_names_json = ?2, output_names_json = ?3,
+                         inputs_json = ?4, outputs_json = ?5, parameters_json = ?6, detail = ?7
+                     WHERE id = ?1",
+                    rusqlite::params![
+                        id,
+                        serde_json::to_string(&input_names)?,
+                        serde_json::to_string(&output_names)?,
+                        serde_json::to_string(&inputs)?,
+                        serde_json::to_string(&outputs)?,
+                        serde_json::to_string(&parameters)?,
+                        detail,
+                    ],
+                )?;
+            }
+            let activities = {
+                let mut statement = transaction
+                    .prepare("SELECT id, payload_json FROM events WHERE type = 'activity'")?;
+                let rows = statement
+                    .query_map([], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                rows
+            };
+            for (id, payload_json) in activities {
+                let mut payload = serde_json::from_str::<serde_json::Value>(&payload_json)
+                    .unwrap_or_else(|_| json!({}));
+                Self::sanitize_activity_payload(&mut payload);
+                transaction.execute(
+                    "UPDATE events SET payload_json = ?2 WHERE id = ?1",
+                    rusqlite::params![id, serde_json::to_string(&payload)?],
+                )?;
+            }
+            transaction.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                (25, Utc::now().to_rfc3339()),
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -3038,6 +3137,13 @@ impl VaultService {
     fn normalize_processing_name_list(values: &mut [String], field: &str) -> Result<()> {
         for value in values {
             *value = value.trim().to_owned();
+            if Self::processing_text_contains_absolute_path(value) {
+                *value = value
+                    .rsplit(['\\', '/'])
+                    .find(|part| !part.is_empty())
+                    .unwrap_or("未命名文件")
+                    .to_owned();
+            }
             if value.is_empty() || value.len() > 1_024 {
                 bail!("{field}包含空名称或超长名称")
             }
@@ -3047,12 +3153,74 @@ impl VaultService {
 
     fn normalize_processing_file_reference(reference: &mut VaultFileReference) -> Result<()> {
         reference.name = reference.name.trim().to_owned();
+        if Self::processing_text_contains_absolute_path(&reference.name) {
+            reference.name = reference
+                .name
+                .rsplit(['\\', '/'])
+                .find(|part| !part.is_empty())
+                .unwrap_or("未命名文件")
+                .to_owned();
+        }
         if reference.name.is_empty() || reference.name.len() > 1_024 {
             bail!("任务文件名称为空或过长")
         }
-        Self::normalize_optional_processing_text(&mut reference.path, 32 * 1_024, "任务文件路径")?;
+        reference.path = None;
         Self::normalize_optional_processing_text(&mut reference.mime, 255, "任务文件 MIME")?;
         Ok(())
+    }
+
+    fn processing_text_contains_absolute_path(value: &str) -> bool {
+        let bytes = value.as_bytes();
+        bytes.windows(3).any(|window| {
+            window[0].is_ascii_alphabetic()
+                && window[1] == b':'
+                && matches!(window[2], b'\\' | b'/')
+        }) || value.contains("\\\\")
+    }
+
+    fn processing_parameter_key_contains_path(key: &str) -> bool {
+        let key = key.to_ascii_lowercase();
+        key.ends_with("path") || key.ends_with("directory") || key.ends_with("root")
+    }
+
+    fn sanitize_processing_parameters(value: &mut serde_json::Value) {
+        let Some(parameters) = value.as_object_mut() else {
+            return;
+        };
+        parameters.retain(|key, value| {
+            if Self::processing_parameter_key_contains_path(key) {
+                return false;
+            }
+            match value {
+                serde_json::Value::String(value) => {
+                    !Self::processing_text_contains_absolute_path(value)
+                }
+                serde_json::Value::Array(values) => !values.iter().any(|value| {
+                    value
+                        .as_str()
+                        .is_some_and(Self::processing_text_contains_absolute_path)
+                }),
+                _ => true,
+            }
+        });
+    }
+
+    fn sanitize_activity_payload(value: &mut serde_json::Value) {
+        let Some(payload) = value.as_object_mut() else {
+            return;
+        };
+        for (key, replacement) in [
+            ("title", "本机活动"),
+            ("detail", "活动详情已省略（包含本机路径）。"),
+        ] {
+            if payload
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(Self::processing_text_contains_absolute_path)
+            {
+                payload.insert(key.into(), serde_json::Value::String(replacement.into()));
+            }
+        }
     }
 
     fn processing_parameter_is_valid(value: &serde_json::Value) -> bool {
@@ -3098,6 +3266,9 @@ impl VaultService {
             bail!("处理任务状态无效")
         }
         job.label = job.label.trim().to_owned();
+        if Self::processing_text_contains_absolute_path(&job.label) {
+            job.label = "本地文件处理".into();
+        }
         if job.label.is_empty() || job.label.len() > 512 {
             bail!("处理任务标题为空或过长")
         }
@@ -3118,11 +3289,19 @@ impl VaultService {
         Self::normalize_optional_processing_text(&mut job.error_code, 128, "处理任务错误码")?;
         Self::normalize_optional_processing_text(&mut job.tool_id, 256, "处理任务工具 ID")?;
         Self::normalize_optional_processing_text(&mut job.route, 2_048, "处理任务页面地址")?;
+        if job
+            .detail
+            .as_deref()
+            .is_some_and(Self::processing_text_contains_absolute_path)
+        {
+            job.detail = Some("任务详情已省略（包含本机路径）。".into());
+        }
         Self::normalize_optional_processing_text(
             &mut job.detail,
             PROCESSING_JOB_DETAIL_MAX_BYTES,
             "处理任务详情",
         )?;
+        Self::sanitize_processing_parameters(&mut job.parameters);
         let parameters = job
             .parameters
             .as_object()
@@ -7425,6 +7604,9 @@ impl VaultService {
         if !event.payload.is_object() {
             bail!("事件内容必须是对象")
         }
+        if event.event_type == "activity" {
+            Self::sanitize_activity_payload(&mut event.payload);
+        }
         if serde_json::to_vec(&event.payload)?.len() > 128 * 1024 {
             bail!("事件内容超过 128 KB")
         }
@@ -10099,6 +10281,7 @@ mod tests {
         ))?;
         assert_eq!(queued.status, "queued");
         assert!(queued.started_at.is_none());
+        assert!(queued.inputs[0].path.is_none());
 
         // Every Tauri command opens the Vault again. A current-session owner
         // must therefore survive an ordinary reopen without false recovery.
@@ -10133,9 +10316,24 @@ mod tests {
             size: Some(4_096),
             mime: Some("application/pdf".into()),
         }];
+        succeeded.parameters["outputDirectory"] = json!("F:/Exports");
+        succeeded.detail = Some("无法写入 F:/Exports/output.pdf".into());
         let succeeded = service.save_processing_job(succeeded)?;
         assert!(succeeded.completed_at.is_some());
         assert_eq!(succeeded.created_at, "2026-08-09T07:00:00+00:00");
+        assert!(succeeded.outputs[0].path.is_none());
+        assert!(succeeded.parameters.get("outputDirectory").is_none());
+        assert_eq!(
+            succeeded.detail.as_deref(),
+            Some("任务详情已省略（包含本机路径）。")
+        );
+        let stored: String = service.connection()?.query_row(
+            "SELECT inputs_json || outputs_json || parameters_json || COALESCE(detail, '')
+             FROM processing_jobs WHERE id = ?1",
+            [&first_id],
+            |row| row.get(0),
+        )?;
+        assert!(!stored.contains("F:/"));
 
         let second_id = Uuid::now_v7().to_string();
         service.save_processing_job(test_processing_job(
@@ -10463,6 +10661,96 @@ mod tests {
         )?;
         assert_eq!(version, SCHEMA_VERSION);
         assert!(table_exists);
+        drop(connection);
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn processing_job_schema_v25_purges_legacy_absolute_paths() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-processing-job-path-migration-{}",
+            Uuid::now_v7()
+        ));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let id = Uuid::now_v7().to_string();
+        service.save_processing_job(test_processing_job(
+            id.clone(),
+            "archive",
+            "succeeded",
+            "2026-08-19T08:00:00Z",
+        ))?;
+        let activity_id = Uuid::now_v7().to_string();
+        service.save_event(VaultEvent {
+            id: activity_id.clone(),
+            event_type: "activity".into(),
+            starts_at: "2026-08-19T08:00:00Z".into(),
+            payload: json!({ "kind": "job", "title": "处理任务", "detail": "等待" }),
+            created_at: "2026-08-19T08:00:00Z".into(),
+            updated_at: "2026-08-19T08:00:00Z".into(),
+        })?;
+        {
+            let connection = service.connection()?;
+            let legacy_outputs = serde_json::to_string(&vec![VaultFileReference {
+                name: "output.zip".into(),
+                path: Some("Z:/private/output.zip".into()),
+                size: Some(24),
+                mime: Some("application/zip".into()),
+            }])?;
+            connection.execute(
+                "UPDATE processing_jobs
+                 SET input_names_json = ?2, outputs_json = ?3, parameters_json = ?4, detail = ?5
+                 WHERE id = ?1",
+                rusqlite::params![
+                    id,
+                    json!(["Z:/private/input.pdf"]).to_string(),
+                    legacy_outputs,
+                    json!({ "outputDirectory": "Z:/private", "quality": 90 }).to_string(),
+                    "无法写入 Z:/private/output.zip",
+                ],
+            )?;
+            connection.execute(
+                "UPDATE events SET payload_json = ?2 WHERE id = ?1",
+                rusqlite::params![
+                    activity_id,
+                    json!({
+                        "kind": "job",
+                        "title": "处理 Z:/private/input.pdf",
+                        "detail": "无法写入 Z:/private/output.zip"
+                    })
+                    .to_string(),
+                ],
+            )?;
+            connection.execute("DELETE FROM schema_migrations WHERE version >= 25", [])?;
+        }
+        drop(service);
+
+        let migrated = VaultService::open(root.to_string_lossy().into_owned())?;
+        let job = migrated.get_processing_job(id.clone())?;
+        assert_eq!(job.input_names, vec!["input.pdf"]);
+        assert!(job.outputs[0].path.is_none());
+        assert!(job.parameters.get("outputDirectory").is_none());
+        assert_eq!(job.parameters.get("quality"), Some(&json!(90)));
+        assert_eq!(
+            job.detail.as_deref(),
+            Some("任务详情已省略（包含本机路径）。")
+        );
+        let connection = migrated.connection()?;
+        let stored: String = connection.query_row(
+            "SELECT input_names_json || outputs_json || parameters_json || COALESCE(detail, '')
+             FROM processing_jobs WHERE id = ?1",
+            [&id],
+            |row| row.get(0),
+        )?;
+        assert!(!stored.contains("Z:/private"));
+        let activity_payload: String = connection.query_row(
+            "SELECT payload_json FROM events WHERE id = ?1",
+            [&activity_id],
+            |row| row.get(0),
+        )?;
+        assert!(!activity_payload.contains("Z:/private"));
+        assert!(activity_payload.contains("活动详情已省略"));
         drop(connection);
 
         fs::remove_dir_all(root)?;
