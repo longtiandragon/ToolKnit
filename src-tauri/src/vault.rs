@@ -24,7 +24,7 @@ pub struct VaultService {
     root: PathBuf,
 }
 
-const SCHEMA_VERSION: i64 = 23;
+const SCHEMA_VERSION: i64 = 24;
 const DOCUMENT_VERSION_LIMIT: i64 = 40;
 const DOCUMENT_VERSION_COALESCE_SECONDS: i64 = 5 * 60;
 const EDITOR_CRASH_DRAFT_LIMIT: i64 = 8;
@@ -48,6 +48,9 @@ const PROCESSING_JOB_MIGRATION_LIMIT: usize = 500;
 const PROCESSING_JOB_DETAIL_MAX_BYTES: usize = 64 * 1024;
 const PROCESSING_JOB_PARAMETERS_MAX_BYTES: usize = 256 * 1024;
 const PROCESSING_JOB_INTERRUPTED_MESSAGE: &str = "应用上次退出时任务尚未完成，可从历史记录重试。";
+const ORGANIZER_RULE_LIMIT: i64 = 256;
+const ORGANIZER_AUDIT_LIMIT: i64 = 2_000;
+const MAX_ORGANIZER_AUDIT_FILES: usize = 5_000;
 const VISUAL_PROJECT_IMAGE_LIMIT: usize = 4;
 const VISUAL_PROJECT_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 const VISUAL_PROJECT_TOTAL_MAX_BYTES: usize = 96 * 1024 * 1024;
@@ -701,6 +704,92 @@ pub struct VaultProcessingJobHydration {
     pub imported_count: usize,
     pub skipped_count: usize,
     pub has_more: bool,
+}
+
+/// Portable rule semantics live in the Vault. Machine-specific source and
+/// archive roots deliberately do not appear here; the organizer binding file
+/// in the application config directory owns those paths.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizerRuleMatcher {
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    #[serde(default)]
+    pub kinds: Vec<String>,
+    #[serde(default)]
+    pub name_patterns: Vec<String>,
+    pub min_size: Option<u64>,
+    pub max_size: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizerRuleAction {
+    pub category: String,
+    pub target_relative_dir_template: String,
+    pub target_base_name_template: String,
+    pub conflict_policy: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizerRule {
+    pub id: String,
+    pub title: String,
+    pub trust_level: String,
+    pub enabled: bool,
+    pub matcher: OrganizerRuleMatcher,
+    pub action: OrganizerRuleAction,
+    pub workflow_signature: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizerAuditInput {
+    pub rule_id: Option<String>,
+    #[serde(default)]
+    pub input_kinds: Vec<String>,
+    #[serde(default)]
+    pub operation_sequence: Vec<String>,
+    pub target_template: String,
+    pub file_count: usize,
+    pub moved_count: usize,
+    pub copied_count: usize,
+    pub failed_count: usize,
+    pub status: String,
+    pub error_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizerWorkflowSuggestion {
+    pub workflow_signature: String,
+    pub input_kinds: Vec<String>,
+    pub operation_sequence: Vec<String>,
+    pub target_template: String,
+    pub confirmations: i64,
+    pub last_confirmed_at: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizerReviewWorkflow {
+    pub operation_sequence: Vec<String>,
+    pub runs: i64,
+    pub files: i64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizerReviewSummary {
+    pub runs_30_days: i64,
+    pub files_30_days: i64,
+    pub saved_operations_30_days: i64,
+    pub failed_runs_30_days: i64,
+    pub repeated_workflows: Vec<OrganizerWorkflowSuggestion>,
+    pub top_workflows: Vec<OrganizerReviewWorkflow>,
 }
 
 #[derive(Serialize)]
@@ -1905,6 +1994,59 @@ impl VaultService {
             transaction.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
                 (23, Utc::now().to_rfc3339()),
+            )?;
+        }
+        if current_version < 24 {
+            // Portable organizer rules are Vault knowledge; absolute source
+            // and archive roots stay in app config and therefore cannot enter
+            // this schema, a Vault backup, FTS, or normal task history.
+            transaction.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS organizer_rules (
+                  id TEXT PRIMARY KEY,
+                  title TEXT NOT NULL,
+                  trust_level TEXT NOT NULL CHECK(trust_level IN ('preview', 'confirmed', 'trusted')),
+                  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+                  matcher_json TEXT NOT NULL,
+                  action_json TEXT NOT NULL,
+                  workflow_signature TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS organizer_rules_updated_idx
+                  ON organizer_rules(updated_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS organizer_rules_workflow_idx
+                  ON organizer_rules(workflow_signature)
+                  WHERE workflow_signature IS NOT NULL;
+
+                CREATE TABLE IF NOT EXISTS organizer_audit (
+                  id TEXT PRIMARY KEY,
+                  rule_id TEXT REFERENCES organizer_rules(id) ON DELETE SET NULL,
+                  workflow_signature TEXT NOT NULL,
+                  input_kinds_json TEXT NOT NULL,
+                  operation_sequence_json TEXT NOT NULL,
+                  target_template TEXT NOT NULL,
+                  file_count INTEGER NOT NULL CHECK(file_count >= 0),
+                  moved_count INTEGER NOT NULL CHECK(moved_count >= 0),
+                  copied_count INTEGER NOT NULL CHECK(copied_count >= 0),
+                  failed_count INTEGER NOT NULL CHECK(failed_count >= 0),
+                  saved_operations INTEGER NOT NULL CHECK(saved_operations >= 0),
+                  status TEXT NOT NULL CHECK(status IN ('succeeded', 'failed', 'cancelled')),
+                  error_code TEXT,
+                  created_at TEXT NOT NULL,
+                  created_epoch INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS organizer_audit_created_idx
+                  ON organizer_audit(created_epoch DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS organizer_audit_workflow_created_idx
+                  ON organizer_audit(workflow_signature, created_epoch DESC);
+                CREATE INDEX IF NOT EXISTS organizer_audit_status_created_idx
+                  ON organizer_audit(status, created_epoch DESC);
+                ",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                (24, Utc::now().to_rfc3339()),
             )?;
         }
         transaction.commit()?;
@@ -3467,6 +3609,446 @@ impl VaultService {
             "DELETE FROM processing_jobs WHERE status IN ('succeeded', 'failed', 'cancelled')",
             [],
         )?)
+    }
+
+    fn organizer_template_is_safe(value: &str, filename: bool) -> bool {
+        let normalized = value.trim().replace('\\', "/");
+        if normalized.len() > 512
+            || normalized.contains('\0')
+            || normalized.starts_with('/')
+            || normalized.starts_with("//")
+            || normalized
+                .as_bytes()
+                .get(1)
+                .is_some_and(|character| *character == b':')
+            || normalized
+                .split('/')
+                .any(|segment| segment == "." || segment == "..")
+        {
+            return false;
+        }
+        if filename && (normalized.is_empty() || normalized.contains('/')) {
+            return false;
+        }
+        !normalized.chars().any(char::is_control)
+    }
+
+    fn normalize_organizer_rule(rule: &mut OrganizerRule) -> Result<()> {
+        if Uuid::parse_str(&rule.id).is_err() {
+            bail!("整理规则 ID 无效")
+        }
+        rule.title = rule.title.trim().to_owned();
+        if rule.title.is_empty()
+            || rule.title.len() > 120
+            || rule.title.chars().any(char::is_control)
+        {
+            bail!("整理规则标题无效")
+        }
+        if !matches!(
+            rule.trust_level.as_str(),
+            "preview" | "confirmed" | "trusted"
+        ) {
+            bail!("整理规则信任等级无效")
+        }
+        if rule.matcher.extensions.len() > 32
+            || rule.matcher.kinds.len() > 16
+            || rule.matcher.name_patterns.len() > 16
+        {
+            bail!("整理规则匹配条件过多")
+        }
+        rule.matcher.extensions = rule
+            .matcher
+            .extensions
+            .iter()
+            .map(|value| value.trim().trim_start_matches('.').to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect();
+        rule.matcher.extensions.sort();
+        rule.matcher.extensions.dedup();
+        if rule.matcher.extensions.iter().any(|value| {
+            value.len() > 20
+                || !value
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        }) {
+            bail!("整理规则扩展名无效")
+        }
+        rule.matcher.kinds = rule
+            .matcher
+            .kinds
+            .iter()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect();
+        rule.matcher.kinds.sort();
+        rule.matcher.kinds.dedup();
+        if rule.matcher.kinds.iter().any(|value| {
+            !matches!(
+                value.as_str(),
+                "text" | "pdf" | "image" | "archive" | "media" | "binary"
+            )
+        }) {
+            bail!("整理规则文件类型无效")
+        }
+        rule.matcher.name_patterns = rule
+            .matcher
+            .name_patterns
+            .iter()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .collect();
+        rule.matcher.name_patterns.sort();
+        rule.matcher.name_patterns.dedup();
+        if rule.matcher.name_patterns.iter().any(|value| {
+            value.len() > 80
+                || value.chars().any(char::is_control)
+                || Path::new(value).is_absolute()
+        }) {
+            bail!("整理规则文件名特征无效")
+        }
+        if rule
+            .matcher
+            .min_size
+            .zip(rule.matcher.max_size)
+            .is_some_and(|(minimum, maximum)| minimum > maximum)
+        {
+            bail!("整理规则大小范围无效")
+        }
+        rule.action.category = rule.action.category.trim().to_owned();
+        if rule.action.category.is_empty()
+            || rule.action.category.len() > 120
+            || rule.action.category.chars().any(char::is_control)
+        {
+            bail!("整理规则分类无效")
+        }
+        if !Self::organizer_template_is_safe(&rule.action.target_relative_dir_template, false)
+            || !Self::organizer_template_is_safe(&rule.action.target_base_name_template, true)
+        {
+            bail!("整理规则目标模板必须是归档根内的安全相对路径")
+        }
+        if !matches!(rule.action.conflict_policy.as_str(), "block" | "keep-both") {
+            bail!("整理规则重名策略无效")
+        }
+        if let Some(signature) = &mut rule.workflow_signature {
+            *signature = signature.trim().to_ascii_lowercase();
+            if signature.is_empty() {
+                rule.workflow_signature = None;
+            } else if signature.len() != 64
+                || !signature
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit())
+            {
+                bail!("整理规则工作流签名无效")
+            }
+        }
+        let now = Utc::now().to_rfc3339();
+        if rule.created_at.trim().is_empty() {
+            rule.created_at = now.clone();
+        }
+        rule.updated_at = now;
+        Ok(())
+    }
+
+    fn map_organizer_rule_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OrganizerRule> {
+        Ok(OrganizerRule {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            trust_level: row.get(2)?,
+            enabled: row.get::<_, i64>(3)? != 0,
+            matcher: Self::deserialize_processing_json(row, 4)?,
+            action: Self::deserialize_processing_json(row, 5)?,
+            workflow_signature: row.get(6)?,
+            created_at: row.get(7)?,
+            updated_at: row.get(8)?,
+        })
+    }
+
+    pub fn list_organizer_rules(&self) -> Result<Vec<OrganizerRule>> {
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        let mut statement = connection.prepare(
+            "SELECT id, title, trust_level, enabled, matcher_json, action_json,
+                    workflow_signature, created_at, updated_at
+             FROM organizer_rules ORDER BY updated_at DESC, id DESC LIMIT ?1",
+        )?;
+        let rules = statement
+            .query_map([ORGANIZER_RULE_LIMIT], Self::map_organizer_rule_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rules)
+    }
+
+    pub fn save_organizer_rule(&self, mut rule: OrganizerRule) -> Result<OrganizerRule> {
+        Self::normalize_organizer_rule(&mut rule)?;
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        let transaction = connection.transaction()?;
+        let existing_created_at: Option<String> = transaction
+            .query_row(
+                "SELECT created_at FROM organizer_rules WHERE id = ?1",
+                [&rule.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(created_at) = existing_created_at {
+            rule.created_at = created_at;
+        }
+        transaction.execute(
+            "INSERT INTO organizer_rules(
+               id, title, trust_level, enabled, matcher_json, action_json,
+               workflow_signature, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(id) DO UPDATE SET
+               title = excluded.title,
+               trust_level = excluded.trust_level,
+               enabled = excluded.enabled,
+               matcher_json = excluded.matcher_json,
+               action_json = excluded.action_json,
+               workflow_signature = excluded.workflow_signature,
+               updated_at = excluded.updated_at",
+            rusqlite::params![
+                &rule.id,
+                &rule.title,
+                &rule.trust_level,
+                i64::from(rule.enabled),
+                serde_json::to_string(&rule.matcher)?,
+                serde_json::to_string(&rule.action)?,
+                &rule.workflow_signature,
+                &rule.created_at,
+                &rule.updated_at,
+            ],
+        )?;
+        let count: i64 =
+            transaction.query_row("SELECT COUNT(*) FROM organizer_rules", [], |row| row.get(0))?;
+        if count > ORGANIZER_RULE_LIMIT {
+            bail!("整理规则最多保留 {ORGANIZER_RULE_LIMIT} 条")
+        }
+        transaction.commit()?;
+        Ok(rule)
+    }
+
+    pub fn delete_organizer_rule(&self, id: String) -> Result<()> {
+        if Uuid::parse_str(&id).is_err() {
+            bail!("整理规则 ID 无效")
+        }
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        connection.execute("DELETE FROM organizer_rules WHERE id = ?1", [&id])?;
+        Ok(())
+    }
+
+    fn normalize_audit_features(input: &mut OrganizerAuditInput) -> Result<()> {
+        if let Some(rule_id) = input.rule_id.as_deref() {
+            if Uuid::parse_str(rule_id).is_err() {
+                bail!("整理审计规则 ID 无效")
+            }
+        }
+        if input.input_kinds.is_empty()
+            || input.input_kinds.len() > 16
+            || input.operation_sequence.is_empty()
+            || input.operation_sequence.len() > 12
+        {
+            bail!("整理审计结构无效")
+        }
+        input.input_kinds = input
+            .input_kinds
+            .iter()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect();
+        input.input_kinds.sort();
+        input.input_kinds.dedup();
+        if input.input_kinds.iter().any(|value| {
+            !matches!(
+                value.as_str(),
+                "text" | "pdf" | "image" | "archive" | "media" | "binary" | "mixed"
+            )
+        }) {
+            bail!("整理审计输入类型无效")
+        }
+        input.operation_sequence = input
+            .operation_sequence
+            .iter()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect();
+        if input.operation_sequence.iter().any(|value| {
+            value.len() > 80
+                || !value.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || ".:_-".contains(character)
+                })
+        }) {
+            bail!("整理审计操作序列无效")
+        }
+        input.target_template = input.target_template.trim().replace('\\', "/");
+        if !Self::organizer_template_is_safe(&input.target_template, false) {
+            bail!("整理审计目标模板无效")
+        }
+        if input.file_count > MAX_ORGANIZER_AUDIT_FILES
+            || input.moved_count + input.copied_count + input.failed_count > input.file_count
+        {
+            bail!("整理审计计数无效")
+        }
+        if !matches!(input.status.as_str(), "succeeded" | "failed" | "cancelled") {
+            bail!("整理审计状态无效")
+        }
+        if let Some(error_code) = &mut input.error_code {
+            *error_code = error_code.trim().to_ascii_uppercase();
+            if error_code.is_empty() {
+                input.error_code = None;
+            } else if error_code.len() > 64
+                || !error_code
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || "_-".contains(character))
+            {
+                bail!("整理审计错误码无效")
+            }
+        }
+        Ok(())
+    }
+
+    fn organizer_workflow_signature(input: &OrganizerAuditInput) -> Result<String> {
+        let bytes = serde_json::to_vec(&json!({
+            "inputKinds": input.input_kinds,
+            "operations": input.operation_sequence,
+            "targetTemplate": input.target_template,
+        }))?;
+        let mut digest = Sha256::new();
+        digest.update(bytes);
+        Ok(format!("{:x}", digest.finalize()))
+    }
+
+    pub fn save_organizer_audit(&self, mut input: OrganizerAuditInput) -> Result<String> {
+        Self::normalize_audit_features(&mut input)?;
+        let signature = Self::organizer_workflow_signature(&input)?;
+        let now = Utc::now();
+        let saved_operations = input
+            .file_count
+            .saturating_mul(input.operation_sequence.len())
+            .saturating_sub(1);
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        let transaction = connection.transaction()?;
+        let id = Uuid::now_v7().to_string();
+        transaction.execute(
+            "INSERT INTO organizer_audit(
+               id, rule_id, workflow_signature, input_kinds_json,
+               operation_sequence_json, target_template, file_count,
+               moved_count, copied_count, failed_count, saved_operations,
+               status, error_code, created_at, created_epoch
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            rusqlite::params![
+                &id,
+                &input.rule_id,
+                &signature,
+                serde_json::to_string(&input.input_kinds)?,
+                serde_json::to_string(&input.operation_sequence)?,
+                &input.target_template,
+                input.file_count as i64,
+                input.moved_count as i64,
+                input.copied_count as i64,
+                input.failed_count as i64,
+                saved_operations as i64,
+                &input.status,
+                &input.error_code,
+                now.to_rfc3339(),
+                now.timestamp(),
+            ],
+        )?;
+        transaction.execute(
+            "DELETE FROM organizer_audit
+             WHERE id IN (
+               SELECT id FROM organizer_audit
+               ORDER BY created_epoch DESC, id DESC
+               LIMIT -1 OFFSET ?1
+             )",
+            [ORGANIZER_AUDIT_LIMIT],
+        )?;
+        transaction.commit()?;
+        Ok(signature)
+    }
+
+    pub fn list_organizer_workflow_suggestions(&self) -> Result<Vec<OrganizerWorkflowSuggestion>> {
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        let cutoff = Utc::now().timestamp() - 30 * 24 * 60 * 60;
+        let mut statement = connection.prepare(
+            "SELECT a.workflow_signature, a.input_kinds_json,
+                    a.operation_sequence_json, a.target_template,
+                    COUNT(*) AS confirmations, MAX(a.created_at)
+             FROM organizer_audit a
+             WHERE a.status = 'succeeded' AND a.created_epoch >= ?1
+               AND NOT EXISTS (
+                 SELECT 1 FROM organizer_rules r
+                 WHERE r.workflow_signature = a.workflow_signature
+               )
+             GROUP BY a.workflow_signature, a.input_kinds_json,
+                      a.operation_sequence_json, a.target_template
+             HAVING COUNT(*) >= 3
+             ORDER BY confirmations DESC, MAX(a.created_epoch) DESC
+             LIMIT 20",
+        )?;
+        let suggestions = statement
+            .query_map([cutoff], |row| {
+                Ok(OrganizerWorkflowSuggestion {
+                    workflow_signature: row.get(0)?,
+                    input_kinds: Self::deserialize_processing_json(row, 1)?,
+                    operation_sequence: Self::deserialize_processing_json(row, 2)?,
+                    target_template: row.get(3)?,
+                    confirmations: row.get(4)?,
+                    last_confirmed_at: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(suggestions)
+    }
+
+    pub fn organizer_review_summary(&self) -> Result<OrganizerReviewSummary> {
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        let cutoff = Utc::now().timestamp() - 30 * 24 * 60 * 60;
+        let totals = connection.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(file_count), 0),
+                    COALESCE(SUM(CASE WHEN status = 'succeeded' THEN saved_operations ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0)
+             FROM organizer_audit WHERE created_epoch >= ?1",
+            [cutoff],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )?;
+        let mut statement = connection.prepare(
+            "SELECT operation_sequence_json, COUNT(*) AS runs,
+                    COALESCE(SUM(file_count), 0) AS files
+             FROM organizer_audit
+             WHERE created_epoch >= ?1
+             GROUP BY operation_sequence_json
+             ORDER BY runs DESC, files DESC
+             LIMIT 5",
+        )?;
+        let top_workflows = statement
+            .query_map([cutoff], |row| {
+                Ok(OrganizerReviewWorkflow {
+                    operation_sequence: Self::deserialize_processing_json(row, 0)?,
+                    runs: row.get(1)?,
+                    files: row.get(2)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        drop(statement);
+        drop(connection);
+        Ok(OrganizerReviewSummary {
+            runs_30_days: totals.0,
+            files_30_days: totals.1,
+            saved_operations_30_days: totals.2,
+            failed_runs_30_days: totals.3,
+            repeated_workflows: self.list_organizer_workflow_suggestions()?,
+            top_workflows,
+        })
     }
 
     fn clipboard_asset_directory(&self) -> PathBuf {
@@ -12023,7 +12605,7 @@ mod tests {
         let connection = service.connection()?;
         connection.execute_batch(
             "DROP INDEX events_type_epoch_idx;
-             DELETE FROM schema_migrations WHERE version = 23;",
+             DELETE FROM schema_migrations WHERE version >= 23;",
         )?;
         connection.execute(
             "INSERT INTO events(id, type, starts_at, starts_epoch, payload_json, created_at, updated_at)
@@ -12712,6 +13294,85 @@ mod tests {
         if backup_dir.exists() {
             fs::remove_dir_all(backup_dir)?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn organizer_rules_are_portable_and_repeated_runs_become_suggestions() -> Result<()> {
+        let root =
+            std::env::temp_dir().join(format!("knitspace-organizer-rules-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let rule_id = Uuid::now_v7().to_string();
+        let rule = service.save_organizer_rule(OrganizerRule {
+            id: rule_id.clone(),
+            title: "课程资料归档".into(),
+            trust_level: "confirmed".into(),
+            enabled: true,
+            matcher: OrganizerRuleMatcher {
+                extensions: vec![".PDF".into(), "pdf".into()],
+                kinds: vec!["pdf".into()],
+                name_patterns: vec!["课程".into()],
+                min_size: None,
+                max_size: Some(50 * 1024 * 1024),
+            },
+            action: OrganizerRuleAction {
+                category: "课程".into(),
+                target_relative_dir_template: "课程/{year}".into(),
+                target_base_name_template: "{stem}.{extension}".into(),
+                conflict_policy: "block".into(),
+            },
+            workflow_signature: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        })?;
+        assert_eq!(rule.matcher.extensions, vec!["pdf"]);
+        assert_eq!(service.list_organizer_rules()?.len(), 1);
+
+        let audit = OrganizerAuditInput {
+            rule_id: None,
+            input_kinds: vec!["pdf".into()],
+            operation_sequence: vec!["organizer.classify".into(), "organizer.move".into()],
+            target_template: "课程/{year}".into(),
+            file_count: 4,
+            moved_count: 4,
+            copied_count: 0,
+            failed_count: 0,
+            status: "succeeded".into(),
+            error_code: None,
+        };
+        let first_signature = service.save_organizer_audit(audit.clone())?;
+        assert_eq!(first_signature.len(), 64);
+        service.save_organizer_audit(audit.clone())?;
+        service.save_organizer_audit(audit)?;
+        let suggestions = service.list_organizer_workflow_suggestions()?;
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].confirmations, 3);
+        let review = service.organizer_review_summary()?;
+        assert_eq!(review.runs_30_days, 3);
+        assert_eq!(review.files_30_days, 12);
+        assert_eq!(review.failed_runs_30_days, 0);
+        assert!(!review.top_workflows.is_empty());
+
+        let mut invalid = rule;
+        invalid.id = Uuid::now_v7().to_string();
+        invalid.action.target_relative_dir_template = r"Z:\private\Downloads".into();
+        assert!(service.save_organizer_rule(invalid).is_err());
+
+        let connection = service.connection()?;
+        let version: i64 = connection.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(version, SCHEMA_VERSION);
+        let serialized_rules: String = connection.query_row(
+            "SELECT matcher_json || action_json FROM organizer_rules WHERE id = ?1",
+            [&rule_id],
+            |row| row.get(0),
+        )?;
+        assert!(!serialized_rules.contains("C:\\"));
+        drop(connection);
+        fs::remove_dir_all(root)?;
         Ok(())
     }
 }

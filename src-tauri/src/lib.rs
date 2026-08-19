@@ -8,6 +8,8 @@ mod pdf_tools;
 mod photo_organizer;
 #[cfg(not(feature = "public-core"))]
 mod private_tools;
+mod project_tools;
+mod smart_organizer;
 mod transcription;
 mod vault;
 mod web_fetch;
@@ -50,8 +52,9 @@ use transcription::{
 };
 use vault::{
     AiActionRequest, AiProfileInput, ContentFavorite, ContentRecent, ImportedSource,
-    ImportedVaultSource, VaultBackupInspection, VaultClipboardItem, VaultDocument, VaultEvent,
-    VaultHealth, VaultHydration, VaultMarkdownAttachment, VaultMarkdownReconcile,
+    ImportedVaultSource, OrganizerAuditInput, OrganizerReviewSummary, OrganizerRule,
+    OrganizerWorkflowSuggestion, VaultBackupInspection, VaultClipboardItem, VaultDocument,
+    VaultEvent, VaultHealth, VaultHydration, VaultMarkdownAttachment, VaultMarkdownReconcile,
     VaultProcessingJob, VaultProcessingJobHydration, VaultQuestionAttachment, VaultRelation,
     VaultReviewAnalytics, VaultReviewCursor, VaultReviewGradeInput, VaultReviewGradeResult,
     VaultReviewHistoryEntry, VaultReviewQueuePage, VaultReviewQueueSummary, VaultReviewUndoInput,
@@ -848,6 +851,12 @@ async fn restore_default_vault_backup(
     .map_err(|error| format!("完整恢复任务失败：{error}"))?;
     if result.is_err() {
         let _ = install_default_vault_markdown_watcher(&app, &watcher_state);
+    } else {
+        // Rule meaning belongs to the restored Vault, but machine-specific
+        // roots do not. Restored rules therefore return to an explicit
+        // unbound state instead of silently targeting directories from the
+        // previously active Vault.
+        smart_organizer::clear_rule_bindings(&app)?;
     }
     result
 }
@@ -1766,6 +1775,68 @@ fn clear_default_finished_processing_jobs(app: tauri::AppHandle) -> Result<usize
     VaultService::open(path)
         .map_err(|error| error.to_string())?
         .clear_finished_processing_jobs()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_default_organizer_rules(app: tauri::AppHandle) -> Result<Vec<OrganizerRule>, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .list_organizer_rules()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_default_organizer_rule(
+    app: tauri::AppHandle,
+    rule: OrganizerRule,
+) -> Result<OrganizerRule, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .save_organizer_rule(rule)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn delete_default_organizer_rule(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .delete_organizer_rule(id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_default_organizer_audit(
+    app: tauri::AppHandle,
+    input: OrganizerAuditInput,
+) -> Result<String, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .save_organizer_audit(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_default_organizer_workflow_suggestions(
+    app: tauri::AppHandle,
+) -> Result<Vec<OrganizerWorkflowSuggestion>, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .list_organizer_workflow_suggestions()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_default_organizer_review(app: tauri::AppHandle) -> Result<OrganizerReviewSummary, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .organizer_review_summary()
         .map_err(|error| error.to_string())
 }
 
@@ -7140,6 +7211,7 @@ pub fn run() {
         .manage(dictionary::DictionaryState::default())
         .manage(MediaTranscodeState::default())
         .manage(photo_organizer::PhotoOrganizerRunState::default())
+        .manage(smart_organizer::SmartOrganizerState::default())
         .manage(TranscriptionState::default())
         .manage(ExternalMarkdownWatchState::default())
         .manage(PendingOpenFiles(Mutex::new(launch_paths)))
@@ -7176,6 +7248,7 @@ pub fn run() {
                 }
             }
             let _ = photo_organizer::recover_pending_runs(app.handle());
+            let _ = smart_organizer::recover_pending_runs(app.handle());
             // On a thread, and only here: this is the one-shot startup boundary,
             // not something a repeatedly-called command should carry.
             thread::spawn(|| {
@@ -7271,6 +7344,22 @@ pub fn run() {
             photo_organizer::cancel_photo_organization,
             photo_organizer::undo_photo_organization,
             photo_organizer::list_photo_organization_receipts,
+            smart_organizer::scan_smart_organizer,
+            smart_organizer::read_smart_organizer_excerpts,
+            smart_organizer::read_smart_organizer_analysis_file,
+            smart_organizer::execute_smart_organizer,
+            smart_organizer::cancel_smart_organizer,
+            smart_organizer::list_smart_organizer_receipts,
+            smart_organizer::undo_smart_organizer,
+            smart_organizer::list_smart_organizer_rule_bindings,
+            smart_organizer::bind_smart_organizer_rule,
+            smart_organizer::unbind_smart_organizer_rule,
+            project_tools::scan_project_delivery_pack,
+            project_tools::create_project_delivery_pack,
+            project_tools::create_folder_snapshot,
+            project_tools::list_folder_snapshots,
+            project_tools::compare_folder_snapshot,
+            project_tools::delete_folder_snapshot,
             pdf_tools::optimize_pdf_bytes,
             pdf_tools::protect_pdf_bytes,
             pdf_tools::decrypt_pdf_bytes,
@@ -7340,6 +7429,12 @@ pub fn run() {
             delete_default_processing_job,
             delete_default_processing_jobs,
             clear_default_finished_processing_jobs,
+            list_default_organizer_rules,
+            save_default_organizer_rule,
+            delete_default_organizer_rule,
+            save_default_organizer_audit,
+            list_default_organizer_workflow_suggestions,
+            get_default_organizer_review,
             hydrate_default_clipboard,
             get_default_clipboard_item,
             save_default_clipboard_item,
