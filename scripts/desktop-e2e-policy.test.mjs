@@ -7,9 +7,14 @@ const read = (path) => readFileSync(new URL(path, root), 'utf8')
 const packageJson = JSON.parse(read('package.json'))
 const cargoManifest = read('src-tauri/Cargo.toml')
 const rustEntry = read('src-tauri/src/lib.rs')
+const smartOrganizerSource = read('src-tauri/src/smart_organizer.rs')
 const e2eConfig = read('src-tauri/tauri.e2e.conf.json')
+const webdriverConfig = read('wdio.e2e.conf.mjs')
 const viteConfig = read('vite.config.ts')
 const desktopSpec = read('e2e/automation-center.e2e.mjs')
+const organizerExecutionSpec = read('e2e/organizer-execution.e2e.mjs')
+const crashPrepareSpec = read('e2e/organizer-crash-prepare.e2e.mjs')
+const crashRecoverySpec = read('e2e/organizer-crash-recovery.e2e.mjs')
 const productionTauriSurface = [
   read('src-tauri/tauri.conf.json'),
   read('src-tauri/tauri.public.conf.json'),
@@ -48,7 +53,34 @@ describe('desktop E2E isolation policy', () => {
     }
   })
 
-  it('covers native persistence and organizer scan-only behavior', () => {
+  it('keeps deterministic organizer failure hooks inside the E2E Rust feature', () => {
+    assert.match(smartOrganizerSource, /#\[cfg\(feature = "e2e"\)\]\s+const E2E_FAIL_BEFORE_OPERATION_CATEGORY/)
+    assert.match(smartOrganizerSource, /#\[cfg\(feature = "e2e"\)\]\s+const E2E_ABORT_AFTER_OPERATION_CATEGORY/)
+    assert.match(smartOrganizerSource, /#\[cfg\(feature = "e2e"\)\]\s+pub e2e_process_id: u32/)
+    assert.match(smartOrganizerSource, /#\[cfg\(feature = "e2e"\)\]\s+e2e_category: String/)
+    assert.match(smartOrganizerSource, /#\[cfg\(feature = "e2e"\)\]\s+if item\.e2e_category == E2E_FAIL_BEFORE_OPERATION_CATEGORY/)
+    assert.match(smartOrganizerSource, /#\[cfg\(feature = "e2e"\)\]\s+if item\.e2e_category == E2E_ABORT_AFTER_OPERATION_CATEGORY/)
+  })
+
+  it('runs crash preparation and recovery in ordered, isolated workers', () => {
+    const expectedSpecs = [
+      './e2e/automation-center.e2e.mjs',
+      './e2e/organizer-execution.e2e.mjs',
+      './e2e/organizer-crash-prepare.e2e.mjs',
+      './e2e/organizer-crash-recovery.e2e.mjs',
+    ]
+    let previousIndex = -1
+    for (const spec of expectedSpecs) {
+      const index = webdriverConfig.indexOf(`'${spec}'`)
+      assert.ok(index > previousIndex, `${spec} must be listed after the prior desktop spec.`)
+      previousIndex = index
+    }
+    assert.match(webdriverConfig, /maxInstances:\s*1/)
+    assert.match(webdriverConfig, /onWorkerEnd:[\s\S]+terminatePreparedCrash/)
+    assert.match(webdriverConfig, /process\.kill\(processId, 'SIGKILL'\)/)
+  })
+
+  it('covers native persistence, scan isolation, execution safety, and startup recovery', () => {
     for (const evidence of [
       'replace_default_automation_recipes',
       'list_default_automation_recipes',
@@ -58,5 +90,19 @@ describe('desktop E2E isolation policy', () => {
       'directorySnapshot(sourceRoot)',
       'directorySnapshot(archiveRoot)',
     ]) assert.match(desktopSpec, new RegExp(evidence.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+
+    for (const evidence of [
+      'execute_smart_organizer',
+      'undo_smart_organizer',
+      'list_smart_organizer_receipts',
+      '已回滚本次已完成的变更',
+      'scanResult.sameVolume, false',
+      'removedCopyCount, 1',
+    ]) assert.match(organizerExecutionSpec, new RegExp(evidence.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+
+    assert.match(crashPrepareSpec, /__knitspace_e2e_abort_after_operation__/)
+    assert.match(crashPrepareSpec, /waitForPostMoveState/)
+    assert.match(crashRecoverySpec, /waitForRecovery/)
+    assert.match(crashRecoverySpec, /receiptIdsAfter, manifest\.receiptIdsBefore/)
   })
 })

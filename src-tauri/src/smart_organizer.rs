@@ -221,6 +221,14 @@ pub struct OrganizerPlanItem {
     pub conflict_policy: String,
 }
 
+// These sentinels exist only in the isolated desktop E2E binary. They let the
+// native workflow exercise rollback and startup recovery without exposing a
+// production command or accepting arbitrary failure instructions.
+#[cfg(feature = "e2e")]
+const E2E_FAIL_BEFORE_OPERATION_CATEGORY: &str = "__knitspace_e2e_fail_before_operation__";
+#[cfg(feature = "e2e")]
+const E2E_ABORT_AFTER_OPERATION_CATEGORY: &str = "__knitspace_e2e_abort_after_operation__";
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrganizerExecuteRequest {
@@ -247,6 +255,8 @@ pub struct OrganizerExecutionReport {
     pub copied_count: usize,
     pub processed_bytes: u64,
     pub outputs: Vec<OrganizerExecutionOutput>,
+    #[cfg(feature = "e2e")]
+    pub e2e_process_id: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -312,6 +322,8 @@ struct ResolvedPlanItem {
     target_relative_path: String,
     operation: String,
     sha256: String,
+    #[cfg(feature = "e2e")]
+    e2e_category: String,
 }
 
 fn validate_uuid(value: &str, label: &str) -> Result<(), String> {
@@ -1005,6 +1017,8 @@ fn validate_execute_request(
             target_relative_path: normalized_relative(&relative),
             operation: if session.same_volume { "move" } else { "copy" }.into(),
             sha256,
+            #[cfg(feature = "e2e")]
+            e2e_category: item.category.clone(),
         });
     }
     Ok(resolved)
@@ -1324,10 +1338,16 @@ fn execute_blocking(
     let mut completed = Vec::<OrganizerReceiptItem>::new();
     let mut created_directories = Vec::<PathBuf>::new();
     let mut outputs = Vec::new();
+    #[cfg(feature = "e2e")]
+    let mut e2e_leave_pending_for_crash = false;
     let result = (|| -> Result<(), String> {
         for (index, (item, journal)) in resolved.iter().zip(&receipt.items).enumerate() {
             if cancelled.load(Ordering::SeqCst) {
                 return Err("智能整理已取消。".into());
+            }
+            #[cfg(feature = "e2e")]
+            if item.e2e_category == E2E_FAIL_BEFORE_OPERATION_CATEGORY {
+                return Err("E2E 故障注入：执行前失败。".into());
             }
             validate_candidate_file(&session, &item.candidate)?;
             if hash_file(&item.candidate.path)? != item.sha256 {
@@ -1353,6 +1373,13 @@ fn execute_blocking(
                     .map_err(|error| format!("无法复制“{}”：{error}", item.candidate.name))?;
             }
             completed.push(journal.clone());
+            #[cfg(feature = "e2e")]
+            if item.e2e_category == E2E_ABORT_AFTER_OPERATION_CATEGORY {
+                // Return through IPC so WebDriver can close its session cleanly.
+                // The launcher then kills this exact process before the next
+                // worker, leaving the pending receipt for startup recovery.
+                e2e_leave_pending_for_crash = true;
+            }
             outputs.push(OrganizerExecutionOutput {
                 file_id: item.candidate.file_id.clone(),
                 name: display_name(&target),
@@ -1374,6 +1401,25 @@ fn execute_blocking(
             "{error} 有 {unresolved} 项无法安全回滚；已保留恢复日志，请人工复核。"
         ));
     }
+    let report = OrganizerExecutionReport {
+        receipt_id,
+        moved_count: completed
+            .iter()
+            .filter(|item| item.operation == "move")
+            .count(),
+        copied_count: completed
+            .iter()
+            .filter(|item| item.operation == "copy")
+            .count(),
+        processed_bytes: completed.iter().map(|item| item.size).sum(),
+        outputs,
+        #[cfg(feature = "e2e")]
+        e2e_process_id: std::process::id(),
+    };
+    #[cfg(feature = "e2e")]
+    if e2e_leave_pending_for_crash {
+        return Ok(report);
+    }
     if let Err(error) = promote_receipt(receipts, &receipt.receipt_id) {
         let unresolved =
             rollback_completed(&session.source_root, &session.archive_root, &completed);
@@ -1386,19 +1432,7 @@ fn execute_blocking(
             "{error} 且有 {unresolved} 项无法安全回滚；已保留恢复日志。"
         ));
     }
-    Ok(OrganizerExecutionReport {
-        receipt_id,
-        moved_count: completed
-            .iter()
-            .filter(|item| item.operation == "move")
-            .count(),
-        copied_count: completed
-            .iter()
-            .filter(|item| item.operation == "copy")
-            .count(),
-        processed_bytes: completed.iter().map(|item| item.size).sum(),
-        outputs,
-    })
+    Ok(report)
 }
 
 fn recover_receipt(directory: &Path, receipt: &OrganizerReceipt) -> Result<bool, String> {
