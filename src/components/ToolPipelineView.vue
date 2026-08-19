@@ -351,7 +351,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="page-enter page-shell px-8 py-6">
+  <div class="page-enter page-shell px-8 py-6" data-testid="text-pipeline">
     <PageHeader
       title="文本流水线"
       subtitle="把多个常用文本工具串成一次可复用处理，输入与输出都留在本机。"
@@ -497,13 +497,13 @@ onBeforeUnmount(() => {
         </section>
 
         <section class="panel p-4 stack gap-3">
-          <button class="row-between gap-2 w-full text-left" :aria-expanded="recipeFormOpen" @click="recipeFormOpen = !recipeFormOpen">
+          <button data-testid="recipe-form-toggle" class="row-between gap-2 w-full text-left" :aria-expanded="recipeFormOpen" @click="recipeFormOpen = !recipeFormOpen">
             <span class="stack gap-0.5"><span class="text-[13px] font-medium text-fg">保存为配方</span><span class="text-[11px] text-fg-3">下次直接复用这条流水线</span></span>
             <AppIcon name="chevron" :size="16" class="text-fg-3 transition-transform" :class="recipeFormOpen ? 'rotate-180' : ''" />
           </button>
           <template v-if="recipeFormOpen">
-            <FieldRow label="配方名称"><input v-model="recipeTitle" class="field w-full" placeholder="例如：清理名单并排序" /></FieldRow>
-            <button class="btn-default btn-sm w-full" :disabled="running" @click="saveCurrentRecipe">保存配方</button>
+            <FieldRow label="配方名称"><input v-model="recipeTitle" data-testid="recipe-title" class="field w-full" placeholder="例如：清理名单并排序" /></FieldRow>
+            <button data-testid="save-recipe" class="btn-default btn-sm w-full" :disabled="running" @click="saveCurrentRecipe">保存配方</button>
             <p class="text-[11px] text-fg-3 leading-snug">只保存工具和参数，不保存文件内容、路径或输出。</p>
           </template>
           <div class="row gap-2 border-t border-line pt-3">

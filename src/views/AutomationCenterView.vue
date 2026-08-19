@@ -303,7 +303,7 @@ onMounted(() => { void refreshOrganizerData() })
 </script>
 
 <template>
-  <div class="page-enter page-shell px-8 py-6">
+  <div class="page-enter page-shell px-8 py-6" data-testid="automation-center">
     <PageHeader
       title="自动化中心"
       subtitle="集中管理工具配方、文件流水线与智能整理规则；所有运行都从只读预览开始。"
@@ -353,6 +353,8 @@ onMounted(() => { void refreshOrganizerData() })
           <article
             v-for="item in visibleItems"
             :key="`${item.kind}:${item.id}`"
+            data-testid="automation-item"
+            :data-automation-id="item.id"
             class="grid cursor-pointer grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 transition-colors"
             :class="selectedId === item.id ? 'bg-accent-soft' : 'hover:bg-surface-2'"
             role="listitem"

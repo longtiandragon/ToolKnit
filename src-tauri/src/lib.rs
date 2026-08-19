@@ -64,11 +64,24 @@ use vault::{
 };
 
 fn default_vault_path(app: &tauri::AppHandle) -> Result<String, String> {
+    #[cfg(feature = "e2e")]
+    {
+        let base = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| error.to_string())?;
+        Ok(base
+            .join("KnitspaceE2EVault")
+            .to_string_lossy()
+            .into_owned())
+    }
+    #[cfg(not(feature = "e2e"))]
     let base = app
         .path()
         .document_dir()
         .or_else(|_| app.path().app_data_dir())
         .map_err(|error| error.to_string())?;
+    #[cfg(not(feature = "e2e"))]
     Ok(base.join("KnitspaceVault").to_string_lossy().into_owned())
 }
 
@@ -7243,7 +7256,12 @@ pub fn run() {
     let launch_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let launch_paths = collect_markdown_open_paths(&launch_args, &launch_cwd);
 
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "e2e")]
+    let builder = builder
+        .plugin(tauri_plugin_wdio_webdriver::init())
+        .plugin(tauri_plugin_wdio::init());
+    let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             let paths = collect_markdown_open_paths(&args, Path::new(&cwd));
             queue_pending_open_files(app.state::<PendingOpenFiles>().inner(), &paths);
