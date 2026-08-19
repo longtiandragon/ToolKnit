@@ -1,4 +1,4 @@
-import type { RasterProcessOptions } from '@/lib/image-processing'
+import { processRasterInWorker } from '@/lib/raster-worker'
 
 export const MAX_FORMULA_IMAGE_BYTES = 12 * 1024 * 1024
 export const MAX_FORMULA_PROCESSED_BYTES = 4 * 1024 * 1024
@@ -15,8 +15,6 @@ export interface PreparedFormulaImage {
   name: string
   mime: 'image/jpeg'
 }
-
-type ImageWorkerResponse = { blob?: Blob; error?: string }
 
 function stripFormulaWrapper(value: string) {
   const wrappers: [RegExp, string][] = [
@@ -80,27 +78,13 @@ function blobToDataUrl(blob: Blob) {
   })
 }
 
-function processImageInWorker(file: File, options: RasterProcessOptions) {
-  return new Promise<Blob>((resolve, reject) => {
-    const worker = new Worker(new URL('../workers/image-process.worker.ts', import.meta.url), { type: 'module' })
-    worker.onerror = () => { worker.terminate(); reject(new Error('后台图片处理器启动失败。')) }
-    worker.onmessage = ({ data }: MessageEvent<ImageWorkerResponse>) => {
-      worker.terminate()
-      if (data.error) reject(new Error(data.error))
-      else if (data.blob) resolve(data.blob)
-      else reject(new Error('后台图片处理没有返回结果。'))
-    }
-    worker.postMessage({ file, options })
-  })
-}
-
 export async function prepareFormulaVisionImage(file: File): Promise<PreparedFormulaImage> {
   if (!ACCEPTED_IMAGE_TYPES.has(file.type)) throw new Error('请选择 PNG、JPG 或 WebP 图片。')
   if (!file.size) throw new Error('图片内容为空。')
   if (file.size > MAX_FORMULA_IMAGE_BYTES) throw new Error('原图超过 12 MB，请先裁剪或压缩。')
   if (typeof Worker === 'undefined' || typeof createImageBitmap === 'undefined') throw new Error('当前环境不支持后台图片处理，请使用 Knitspace 桌面版。')
 
-  const blob = await processImageInWorker(file, {
+  const blob = await processRasterInWorker(file, {
     mode: 'resize', outputType: 'image/jpeg', quality: .9, compressionPasses: 1,
     maxWidth: 2048, rotation: 0, cropLeft: 0, cropTop: 0, cropWidth: 100, cropHeight: 100,
   })

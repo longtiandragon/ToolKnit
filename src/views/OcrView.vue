@@ -3,8 +3,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import ScanCorrectPanel from '@/components/ScanCorrectPanel.vue'
 import { clampMenuPosition, isContextMenuShortcut, nextMenuItemIndex } from '@/lib/desktop-menu'
 import { consumeLocalFileHandoff } from '@/lib/local-file-handoff'
+import { recognizeDesktopImageBytes } from '@/lib/ocr-native'
+import { processRasterInWorker } from '@/lib/raster-worker'
+import type { ScanEnhanceOptions, ScanQuad } from '@/lib/scan-enhance'
 import {
   isDesktop,
   inspectDesktopInputFile,
@@ -42,11 +46,21 @@ const sourceLoading = ref(false)
 const error = ref('')
 const menu = ref<OcrMenu | null>(null)
 const menuElement = ref<HTMLElement>()
+const sourceWidth = ref(0)
+const sourceHeight = ref(0)
+const correcting = ref(false)
+const correctPending = ref(false)
+const correctedBlob = shallowRef<Blob>()
+const correctedUrl = ref('')
+const correctedQuad = shallowRef<ScanQuad>()
 let menuTrigger: HTMLElement | undefined
 let unlistenDrop: () => void = () => undefined
 let disposed = false
 
 const sourceName = computed(() => sourceFile.value?.name || sourcePath.value.split(/[\\/]/).filter(Boolean).at(-1) || '尚未选择图片')
+const previewUrl = computed(() => correctedUrl.value || sourceUrl.value)
+const corrected = computed(() => Boolean(correctedBlob.value))
+const canCorrect = computed(() => Boolean(sourceUrl.value && sourceWidth.value && sourceHeight.value))
 const trimmedText = computed(() => extractedText.value.trim())
 const hasText = computed(() => Boolean(trimmedText.value))
 const capabilityLabel = computed(() => {
@@ -72,6 +86,66 @@ function revokeSourceUrl() {
   sourceUrl.value = ''
 }
 
+function clearCorrection(notify = false) {
+  if (correctedUrl.value) URL.revokeObjectURL(correctedUrl.value)
+  correctedUrl.value = ''
+  correctedBlob.value = undefined
+  correctedQuad.value = undefined
+  correcting.value = false
+  if (notify) ui.toast('已放弃矫正结果', '识别会重新使用原始图片。', 'success')
+}
+
+async function readSourceDimensions(file: File) {
+  if (typeof createImageBitmap === 'undefined') return
+  const bitmap = await createImageBitmap(file)
+  sourceWidth.value = bitmap.width
+  sourceHeight.value = bitmap.height
+  bitmap.close()
+}
+
+function startCorrection() {
+  closeMenu()
+  if (!canCorrect.value || recognizing.value || sourceLoading.value) return
+  error.value = ''
+  correcting.value = true
+}
+
+async function applyCorrection(payload: { quad: ScanQuad; enhance: ScanEnhanceOptions }) {
+  const file = sourceFile.value
+  if (!file || correctPending.value) return
+  correctPending.value = true
+  error.value = ''
+  try {
+    // A new PNG is produced in memory; the file on disk is never touched.
+    const blob = await processRasterInWorker(file, {
+      mode: 'deskew',
+      outputType: 'image/png',
+      quality: 0.92,
+      compressionPasses: 1,
+      maxWidth: 4096,
+      rotation: 0,
+      cropLeft: 0,
+      cropTop: 0,
+      cropWidth: 100,
+      cropHeight: 100,
+      quad: payload.quad,
+      enhance: payload.enhance,
+    })
+    if (correctedUrl.value) URL.revokeObjectURL(correctedUrl.value)
+    correctedBlob.value = blob
+    correctedUrl.value = URL.createObjectURL(blob)
+    correctedQuad.value = payload.quad
+    correcting.value = false
+    recognition.value = undefined
+    extractedText.value = ''
+    ui.toast('已生成矫正后的图片', '原图没有被修改；识别会使用矫正结果。', 'success')
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '矫正失败，请调整角点后重试。'
+  } finally {
+    correctPending.value = false
+  }
+}
+
 async function setSource(path: string) {
   closeMenu()
   error.value = ''
@@ -86,11 +160,22 @@ async function setSource(path: string) {
     const file = await readDesktopInputFile(path)
     if (!file.type.startsWith('image/')) throw new Error('这个文件没有可识别的图片类型。')
     revokeSourceUrl()
+    clearCorrection()
     sourcePath.value = path
     sourceFile.value = file
     sourceUrl.value = URL.createObjectURL(file)
+    sourceWidth.value = 0
+    sourceHeight.value = 0
     recognition.value = undefined
     extractedText.value = ''
+    // Dimensions drive the corner picker; failing to read them only disables
+    // correction, it must not block plain recognition.
+    try {
+      await readSourceDimensions(file)
+    } catch {
+      sourceWidth.value = 0
+      sourceHeight.value = 0
+    }
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '无法读取这张图片。'
   } finally {
@@ -145,7 +230,11 @@ async function recognize() {
   recognition.value = undefined
   extractedText.value = ''
   try {
-    const next = await recognizeDesktopImageText(sourcePath.value, languageTag.value || undefined)
+    // A corrected scan only exists in memory, so it goes to OCR as bytes; an
+    // untouched image keeps the original path-based call.
+    const next = correctedBlob.value
+      ? await recognizeDesktopImageBytes(await correctedBlob.value.arrayBuffer(), languageTag.value || undefined)
+      : await recognizeDesktopImageText(sourcePath.value, languageTag.value || undefined)
     recognition.value = next
     extractedText.value = next.text
     if (next.text) ui.toast('离线识别完成', `${next.lineCount} 行文字已进入可编辑结果区。`, 'success')
@@ -204,8 +293,11 @@ async function createQuestion() {
 function clearSource() {
   closeMenu()
   revokeSourceUrl()
+  clearCorrection()
   sourcePath.value = ''
   sourceFile.value = undefined
+  sourceWidth.value = 0
+  sourceHeight.value = 0
   recognition.value = undefined
   extractedText.value = ''
   error.value = ''
@@ -223,7 +315,7 @@ function openMenu(event: MouseEvent | KeyboardEvent, kind: OcrMenuKind) {
   const bounds = menuTrigger?.getBoundingClientRect()
   const rawX = 'clientX' in event && event.clientX ? event.clientX : (bounds?.left ?? 16) + 34
   const rawY = 'clientY' in event && event.clientY ? event.clientY : (bounds?.top ?? 16) + 34
-  menu.value = { kind, ...clampMenuPosition(rawX, rawY, { menuWidth: 270, menuHeight: kind === 'source' ? 224 : 188, margin: 12 }) }
+  menu.value = { kind, ...clampMenuPosition(rawX, rawY, { menuWidth: 270, menuHeight: kind === 'source' ? (corrected.value ? 296 : 260) : 188, margin: 12 }) }
   void nextTick(() => menuElement.value?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus())
 }
 
@@ -241,6 +333,22 @@ function handleMenuKeydown(event: KeyboardEvent) {
   items[index]?.focus({ preventScroll: true })
 }
 
+async function rasterizeQaFixture(url: string) {
+  try {
+    const image = new Image()
+    image.src = url
+    await image.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = image.naturalWidth
+    canvas.height = image.naturalHeight
+    canvas.getContext('2d')?.drawImage(image, 0, 0)
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
+    if (blob) sourceFile.value = new File([blob], 'dijkstra-note.png', { type: 'image/png' })
+  } catch {
+    // The preview still renders; only the correction step stays unavailable.
+  }
+}
+
 onMounted(async () => {
   const incoming = consumeLocalFileHandoff('ocr')
   if (qaPreview) {
@@ -253,8 +361,16 @@ onMounted(async () => {
     }
     languageTag.value = 'zh-Hans'
     sourcePath.value = 'C:\\Study\\dijkstra-note.png'
-    sourceFile.value = new File(['qa'], 'dijkstra-note.png', { type: 'image/png' })
-    sourceUrl.value = `data:image/svg+xml;charset=utf-8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600"><rect width="100%" height="100%" fill="#fffdf7"/><rect x="54" y="48" width="852" height="504" rx="18" fill="#ffffff" stroke="#d8d4c7"/><text x="92" y="112" font-family="Segoe UI,Microsoft YaHei" font-size="30" font-weight="700" fill="#17372c">Dijkstra 最短路径</text><text x="92" y="166" font-family="Segoe UI,Microsoft YaHei" font-size="19" fill="#394d44">适用于边权非负的单源最短路问题</text><line x1="92" y1="195" x2="866" y2="195" stroke="#d9ded8"/><text x="92" y="246" font-family="Consolas" font-size="18" fill="#285b47">1. dist[source] = 0</text><text x="92" y="288" font-family="Consolas" font-size="18" fill="#285b47">2. 从优先队列取出距离最小的节点</text><text x="92" y="330" font-family="Consolas" font-size="18" fill="#285b47">3. 松弛所有相邻边并更新队列</text><rect x="92" y="380" width="774" height="112" rx="10" fill="#f1f5f2"/><text x="116" y="425" font-family="Segoe UI,Microsoft YaHei" font-size="18" fill="#33473e">时间复杂度：O((V + E) log V)</text><text x="116" y="462" font-family="Segoe UI,Microsoft YaHei" font-size="18" fill="#33473e">注意：存在负权边时不能直接使用。</text></svg>')}`
+    // A real image rather than a stub, so the correction pass has something it
+    // can actually decode when this preview is driven in a browser.
+    const fixture = '<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600"><rect width="100%" height="100%" fill="#fffdf7"/><rect x="54" y="48" width="852" height="504" rx="18" fill="#ffffff" stroke="#d8d4c7"/><text x="92" y="112" font-family="Segoe UI,Microsoft YaHei" font-size="30" font-weight="700" fill="#17372c">Dijkstra 最短路径</text><text x="92" y="166" font-family="Segoe UI,Microsoft YaHei" font-size="19" fill="#394d44">适用于边权非负的单源最短路问题</text><line x1="92" y1="195" x2="866" y2="195" stroke="#d9ded8"/><text x="92" y="246" font-family="Consolas" font-size="18" fill="#285b47">1. dist[source] = 0</text><text x="92" y="288" font-family="Consolas" font-size="18" fill="#285b47">2. 从优先队列取出距离最小的节点</text><text x="92" y="330" font-family="Consolas" font-size="18" fill="#285b47">3. 松弛所有相邻边并更新队列</text><rect x="92" y="380" width="774" height="112" rx="10" fill="#f1f5f2"/><text x="116" y="425" font-family="Segoe UI,Microsoft YaHei" font-size="18" fill="#33473e">时间复杂度：O((V + E) log V)</text><text x="116" y="462" font-family="Segoe UI,Microsoft YaHei" font-size="18" fill="#33473e">注意：存在负权边时不能直接使用。</text></svg>'
+    sourceWidth.value = 960
+    sourceHeight.value = 600
+    sourceUrl.value = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(fixture)}`
+    // A real photo always arrives as raster, and createImageBitmap cannot
+    // decode an SVG blob in Chrome, so rasterise the fixture before the
+    // correction step can be driven against it.
+    await rasterizeQaFixture(sourceUrl.value)
     recognition.value = {
       text: '', language: capability.value.languages[0]!, sourceWidth: 1920, sourceHeight: 1200,
       processedWidth: 1920, processedHeight: 1200, lineCount: 7, downscaled: false,
@@ -284,13 +400,14 @@ onBeforeUnmount(() => {
   disposed = true
   unlistenDrop()
   revokeSourceUrl()
+  clearCorrection()
 })
 </script>
 
 <template>
   <!-- No `ocr-*` classes: two scoped blocks plus a global one, still carrying
        `--green` from before the tokens, and a stage pinned to 520px. -->
-  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6" @click="closeMenu()">
+  <div class="page-enter h-full page-shell px-8 py-6" @click="closeMenu()">
     <PageHeader
       title="离线文字识别"
       :subtitle="capability?.detail || '用 Windows 已装的语言包识别截图与扫描件，结果可直接编辑'"
@@ -326,6 +443,9 @@ onBeforeUnmount(() => {
         <span class="row gap-1.5 shrink-0">
           <button class="btn-tool" :disabled="sourceLoading || recognizing" @click="chooseImage"><AppIcon name="folder" :size="14" />选择图片</button>
           <button class="btn-tool" :disabled="sourceLoading || recognizing" @click="pasteImage"><AppIcon name="clipboard" :size="14" />粘贴图片</button>
+          <button class="btn-tool" :disabled="!canCorrect || correcting || sourceLoading || recognizing" @click="startCorrection">
+            <AppIcon name="crop" :size="14" />矫正倾斜
+          </button>
         </span>
         <label class="row gap-2 shrink-0">
           <span class="text-[11px] font-semibold text-fg-3">识别语言</span>
@@ -343,14 +463,35 @@ onBeforeUnmount(() => {
       <div class="flex-1 min-h-0 grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <section class="stack min-h-0 border-r border-line" aria-label="待识别图片">
           <header class="row-between gap-2 shrink-0 px-3 h-9 border-b border-line">
-            <span class="text-[11px] font-semibold text-fg-3">源图片</span>
-            <button v-if="sourcePath" class="center w-7 h-7 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-danger" title="清除图片" aria-label="清除当前图片" @click="clearSource">
-              <AppIcon name="trash" :size="14" />
-            </button>
+            <span class="row gap-2 min-w-0">
+              <span class="text-[11px] font-semibold text-fg-3">{{ correcting ? '框选页面范围' : '源图片' }}</span>
+              <span v-if="corrected && !correcting" class="chip chip-accent h-5 px-2 text-[11px]">
+                <AppIcon name="crop" :size="11" />已矫正
+              </span>
+            </span>
+            <span class="row gap-1 shrink-0">
+              <button v-if="corrected && !correcting" class="btn-tool" @click="clearCorrection(true)">用回原图</button>
+              <button v-if="sourcePath && !correcting" class="center w-7 h-7 rounded-sm text-fg-3 hover:bg-surface-2 hover:text-danger" title="清除图片" aria-label="清除当前图片" @click="clearSource">
+                <AppIcon name="trash" :size="14" />
+              </button>
+            </span>
           </header>
+
+          <ScanCorrectPanel
+            v-if="correcting"
+            :src="sourceUrl"
+            :natural-width="sourceWidth"
+            :natural-height="sourceHeight"
+            :initial-quad="correctedQuad"
+            :busy="correctPending"
+            @apply="applyCorrection"
+            @cancel="correcting = false"
+          />
+
           <div
+            v-else
             class="flex-1 min-h-0 center overflow-hidden bg-well"
-            :class="sourceUrl ? 'cursor-context-menu' : 'cursor-pointer'"
+            :class="previewUrl ? 'cursor-context-menu' : 'cursor-pointer'"
             tabindex="0"
             aria-haspopup="menu"
             :aria-busy="sourceLoading"
@@ -359,7 +500,7 @@ onBeforeUnmount(() => {
             @contextmenu="openMenu($event, 'source')"
             @keydown="openMenuFromKeyboard($event, 'source')"
           >
-            <img v-if="sourceUrl" :src="sourceUrl" :alt="`待识别图片：${sourceName}`" decoding="async" class="max-w-full max-h-full object-contain" />
+            <img v-if="previewUrl" :src="previewUrl" :alt="corrected ? `矫正后的待识别图片：${sourceName}` : `待识别图片：${sourceName}`" decoding="async" class="max-w-full max-h-full object-contain" />
             <div v-else class="stack items-center gap-2 p-6 text-center">
               <span class="center w-12 h-12 rounded-lg bg-accent-soft text-accent"><AppIcon name="image" :size="24" /></span>
               <b class="text-[13px] font-medium text-fg">{{ sourceLoading ? '正在读取图片…' : '拖入或选择一张图片' }}</b>
@@ -367,10 +508,10 @@ onBeforeUnmount(() => {
               <small class="text-[11px] text-fg-3">右键还可以直接读取剪贴板图片</small>
             </div>
           </div>
-          <footer class="row-between gap-3 shrink-0 px-3 h-11 border-t border-line">
+          <footer v-if="!correcting" class="row-between gap-3 shrink-0 px-3 h-11 border-t border-line">
             <span class="stack gap-0.5 min-w-0">
               <b class="text-[12px] font-medium truncate text-fg">{{ sourceName }}</b>
-              <small class="text-[11px] truncate text-fg-3">{{ sourceFile ? `${Math.max(1, Math.round(sourceFile.size / 1024)).toLocaleString('zh-CN')} KB` : '原图只在当前会话中预览' }}</small>
+              <small class="text-[11px] truncate text-fg-3">{{ corrected ? '矫正结果只在内存中，原文件保持不变' : sourceFile ? `${Math.max(1, Math.round(sourceFile.size / 1024)).toLocaleString('zh-CN')} KB` : '原图只在当前会话中预览' }}</small>
             </span>
             <button v-if="sourcePath" class="btn-tool shrink-0" @click="revealDesktopFile(sourcePath)">资源管理器</button>
           </footer>
@@ -437,6 +578,8 @@ onBeforeUnmount(() => {
           <button class="menu-item" role="menuitem" :disabled="!sourcePath || recognizing || !capability?.available" @click="recognize">
             <span class="row gap-2"><AppIcon name="search" :size="14" />开始离线识别</span><kbd class="kbd">Ctrl+Enter</kbd>
           </button>
+          <button class="menu-item" role="menuitem" :disabled="!canCorrect || correcting || recognizing" @click="startCorrection"><span class="row gap-2"><AppIcon name="crop" :size="14" />矫正倾斜与增强</span></button>
+          <button v-if="corrected" class="menu-item" role="menuitem" @click="clearCorrection(true); closeMenu()"><span class="row gap-2"><AppIcon name="refresh" :size="14" />改用原始图片</span></button>
           <button class="menu-item" role="menuitem" :disabled="sourceLoading || recognizing" @click="chooseImage"><span class="row gap-2"><AppIcon name="folder" :size="14" />选择另一张图片</span></button>
           <button class="menu-item" role="menuitem" :disabled="sourceLoading || recognizing" @click="pasteImage"><span class="row gap-2"><AppIcon name="clipboard" :size="14" />读取剪贴板图片</span></button>
           <button class="menu-item" role="menuitem" :disabled="!sourcePath" @click="revealDesktopFile(sourcePath); closeMenu()"><span class="row gap-2"><AppIcon name="arrow-right" :size="14" />在资源管理器中查看</span></button>

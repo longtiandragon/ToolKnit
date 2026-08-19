@@ -1,4 +1,6 @@
-export type RasterImageMode = 'compose' | 'convert' | 'resize' | 'crop' | 'rotate' | 'metadata'
+import type { ScanEnhanceOptions, ScanQuad } from '@/lib/scan-enhance'
+
+export type RasterImageMode = 'compose' | 'convert' | 'resize' | 'crop' | 'rotate' | 'metadata' | 'deskew'
 export type RasterOutputType = 'image/png' | 'image/jpeg' | 'image/webp'
 
 export interface RasterProcessOptions {
@@ -12,6 +14,11 @@ export interface RasterProcessOptions {
   cropTop: number
   cropWidth: number
   cropHeight: number
+  /** Deskew only: corners of the page in source-image coordinates. Optional so
+   * existing callers can keep passing a plain options literal. */
+  quad?: ScanQuad
+  /** Deskew only: tone curve applied while warping. */
+  enhance?: ScanEnhanceOptions
 }
 
 export interface RasterProcessPlan {
@@ -41,6 +48,10 @@ export function createRasterProcessPlan(width: number, height: number, options: 
     throw new Error('图片尺寸无效，无法处理。')
   }
 
+  // Deskew resolves its own geometry before it gets here: the warp runs first
+  // and this plan then sees the already-corrected dimensions. Reaching this
+  // function still tagged 'deskew' therefore behaves as a plain convert, which
+  // is the safe fallback rather than a silently wrong crop.
   const cropping = options.mode === 'crop'
   const left = cropping ? Math.round(width * options.cropLeft / 100) : 0
   const top = cropping ? Math.round(height * options.cropTop / 100) : 0
