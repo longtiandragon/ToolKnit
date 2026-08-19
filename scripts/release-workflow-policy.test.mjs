@@ -31,9 +31,11 @@ describe('release workflow policy', () => {
     expect(releaseWorkflow).not.toMatch(/Get-ChildItem[^\n]+-Recurse/)
   })
 
-  it('runs existing Rust tests and clippy in regular CI', () => {
+  it('runs Rust quality gates and the native desktop smoke test in regular CI', () => {
     expect(ciWorkflow).toContain('cargo test --manifest-path src-tauri/Cargo.toml')
     expect(ciWorkflow).toContain('pnpm check:rust:clippy')
     expect(ciWorkflow).toContain('pnpm check:rust:clippy:public')
+    expect(ciWorkflow).toContain('pnpm check:rust:clippy:e2e')
+    expect(ciWorkflow).toContain('pnpm desktop:e2e')
   })
 })

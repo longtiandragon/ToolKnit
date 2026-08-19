@@ -32,3 +32,5 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: pnpm check:rust:clippy
       - run: pnpm check:rust:clippy:public
+      - run: pnpm check:rust:clippy:e2e
+      - run: pnpm desktop:e2e

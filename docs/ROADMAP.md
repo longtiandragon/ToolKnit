@@ -1,6 +1,6 @@
 # Knitspace 路线图
 
-更新日期：2026-08-18（Asia/Shanghai）
+更新日期：2026-08-19（Asia/Shanghai）
 
 这份文档取代"核心功能完成 80–85%"这类单一百分比叙事。一个数字无法同时表达"工具很多"和"发布不了"，而这正是当前项目的真实状态。
 
@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 功能覆盖 | **高** | 60+ 工具条目、10 类外部引擎探测、五空间导航、Vault/FTS/FSRS 齐备（`src/lib/tool-catalog.ts`、`src-tauri/src/lib.rs:6721-6895`） |
 | 工具平台一致性 | **中** | 三套互不相通的注册表；流水线只吃文本（见 §2） |
-| 桌面可靠性 | **中高** | 备份、迁移、崩溃恢复、任务取消、磁盘检查齐备；崩溃日志、降级保护、临时目录清扫、窗口记忆已补（见 §3）；仍无更新通道 |
+| 桌面可靠性 | **中高** | 备份、迁移、崩溃恢复、任务取消、磁盘检查齐备；崩溃日志、降级保护、临时目录清扫、窗口记忆已补，真实 Tauri 烟测已进 CI（见 §3、§4）；仍无更新通道 |
 | 发布就绪 | **中** | 发布流水线已收口并带完整门槛；仍未签名、无更新通道（见 §4） |
 
 功能覆盖已经不是瓶颈。工具平台一致性（§2）现在是最主要的一项。
@@ -40,7 +40,7 @@
 
 ## 3. 桌面可靠性
 
-已具备：schema 迁移（`src-tauri/src/vault.rs`，当前 v23，单事务）、自动备份与恢复且恢复时拒绝更高 schema、编辑器崩溃草稿与文档写前日志（`src/lib/editor-crash-draft.ts`、`src/lib/desktop-document-recovery.ts`）、AI/媒体/转写/私人工具的长任务取消、Windows 磁盘空间检查、单实例聚焦、启动资源预算门槛。
+已具备：schema 迁移（`src-tauri/src/vault.rs`，当前 v26，单事务）、自动备份与恢复且恢复时拒绝更高 schema、编辑器崩溃草稿与文档写前日志（`src/lib/editor-crash-draft.ts`、`src/lib/desktop-document-recovery.ts`）、AI/媒体/转写/私人工具的长任务取消、Windows 磁盘空间检查、单实例聚焦、启动资源预算门槛。
 
 以下四项曾列为缺口，现已实现：
 
@@ -62,13 +62,14 @@
 - **release 跑完整门槛**：`check:release-version`（版本号与推送的 `v*` tag 一致）、`test`、`benchmark:markdown:gate`、`build`、`check:startup`、`build:public`、`check:public`、两次 `cargo check`、`cargo test`、两次 clippy。
 - **`SHA256SUMS.txt` 可用**。`write-release-checksums.mjs` 用 `basename()` 写相对文件名，可直接 `sha256sum -c`；工作流断言 NSIS 目录里恰好只有一个 installer，不再递归哈希整个 `bundle/`。
 - **Rust 测试与 clippy 已进 CI**。`ci.yml` 含 `cargo test` 与两次 clippy，不再只有 `cargo check`。
+- **首条真实 Tauri 自动化已进 CI**。`pnpm desktop:e2e` 构建并启动隔离的 debug 二进制，验证自动化配方从 UI 写入 Vault、通过 Rust IPC 回读、WebDriver 会话重建后仍存在，以及智能整理扫描/摘要读取对来源和归档目录均为零变更。测试桥、全局 Tauri API 与 WebDriver 权限只在 `e2e` feature 和独立应用标识下启用，普通包和 Public Core 包不包含它们。
 
 仍然缺少：
 
 - **安装包未签名**。`tauri.conf.json` 无 `certificateThumbprint` / `signCommand`，SmartScreen 会拦截。需要代码签名证书，不是纯代码工作。
-- **没有任何自动化触达真正的桌面二进制**。17 个 `scripts/*-drive.mjs` 都是用 playwright-core 驱动浏览器里的 Vite 页面（`scripts/ux-drive.mjs`），脚本自己也写明了触达不到 Tauri 外壳。它们是截图/QA 工具，不是断言测试，且都不在 CI 里。
+- **原生自动化覆盖仍是基础烟测**。现有 17 个 `scripts/*-drive.mjs` 仍只是浏览器截图/QA 工具；新增的 Tauri E2E 已覆盖启动、Vault 配方持久化与智能整理只读扫描，但尚未覆盖文件执行/回滚、崩溃恢复、OneDrive、跨卷、DPI 和安装包升级。
 
-任何"桌面行为已验证"的说法目前仍然只能靠人工测试支撑。
+因此可以自动声称的范围只限于上述四个烟测断言；破坏性文件流程、安装与真机矩阵仍必须人工验收。
 
 ## 5. 功能排期
 
