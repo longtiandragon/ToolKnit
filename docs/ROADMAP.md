@@ -62,14 +62,14 @@
 - **release 跑完整门槛**：`check:release-version`（版本号与推送的 `v*` tag 一致）、`test`、`benchmark:markdown:gate`、`build`、`check:startup`、`build:public`、`check:public`、两次 `cargo check`、`cargo test`、两次 clippy。
 - **`SHA256SUMS.txt` 可用**。`write-release-checksums.mjs` 用 `basename()` 写相对文件名，可直接 `sha256sum -c`；工作流断言 NSIS 目录里恰好只有一个 installer，不再递归哈希整个 `bundle/`。
 - **Rust 测试与 clippy 已进 CI**。`ci.yml` 含 `cargo test` 与两次 clippy，不再只有 `cargo check`。
-- **真实 Tauri 自动化已进 CI**。`pnpm desktop:e2e` 构建并启动隔离的 debug 二进制，共跑 4 个 spec、10 个断言：自动化配方从 UI 写入 Vault、通过 Rust IPC 回读、WebDriver 会话重建后仍存在；智能整理只读扫描零变更；同盘移动与撤销、输入变化拒绝、目标占用不覆盖、部分失败反向回滚、跨盘复制并保留原件，以及进程被强制终止后的下一次启动恢复。崩溃场景先正常关闭 WebDriver 会话，再按 E2E IPC 返回的精确 PID 终止隔离应用，后续 worker 会启动新进程验证 pending 凭据确实被消费。测试桥、故障注入字段、全局 Tauri API 与 WebDriver 权限只在 `e2e` feature 和独立应用标识下启用，普通包和 Public Core 包不包含它们。
+- **真实 Tauri 自动化已进 CI**。`pnpm desktop:e2e` 构建并启动隔离的 debug 二进制，共跑 5 个 spec、13 个确定性断言：自动化配方从 UI 写入 Vault、通过 Rust IPC 回读、WebDriver 会话重建后仍存在；智能整理只读扫描零变更；同盘移动与撤销、输入变化拒绝、目标占用不覆盖、部分失败反向回滚、跨盘复制并保留原件；只读属性保持、独占锁零变更拒绝、超过旧 `MAX_PATH` 的中文路径；以及进程被强制终止后的下一次启动恢复。另有 1 个必须通过 `KNITSPACE_E2E_ONEDRIVE_ROOT` 显式启用的 OneDrive 本地同步文件用例，普通 CI 不写同步盘。崩溃场景先正常关闭 WebDriver 会话，再按 E2E IPC 返回的精确 PID 终止隔离应用，后续 worker 会启动新进程验证 pending 凭据确实被消费。测试桥、故障注入字段、全局 Tauri API 与 WebDriver 权限只在 `e2e` feature 和独立应用标识下启用，普通包和 Public Core 包不包含它们。
 
 仍然缺少：
 
 - **安装包未签名**。`tauri.conf.json` 无 `certificateThumbprint` / `signCommand`，SmartScreen 会拦截。需要代码签名证书，不是纯代码工作。
-- **原生自动化仍未覆盖完整真机矩阵**。现有 17 个 `scripts/*-drive.mjs` 仍只是浏览器截图/QA 工具；真实 Tauri E2E 已覆盖核心文件执行、撤销、冲突、跨卷与崩溃恢复，但尚未覆盖 OneDrive 占位文件、只读/独占锁、超长路径、多 DPI、签名安装包和跨版本升级。
+- **原生自动化仍未覆盖完整真机矩阵**。现有 17 个 `scripts/*-drive.mjs` 仍只是浏览器截图/QA 工具；真实 Tauri E2E 已覆盖核心文件执行、撤销、冲突、跨卷、只读文件、独占锁、超长中文路径与崩溃恢复，但尚未覆盖 OneDrive 仅联机占位文件/同步冲突、受控文件夹访问、多 DPI、签名安装包和跨版本升级。操作步骤与隐私边界见 `docs/SMART_ORGANIZER_WINDOWS_QA.md`。
 
-因此可以自动声称的范围限于上述 10 个隔离场景；OneDrive、安装与完整 Windows 真机矩阵仍必须人工验收。
+因此可以自动声称的范围限于上述 13 个 CI 隔离场景，以及在显式选择同步根的机器上通过的 OneDrive 本地文件场景；仅联机占位文件、安装与完整 Windows 真机矩阵仍必须人工验收。
 
 ## 5. 功能排期
 
