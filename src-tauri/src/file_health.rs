@@ -1,8 +1,8 @@
 use anyhow::{bail, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -21,6 +21,7 @@ pub const MAX_MANIFEST_FILES: usize = 40_000;
 const MAX_SIMILAR_IMAGE_GROUPS: usize = 500;
 const MAX_SIMILAR_IMAGE_FILES: usize = 4_000;
 const MAX_CZKAWKA_JSON_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_MANIFEST_JSON_BYTES: u64 = 32 * 1024 * 1024;
 const CZKAWKA_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Debug, Clone, Serialize)]
@@ -159,6 +160,62 @@ pub struct FileManifestReport {
     pub truncated: bool,
     pub warnings: Vec<String>,
     pub files: Vec<FileManifestEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportedManifestEntry {
+    relative_path: String,
+    size: u64,
+    sha256: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportedManifest {
+    #[serde(default)]
+    truncated: bool,
+    files: Vec<ImportedManifestEntry>,
+}
+
+#[derive(Debug)]
+struct ManifestRecord {
+    relative_path: String,
+    relative_path_buf: PathBuf,
+    expected_size: u64,
+    expected_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileManifestVerificationItem {
+    pub relative_path: String,
+    pub name: String,
+    pub status: String,
+    pub expected_size: Option<u64>,
+    pub actual_size: Option<u64>,
+    pub expected_hash: Option<String>,
+    pub actual_hash: Option<String>,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileManifestVerificationReport {
+    pub root: String,
+    pub manifest_path: String,
+    pub scanned_files: usize,
+    pub hashed_bytes: u64,
+    pub match_count: usize,
+    pub missing_count: usize,
+    pub size_mismatch_count: usize,
+    pub hash_mismatch_count: usize,
+    pub unverified_count: usize,
+    pub unreadable_count: usize,
+    pub extra_count: usize,
+    pub truncated: bool,
+    pub warnings: Vec<String>,
+    pub items: Vec<FileManifestVerificationItem>,
 }
 
 #[derive(Debug)]
@@ -488,6 +545,457 @@ fn create_manifest(root: &Path, include_hash: bool) -> Result<FileManifestReport
         truncated,
         warnings,
         files,
+    })
+}
+
+fn imported_manifest_relative_path(value: &str) -> Result<(String, PathBuf)> {
+    let normalized = value.replace('\\', "/");
+    if normalized.is_empty()
+        || normalized.starts_with('/')
+        || normalized.starts_with("//")
+        || normalized.as_bytes().get(1) == Some(&b':')
+    {
+        bail!("校验清单包含不安全的相对路径：{value}")
+    }
+    let mut path = PathBuf::new();
+    for segment in normalized.split('/') {
+        if segment.is_empty()
+            || segment == "."
+            || segment == ".."
+            || segment.contains(':')
+            || segment.contains('\0')
+        {
+            bail!("校验清单包含不安全的相对路径：{value}")
+        }
+        path.push(segment);
+    }
+    Ok((normalized, path))
+}
+
+fn imported_manifest_hash(value: &str, relative_path: &str) -> Result<String> {
+    if value.len() != 64 || !value.as_bytes().iter().all(u8::is_ascii_hexdigit) {
+        bail!("校验清单中的 SHA-256 无效：{relative_path}")
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
+fn read_imported_manifest(path: &str) -> Result<(PathBuf, ImportedManifest)> {
+    let candidate = PathBuf::from(path);
+    if candidate.as_os_str().is_empty() {
+        bail!("请选择要验证的 JSON 校验清单。")
+    }
+    let metadata = fs::symlink_metadata(&candidate)
+        .with_context(|| format!("无法读取校验清单：{}", candidate.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        bail!("校验清单必须是普通 JSON 文件。")
+    }
+    if metadata.len() > MAX_MANIFEST_JSON_BYTES {
+        bail!(
+            "校验清单超过 {} MB 安全上限。",
+            MAX_MANIFEST_JSON_BYTES / 1024 / 1024
+        )
+    }
+    let path = fs::canonicalize(&candidate)
+        .with_context(|| format!("无法解析校验清单路径：{}", candidate.display()))?;
+    let bytes = fs::read(&path).with_context(|| format!("无法读取校验清单：{}", path.display()))?;
+    let manifest = serde_json::from_slice::<ImportedManifest>(&bytes)
+        .context("校验清单不是 Knitspace 可识别的 JSON 格式")?;
+    if manifest.files.len() > MAX_MANIFEST_FILES {
+        bail!("校验清单文件数超过 {MAX_MANIFEST_FILES} 项安全上限。")
+    }
+    Ok((path, manifest))
+}
+
+fn push_manifest_verification_item(
+    items: &mut Vec<FileManifestVerificationItem>,
+    item: FileManifestVerificationItem,
+    truncated: &mut bool,
+    item_limit_noted: &mut bool,
+    warnings: &mut Vec<String>,
+) {
+    if items.len() < MAX_COMPARE_ITEMS {
+        items.push(item);
+    } else {
+        *truncated = true;
+        if !*item_limit_noted {
+            *item_limit_noted = true;
+            warnings.push(format!("校验结果已收起，最多展示 {MAX_COMPARE_ITEMS} 项。"));
+        }
+    }
+}
+
+fn verification_item(
+    relative_path: String,
+    status: &str,
+    expected_size: Option<u64>,
+    actual_size: Option<u64>,
+    expected_hash: Option<String>,
+    actual_hash: Option<String>,
+    detail: impl Into<String>,
+) -> FileManifestVerificationItem {
+    FileManifestVerificationItem {
+        name: Path::new(&relative_path)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_owned(),
+        relative_path,
+        status: status.to_owned(),
+        expected_size,
+        actual_size,
+        expected_hash,
+        actual_hash,
+        detail: detail.into(),
+    }
+}
+
+fn verify_manifest(root: &Path, manifest_path: &str) -> Result<FileManifestVerificationReport> {
+    let root = fs::canonicalize(root)
+        .with_context(|| format!("无法访问要验证的文件夹：{}", root.display()))?;
+    let (manifest_path, imported) = read_imported_manifest(manifest_path)?;
+    let mut records = HashMap::<String, ManifestRecord>::new();
+    for entry in imported.files {
+        let (relative_path, relative_path_buf) =
+            imported_manifest_relative_path(&entry.relative_path)?;
+        let expected_hash = entry
+            .sha256
+            .as_deref()
+            .map(|value| imported_manifest_hash(value, &relative_path))
+            .transpose()?;
+        let key = compare_key(&relative_path);
+        if records.contains_key(&key) {
+            bail!("校验清单包含重复路径：{relative_path}")
+        }
+        records.insert(
+            key,
+            ManifestRecord {
+                relative_path,
+                relative_path_buf,
+                expected_size: entry.size,
+                expected_hash,
+            },
+        );
+    }
+
+    let mut warnings = Vec::new();
+    let mut truncated = imported.truncated;
+    if imported.truncated {
+        warnings.push(
+            "该校验清单标记为不完整；已列出的文件仍会验证，但无法证明目录没有其他变化。".into(),
+        );
+    }
+    let mut items = Vec::new();
+    let mut item_limit_noted = false;
+    let mut hashed_bytes = 0_u64;
+    let mut hash_limit_noted = false;
+    let mut match_count = 0_usize;
+    let mut missing_count = 0_usize;
+    let mut size_mismatch_count = 0_usize;
+    let mut hash_mismatch_count = 0_usize;
+    let mut unverified_count = 0_usize;
+    let mut unreadable_count = 0_usize;
+    let mut extra_count = 0_usize;
+
+    let mut record_keys = records.keys().cloned().collect::<Vec<_>>();
+    record_keys.sort();
+    for key in record_keys {
+        let record = records.get(&key).expect("manifest key has a record");
+        let expected_hash = record.expected_hash.clone();
+        let candidate = root.join(&record.relative_path_buf);
+        let metadata = match fs::symlink_metadata(&candidate) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing_count += 1;
+                push_manifest_verification_item(
+                    &mut items,
+                    verification_item(
+                        record.relative_path.clone(),
+                        "missing",
+                        Some(record.expected_size),
+                        None,
+                        expected_hash,
+                        None,
+                        "清单中存在，但当前目录中找不到该文件。",
+                    ),
+                    &mut truncated,
+                    &mut item_limit_noted,
+                    &mut warnings,
+                );
+                continue;
+            }
+            Err(error) => {
+                unreadable_count += 1;
+                push_manifest_verification_item(
+                    &mut items,
+                    verification_item(
+                        record.relative_path.clone(),
+                        "unreadable",
+                        Some(record.expected_size),
+                        None,
+                        expected_hash,
+                        None,
+                        format!("无法读取当前文件：{error}"),
+                    ),
+                    &mut truncated,
+                    &mut item_limit_noted,
+                    &mut warnings,
+                );
+                continue;
+            }
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            unreadable_count += 1;
+            push_manifest_verification_item(
+                &mut items,
+                verification_item(
+                    record.relative_path.clone(),
+                    "unreadable",
+                    Some(record.expected_size),
+                    None,
+                    expected_hash,
+                    None,
+                    "当前路径不是可安全校验的普通文件。",
+                ),
+                &mut truncated,
+                &mut item_limit_noted,
+                &mut warnings,
+            );
+            continue;
+        }
+        let canonical = match fs::canonicalize(&candidate) {
+            Ok(path) if path.starts_with(&root) => path,
+            Ok(_) => {
+                unreadable_count += 1;
+                push_manifest_verification_item(
+                    &mut items,
+                    verification_item(
+                        record.relative_path.clone(),
+                        "unreadable",
+                        Some(record.expected_size),
+                        None,
+                        expected_hash,
+                        None,
+                        "当前路径解析到了所选目录之外，已拒绝校验。",
+                    ),
+                    &mut truncated,
+                    &mut item_limit_noted,
+                    &mut warnings,
+                );
+                continue;
+            }
+            Err(error) => {
+                unreadable_count += 1;
+                push_manifest_verification_item(
+                    &mut items,
+                    verification_item(
+                        record.relative_path.clone(),
+                        "unreadable",
+                        Some(record.expected_size),
+                        None,
+                        expected_hash,
+                        None,
+                        format!("无法解析当前文件路径：{error}"),
+                    ),
+                    &mut truncated,
+                    &mut item_limit_noted,
+                    &mut warnings,
+                );
+                continue;
+            }
+        };
+        let actual_size = metadata.len();
+        if actual_size != record.expected_size {
+            size_mismatch_count += 1;
+            push_manifest_verification_item(
+                &mut items,
+                verification_item(
+                    record.relative_path.clone(),
+                    "size-mismatch",
+                    Some(record.expected_size),
+                    Some(actual_size),
+                    expected_hash,
+                    None,
+                    "文件大小与校验清单不一致。",
+                ),
+                &mut truncated,
+                &mut item_limit_noted,
+                &mut warnings,
+            );
+            continue;
+        }
+        let Some(expected_hash) = expected_hash else {
+            unverified_count += 1;
+            push_manifest_verification_item(
+                &mut items,
+                verification_item(
+                    record.relative_path.clone(),
+                    "unverified",
+                    Some(record.expected_size),
+                    Some(actual_size),
+                    None,
+                    None,
+                    "清单未提供 SHA-256；大小相同，但不能证明内容未变化。",
+                ),
+                &mut truncated,
+                &mut item_limit_noted,
+                &mut warnings,
+            );
+            continue;
+        };
+        if hashed_bytes.saturating_add(actual_size) > MAX_HASH_BYTES {
+            truncated = true;
+            unverified_count += 1;
+            if !hash_limit_noted {
+                hash_limit_noted = true;
+                warnings.push(format!(
+                    "累计哈希内容已达到 {} 字节上限，剩余文件只报告为未验证。",
+                    MAX_HASH_BYTES
+                ));
+            }
+            push_manifest_verification_item(
+                &mut items,
+                verification_item(
+                    record.relative_path.clone(),
+                    "unverified",
+                    Some(record.expected_size),
+                    Some(actual_size),
+                    Some(expected_hash),
+                    None,
+                    "文件大小相同，但已达到哈希上限，未重新计算内容指纹。",
+                ),
+                &mut truncated,
+                &mut item_limit_noted,
+                &mut warnings,
+            );
+            continue;
+        }
+        match sha256_file(&canonical) {
+            Ok(actual_hash) => {
+                hashed_bytes = hashed_bytes.saturating_add(actual_size);
+                if actual_hash == expected_hash {
+                    match_count += 1;
+                    push_manifest_verification_item(
+                        &mut items,
+                        verification_item(
+                            record.relative_path.clone(),
+                            "match",
+                            Some(record.expected_size),
+                            Some(actual_size),
+                            Some(expected_hash),
+                            Some(actual_hash),
+                            "大小和 SHA-256 都与校验清单一致。",
+                        ),
+                        &mut truncated,
+                        &mut item_limit_noted,
+                        &mut warnings,
+                    );
+                } else {
+                    hash_mismatch_count += 1;
+                    push_manifest_verification_item(
+                        &mut items,
+                        verification_item(
+                            record.relative_path.clone(),
+                            "hash-mismatch",
+                            Some(record.expected_size),
+                            Some(actual_size),
+                            Some(expected_hash),
+                            Some(actual_hash),
+                            "文件大小相同，但 SHA-256 与校验清单不一致。",
+                        ),
+                        &mut truncated,
+                        &mut item_limit_noted,
+                        &mut warnings,
+                    );
+                }
+            }
+            Err(error) => {
+                unreadable_count += 1;
+                push_manifest_verification_item(
+                    &mut items,
+                    verification_item(
+                        record.relative_path.clone(),
+                        "unreadable",
+                        Some(record.expected_size),
+                        Some(actual_size),
+                        Some(expected_hash),
+                        None,
+                        format!("无法计算当前文件的 SHA-256：{error}"),
+                    ),
+                    &mut truncated,
+                    &mut item_limit_noted,
+                    &mut warnings,
+                );
+            }
+        }
+    }
+
+    let known_paths = records.keys().cloned().collect::<HashSet<_>>();
+    let mut scanned_entries = 0_usize;
+    let mut scanned_files = 0_usize;
+    for entry in WalkDir::new(&root).follow_links(false).into_iter() {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                warnings.push(format!("部分路径无法读取：{error}"));
+                continue;
+            }
+        };
+        scanned_entries += 1;
+        if scanned_entries > MAX_SCAN_ENTRIES || scanned_files >= MAX_MANIFEST_FILES {
+            truncated = true;
+            warnings.push(format!("额外文件检查已达到上限（最多 {MAX_SCAN_ENTRIES} 个条目、{MAX_MANIFEST_FILES} 个文件）。"));
+            break;
+        }
+        if entry.file_type().is_symlink() || !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let metadata = match fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                warnings.push(format!("无法读取 {}：{error}", relative_label(&root, path)));
+                continue;
+            }
+        };
+        scanned_files += 1;
+        let relative_path = relative_label(&root, path);
+        if known_paths.contains(&compare_key(&relative_path)) {
+            continue;
+        }
+        extra_count += 1;
+        push_manifest_verification_item(
+            &mut items,
+            verification_item(
+                relative_path,
+                "extra",
+                None,
+                Some(metadata.len()),
+                None,
+                None,
+                "当前目录中存在，但校验清单未列出该文件。",
+            ),
+            &mut truncated,
+            &mut item_limit_noted,
+            &mut warnings,
+        );
+    }
+
+    items.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(FileManifestVerificationReport {
+        root: root.to_string_lossy().into_owned(),
+        manifest_path: manifest_path.to_string_lossy().into_owned(),
+        scanned_files,
+        hashed_bytes,
+        match_count,
+        missing_count,
+        size_mismatch_count,
+        hash_mismatch_count,
+        unverified_count,
+        unreadable_count,
+        extra_count,
+        truncated,
+        warnings,
+        items,
     })
 }
 
@@ -1083,6 +1591,15 @@ pub fn create_file_manifest(
 }
 
 #[tauri::command]
+pub fn verify_file_manifest(
+    root: String,
+    manifest_path: String,
+) -> Result<FileManifestVerificationReport, String> {
+    let root = canonical_directory(&root).map_err(|error| error.to_string())?;
+    verify_manifest(&root, &manifest_path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn recycle_file_health_paths(root: String, paths: Vec<String>) -> Result<usize, String> {
     let root = canonical_directory(&root).map_err(|error| error.to_string())?;
     if paths.is_empty() {
@@ -1232,6 +1749,84 @@ mod tests {
         assert_eq!(without_hash.hashed_files, 0);
         assert!(without_hash.files.iter().all(|file| file.sha256.is_none()));
         fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn verifies_manifest_matches_mismatches_missing_and_extra_files() -> Result<()> {
+        let root = temp_root("verify-root");
+        let manifest_dir = temp_root("verify-manifest");
+        fs::create_dir_all(&root)?;
+        fs::create_dir_all(&manifest_dir)?;
+
+        let matching = root.join("matching.txt");
+        fs::write(&matching, b"match")?;
+        let matching_hash = sha256_file(&matching)?;
+
+        let hash_changed = root.join("hash-changed.txt");
+        fs::write(&hash_changed, b"old!")?;
+        let hash_changed_hash = sha256_file(&hash_changed)?;
+        fs::write(&hash_changed, b"new!")?;
+
+        fs::write(root.join("size-changed.txt"), b"large")?;
+        fs::write(root.join("size-only.txt"), b"yes")?;
+        fs::write(root.join("extra.txt"), b"extra")?;
+
+        let manifest = manifest_dir.join("manifest.json");
+        let payload = serde_json::json!({
+            "truncated": false,
+            "files": [
+                { "relativePath": "matching.txt", "size": 5, "sha256": matching_hash },
+                { "relativePath": "hash-changed.txt", "size": 4, "sha256": hash_changed_hash },
+                { "relativePath": "size-changed.txt", "size": 4, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+                { "relativePath": "missing.txt", "size": 1, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+                { "relativePath": "size-only.txt", "size": 3 }
+            ]
+        });
+        fs::write(&manifest, serde_json::to_vec(&payload)?)?;
+
+        let report = verify_manifest(&root, &manifest.to_string_lossy())?;
+        assert_eq!(report.match_count, 1);
+        assert_eq!(report.hash_mismatch_count, 1);
+        assert_eq!(report.size_mismatch_count, 1);
+        assert_eq!(report.missing_count, 1);
+        assert_eq!(report.unverified_count, 1);
+        assert_eq!(report.extra_count, 1);
+        assert_eq!(report.unreadable_count, 0);
+        assert!(report
+            .items
+            .iter()
+            .any(|item| item.relative_path == "extra.txt" && item.status == "extra"));
+        assert!(
+            report
+                .items
+                .iter()
+                .any(|item| item.relative_path == "hash-changed.txt"
+                    && item.status == "hash-mismatch")
+        );
+
+        fs::remove_dir_all(root)?;
+        fs::remove_dir_all(manifest_dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unsafe_manifest_paths_before_reading_the_directory() -> Result<()> {
+        let root = temp_root("verify-unsafe-root");
+        let manifest_dir = temp_root("verify-unsafe-manifest");
+        fs::create_dir_all(&root)?;
+        fs::create_dir_all(&manifest_dir)?;
+        let manifest = manifest_dir.join("unsafe.json");
+        fs::write(
+            &manifest,
+            r#"{"files":[{"relativePath":"../outside.txt","size":1}]}"#,
+        )?;
+
+        let error = verify_manifest(&root, &manifest.to_string_lossy()).unwrap_err();
+        assert!(error.to_string().contains("不安全的相对路径"));
+
+        fs::remove_dir_all(root)?;
+        fs::remove_dir_all(manifest_dir)?;
         Ok(())
     }
 }

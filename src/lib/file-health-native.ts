@@ -115,6 +115,36 @@ export interface FileManifestReport {
   files: FileManifestEntry[]
 }
 
+export type FileManifestVerificationStatus = 'match' | 'missing' | 'size-mismatch' | 'hash-mismatch' | 'unverified' | 'unreadable' | 'extra'
+
+export interface FileManifestVerificationItem {
+  relativePath: string
+  name: string
+  status: FileManifestVerificationStatus
+  expectedSize?: number
+  actualSize?: number
+  expectedHash?: string
+  actualHash?: string
+  detail: string
+}
+
+export interface FileManifestVerificationReport {
+  root: string
+  manifestPath: string
+  scannedFiles: number
+  hashedBytes: number
+  matchCount: number
+  missingCount: number
+  sizeMismatchCount: number
+  hashMismatchCount: number
+  unverifiedCount: number
+  unreadableCount: number
+  extraCount: number
+  truncated: boolean
+  warnings: string[]
+  items: FileManifestVerificationItem[]
+}
+
 export async function scanDesktopFileHealth(root: string, largeFileBytes?: number) {
   if (!isDesktop()) throw new Error('文件健康扫描需要桌面端文件权限。')
   return invoke<FileHealthReport>('scan_file_health', { root, largeFileBytes })
@@ -128,6 +158,11 @@ export async function compareDesktopDirectories(leftRoot: string, rightRoot: str
 export async function createDesktopFileManifest(root: string, includeHash = true) {
   if (!isDesktop()) throw new Error('文件清单需要桌面端文件权限。')
   return invoke<FileManifestReport>('create_file_manifest', { root, includeHash })
+}
+
+export async function verifyDesktopFileManifest(root: string, manifestPath: string) {
+  if (!isDesktop()) throw new Error('校验清单验证需要桌面端文件权限。')
+  return invoke<FileManifestVerificationReport>('verify_file_manifest', { root, manifestPath })
 }
 
 export async function recycleDesktopFileHealthPaths(root: string, paths: string[]) {

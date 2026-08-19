@@ -8,15 +8,16 @@ import FieldRow from '@/components/FieldRow.vue'
 import { isDesktop } from '@/lib/native'
 import { exportOutput } from '@/lib/output'
 import { buildDirectorySyncPreview, type DirectorySyncDirection, type DirectorySyncPlan, type DirectorySyncPlanAction } from '@/lib/directory-sync-plan'
-import { compareDesktopDirectories, createDesktopFileManifest, recycleDesktopFileHealthPaths, scanDesktopFileHealth, type DirectoryCompareReport, type DirectoryCompareStatus, type FileHealthDuplicateGroup, type FileHealthFinding, type FileHealthPath, type FileHealthReport, type FileHealthSimilarImageGroup } from '@/lib/file-health-native'
+import { compareDesktopDirectories, createDesktopFileManifest, recycleDesktopFileHealthPaths, scanDesktopFileHealth, verifyDesktopFileManifest, type DirectoryCompareReport, type DirectoryCompareStatus, type FileHealthDuplicateGroup, type FileHealthFinding, type FileHealthPath, type FileHealthReport, type FileHealthSimilarImageGroup, type FileManifestVerificationReport, type FileManifestVerificationStatus } from '@/lib/file-health-native'
 import { useUiStore } from '@/stores/ui'
 import { useWorkbenchStore } from '@/stores/workbench'
 
 type Filter = 'all' | 'duplicate' | 'similar-image' | 'large-file' | 'empty-file' | 'empty-directory' | 'extension-mismatch'
 type DisplayItem = FileHealthPath & { id: string; kind: Filter; detail: string; suggestedKeep?: boolean }
-type ViewMode = 'health' | 'compare' | 'sync'
+type ViewMode = 'health' | 'compare' | 'sync' | 'verify'
 type CompareFilter = 'all' | DirectoryCompareStatus
 type SyncFilter = 'all' | DirectorySyncPlanAction
+type VerificationFilter = 'all' | FileManifestVerificationStatus
 
 const desktop = isDesktop()
 const ui = useUiStore()
@@ -26,6 +27,8 @@ const root = ref('')
 const report = ref<FileHealthReport>()
 const compareRoot = ref('')
 const compareReport = ref<DirectoryCompareReport>()
+const manifestPath = ref('')
+const verificationReport = ref<FileManifestVerificationReport>()
 const busy = ref(false)
 const message = ref(desktop ? '选择一个文件夹，先扫描再决定如何处理。' : '文件夹扫描需要桌面端权限。')
 const threshold = ref(512 * 1024 * 1024)
@@ -33,6 +36,7 @@ const filter = ref<Filter>('all')
 const compareFilter = ref<CompareFilter>('all')
 const syncDirection = ref<DirectorySyncDirection>('left-to-right')
 const syncFilter = ref<SyncFilter>('all')
+const verificationFilter = ref<VerificationFilter>('all')
 const selectedPaths = ref<string[]>([])
 
 const filters: { id: Filter; label: string; count: (value: FileHealthReport) => number }[] = [
@@ -80,6 +84,24 @@ const syncItems = computed(() => {
     : syncPlan.value.items.filter(item => item.action === syncFilter.value)
 })
 const syncNeedsReviewCount = computed(() => (syncPlan.value?.conflictCount ?? 0) + (syncPlan.value?.reviewCount ?? 0))
+const verificationFilters: { id: VerificationFilter; label: string; count: (value: FileManifestVerificationReport) => number }[] = [
+  { id: 'all', label: '全部', count: value => value.items.length },
+  { id: 'match', label: '一致', count: value => value.matchCount },
+  { id: 'missing', label: '缺失', count: value => value.missingCount },
+  { id: 'size-mismatch', label: '大小变化', count: value => value.sizeMismatchCount },
+  { id: 'hash-mismatch', label: '哈希变化', count: value => value.hashMismatchCount },
+  { id: 'unverified', label: '未验证', count: value => value.unverifiedCount },
+  { id: 'unreadable', label: '无法读取', count: value => value.unreadableCount },
+  { id: 'extra', label: '额外文件', count: value => value.extraCount },
+]
+const verificationItems = computed(() => {
+  if (!verificationReport.value) return []
+  return verificationFilter.value === 'all'
+    ? verificationReport.value.items
+    : verificationReport.value.items.filter(item => item.status === verificationFilter.value)
+})
+const verificationIssueCount = computed(() => (verificationReport.value?.missingCount ?? 0) + (verificationReport.value?.sizeMismatchCount ?? 0) + (verificationReport.value?.hashMismatchCount ?? 0) + (verificationReport.value?.unverifiedCount ?? 0) + (verificationReport.value?.unreadableCount ?? 0) + (verificationReport.value?.extraCount ?? 0))
+const verificationWarnings = computed(() => verificationReport.value?.warnings ?? [])
 
 function formatBytes(value: number) {
   if (value < 1024) return `${value} B`
@@ -139,6 +161,7 @@ async function chooseRoot() {
   root.value = selected
   report.value = undefined
   compareReport.value = undefined
+  verificationReport.value = undefined
   selectedPaths.value = []
   message.value = `已选择“${basename(selected)}”，点击扫描后才会读取目录内容。`
 }
@@ -150,11 +173,30 @@ async function chooseCompareRoot(side: 'left' | 'right') {
   if (side === 'left') {
     root.value = selected
     compareReport.value = undefined
+    verificationReport.value = undefined
   } else {
     compareRoot.value = selected
     compareReport.value = undefined
   }
   message.value = `已选择“${basename(selected)}”，点击对比后才会读取目录内容。`
+}
+
+async function chooseVerificationRoot() {
+  if (!desktop || busy.value) return
+  const selected = await open({ title: '选择要验证的文件夹', directory: true, multiple: false })
+  if (typeof selected !== 'string') return
+  root.value = selected
+  verificationReport.value = undefined
+  message.value = `已选择“${basename(selected)}”，再选择 JSON 校验清单后才会读取文件。`
+}
+
+async function chooseManifest() {
+  if (!desktop || busy.value) return
+  const selected = await open({ title: '选择 Knitspace 校验清单', multiple: false, filters: [{ name: 'JSON 校验清单', extensions: ['json'] }] })
+  if (typeof selected !== 'string') return
+  manifestPath.value = selected
+  verificationReport.value = undefined
+  message.value = `已选择“${basename(selected)}”，点击验证后才会读取清单和目录。`
 }
 
 async function scan() {
@@ -206,6 +248,26 @@ async function createSyncPreview() {
     compareReport.value = undefined
     message.value = error instanceof Error ? error.message : '无法生成同步预览。'
     ui.toast('同步预览失败', message.value, 'error')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function verifyManifest() {
+  if (!desktop || !root.value || !manifestPath.value || busy.value) return
+  busy.value = true
+  message.value = '正在只读检查校验清单、文件大小与 SHA-256…'
+  try {
+    verificationReport.value = await verifyDesktopFileManifest(root.value, manifestPath.value)
+    message.value = verificationReport.value.truncated
+      ? '验证完成，但清单或扫描触及安全上限；未验证项目请人工复核。'
+      : verificationIssueCount.value
+        ? `验证完成：发现 ${verificationIssueCount.value} 个需要复核的项目。`
+        : `验证完成：${verificationReport.value.matchCount} 个带 SHA-256 的文件均一致。`
+  } catch (error) {
+    verificationReport.value = undefined
+    message.value = error instanceof Error ? error.message : '校验清单验证失败。'
+    ui.toast('校验清单验证失败', message.value, 'error')
   } finally {
     busy.value = false
   }
@@ -301,6 +363,17 @@ async function exportSyncPreview() {
   }
 }
 
+async function exportVerificationReport() {
+  if (!verificationReport.value || busy.value) return
+  const name = `knitspace-manifest-verification-${new Date().toISOString().slice(0, 10)}.json`
+  try {
+    const output = await exportOutput(store.settings.outputDirectory, name, JSON.stringify(verificationReport.value, null, 2), 'application/json;charset=utf-8')
+    ui.toast('验证报告已导出', output.path || output.name, 'success')
+  } catch (error) {
+    ui.toast('导出验证报告失败', error instanceof Error ? error.message : '无法写出 JSON 报告。', 'error')
+  }
+}
+
 function directoryLabel(path: string) {
   return path || '根目录'
 }
@@ -322,13 +395,33 @@ function syncActionIcon(action: DirectorySyncPlanAction) {
 function syncActionTone(action: DirectorySyncPlanAction) {
   return action === 'copy-missing' ? 'text-accent' : action === 'conflict' || action === 'review' ? 'text-warn' : 'text-success'
 }
+
+function verificationStatusLabel(status: FileManifestVerificationStatus) {
+  return ({
+    match: '一致',
+    missing: '缺失',
+    'size-mismatch': '大小变化',
+    'hash-mismatch': '哈希变化',
+    unverified: '未验证',
+    unreadable: '无法读取',
+    extra: '额外文件',
+  } as const)[status]
+}
+
+function verificationStatusIcon(status: FileManifestVerificationStatus) {
+  return status === 'match' ? 'check' : status === 'missing' || status === 'extra' ? 'file-text' : status === 'size-mismatch' || status === 'hash-mismatch' ? 'refresh' : 'warning'
+}
+
+function verificationStatusTone(status: FileManifestVerificationStatus) {
+  return status === 'match' ? 'text-success' : status === 'unverified' || status === 'unreadable' ? 'text-warn' : 'text-accent'
+}
 </script>
 
 <template>
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
+  <div class="page-enter page-shell px-8 py-6">
     <PageHeader
-      :title="viewMode === 'health' ? '文件健康扫描' : viewMode === 'compare' ? '目录对比' : '同步预览'"
-      :subtitle="viewMode === 'health' ? '参考 Czkawka 的高频检查：先扫描、分组和预览，再把选中的文件移入回收站；安装 Czkawka CLI 后还会显示相似图片。' : viewMode === 'compare' ? '只读比较两个文件夹的文件内容，不同步、不覆盖，也不会修改原文件。' : '根据目录对比生成单向补齐计划：只列出目标缺少的文件，不复制、不覆盖、不删除。'"
+      :title="viewMode === 'health' ? '文件健康扫描' : viewMode === 'compare' ? '目录对比' : viewMode === 'sync' ? '同步预览' : '清单验证'"
+      :subtitle="viewMode === 'health' ? '参考 Czkawka 的高频检查：先扫描、分组和预览，再把选中的文件移入回收站；安装 Czkawka CLI 后还会显示相似图片。' : viewMode === 'compare' ? '只读比较两个文件夹的文件内容，不同步、不覆盖，也不会修改原文件。' : viewMode === 'sync' ? '根据目录对比生成单向补齐计划：只列出目标缺少的文件，不复制、不覆盖、不删除。' : '读取 Knitspace 导出的 JSON 校验清单，检查文件缺失、大小、SHA-256 与额外文件；不会修改任何原文件。'"
       :stats="viewMode === 'health' ? [
         { label: '扫描文件', value: report?.scannedFiles ?? 0 },
         { label: '问题项目', value: totalProblemCount, tone: totalProblemCount ? 'warn' : 'accent' },
@@ -337,10 +430,14 @@ function syncActionTone(action: DirectorySyncPlanAction) {
         { label: '对比文件', value: compareReport ? compareReport.items.length : 0 },
         { label: '差异项目', value: compareDifferenceCount, tone: compareDifferenceCount ? 'warn' : 'accent' },
         { label: '相同文件', value: compareReport?.sameCount ?? 0 },
-      ] : [
+      ] : viewMode === 'sync' ? [
         { label: '候选补齐', value: syncPlan?.copyCount ?? 0, tone: syncPlan?.copyCount ? 'accent' : undefined },
         { label: '预计新增', value: formatBytes(syncPlan?.copyBytes ?? 0) },
         { label: '需复核', value: syncNeedsReviewCount, tone: syncNeedsReviewCount ? 'warn' : 'accent' },
+      ] : [
+        { label: '已校验', value: verificationReport?.matchCount ?? 0, tone: verificationReport?.matchCount ? 'accent' : undefined },
+        { label: '需复核', value: verificationIssueCount, tone: verificationIssueCount ? 'warn' : 'accent' },
+        { label: '哈希内容', value: formatBytes(verificationReport?.hashedBytes ?? 0) },
       ]"
     >
       <template #actions>
@@ -354,10 +451,17 @@ function syncActionTone(action: DirectorySyncPlanAction) {
             <button class="h-7 px-2.5 rounded-sm text-[11px]" :class="viewMode === 'health' ? 'bg-surface text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2'" role="tab" :aria-selected="viewMode === 'health'" @click="viewMode = 'health'">健康扫描</button>
             <button class="h-7 px-2.5 rounded-sm text-[11px]" :class="viewMode === 'compare' ? 'bg-surface text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2'" role="tab" :aria-selected="viewMode === 'compare'" @click="viewMode = 'compare'">目录对比</button>
             <button class="h-7 px-2.5 rounded-sm text-[11px]" :class="viewMode === 'sync' ? 'bg-surface text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2'" role="tab" :aria-selected="viewMode === 'sync'" @click="viewMode = 'sync'">同步预览</button>
+            <button class="h-7 px-2.5 rounded-sm text-[11px]" :class="viewMode === 'verify' ? 'bg-surface text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2'" role="tab" :aria-selected="viewMode === 'verify'" @click="viewMode = 'verify'">清单验证</button>
           </div>
           <template v-if="viewMode === 'health'">
             <button class="btn-default btn-sm" :disabled="busy || !desktop" @click="chooseRoot"><AppIcon name="folder" :size="14" />选择文件夹</button>
             <span class="text-[11px] text-fg-3 truncate max-w-96" :title="root">{{ root ? `当前：${root}` : '尚未选择目录' }}</span>
+          </template>
+          <template v-else-if="viewMode === 'verify'">
+            <button class="btn-default btn-sm" :disabled="busy || !desktop" @click="chooseVerificationRoot"><AppIcon name="folder" :size="14" />验证文件夹</button>
+            <span class="text-[11px] text-fg-3 truncate max-w-48" :title="root">{{ root ? basename(root) : '未选择目录' }}</span>
+            <button class="btn-default btn-sm" :disabled="busy || !desktop" @click="chooseManifest"><AppIcon name="hash" :size="14" />JSON 清单</button>
+            <span class="text-[11px] text-fg-3 truncate max-w-48" :title="manifestPath">{{ manifestPath ? basename(manifestPath) : '未选择清单' }}</span>
           </template>
           <template v-else>
             <button class="btn-default btn-sm" :disabled="busy || !desktop" @click="chooseCompareRoot('left')"><AppIcon name="folder" :size="14" />左侧文件夹</button>
@@ -455,7 +559,7 @@ function syncActionTone(action: DirectorySyncPlanAction) {
         </template>
       </template>
 
-      <template v-else>
+      <template v-else-if="viewMode === 'sync'">
         <section v-if="!syncPlan" class="panel min-h-96 p-8 stack items-center justify-center gap-4 text-center">
           <span class="center w-14 h-14 rounded-xl bg-accent-soft text-accent"><AppIcon name="arrow-right" :size="28" /></span>
           <div class="stack gap-1.5 max-w-xl">
@@ -507,6 +611,50 @@ function syncActionTone(action: DirectorySyncPlanAction) {
         </template>
       </template>
 
+      <template v-else>
+        <section v-if="!verificationReport" class="panel min-h-96 p-8 stack items-center justify-center gap-4 text-center">
+          <span class="center w-14 h-14 rounded-xl bg-accent-soft text-accent"><AppIcon name="hash" :size="28" /></span>
+          <div class="stack gap-1.5 max-w-xl">
+            <h2 class="text-[16px] font-semibold text-fg">对照校验清单确认文件完整性</h2>
+            <p class="text-[12px] text-fg-3 leading-relaxed">选择文件夹和 Knitspace 导出的 JSON 校验清单后，会只读检查缺失、额外文件、大小与 SHA-256。清单中的不安全路径、符号链接和解析到目录外的路径都会拒绝处理。</p>
+          </div>
+          <button class="btn-primary" :disabled="!desktop || !root || !manifestPath || busy" @click="verifyManifest"><AppIcon name="hash" :size="15" />{{ busy ? '正在验证…' : '开始验证' }}</button>
+          <p class="text-[11px] text-fg-3" aria-live="polite">{{ message }}</p>
+        </section>
+
+        <template v-else>
+          <section class="panel p-3 stack gap-3">
+            <div class="row-between gap-3">
+              <div class="stack gap-0.5 min-w-0"><p class="eyebrow">验证结果</p><p class="text-[12px] text-fg-2 truncate" :title="`${verificationReport.root} ← ${verificationReport.manifestPath}`">{{ basename(verificationReport.root) }} ← {{ basename(verificationReport.manifestPath) }}</p></div>
+              <div class="row gap-1.5 shrink-0"><button class="btn-default btn-sm" :disabled="busy" @click="exportVerificationReport"><AppIcon name="download" :size="14" />导出报告</button><button class="btn-default btn-sm" :disabled="busy" @click="verifyManifest"><AppIcon name="refresh" :size="14" />重新验证</button></div>
+            </div>
+            <p class="text-[11px] text-fg-3 leading-relaxed">只读验证：不会修复、复制、删除或覆盖文件。只有“大小和 SHA-256 都一致”才会标为一致；仅匹配大小的条目会保留为未验证。</p>
+          </section>
+
+          <section class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="panel p-3 stack gap-1"><p class="eyebrow">已一致</p><strong class="text-[18px] font-semibold text-success tabular-nums">{{ verificationReport.matchCount }}</strong><span class="text-[11px] text-fg-3">大小和 SHA-256 均匹配</span></div>
+            <div class="panel p-3 stack gap-1"><p class="eyebrow">内容或大小变化</p><strong class="text-[18px] font-semibold text-accent tabular-nums">{{ verificationReport.sizeMismatchCount + verificationReport.hashMismatchCount }}</strong><span class="text-[11px] text-fg-3">文件存在但与清单不同</span></div>
+            <div class="panel p-3 stack gap-1"><p class="eyebrow">需复核</p><strong class="text-[18px] font-semibold text-warn tabular-nums">{{ verificationIssueCount - verificationReport.sizeMismatchCount - verificationReport.hashMismatchCount }}</strong><span class="text-[11px] text-fg-3">缺失、额外、未验证或无法读取</span></div>
+          </section>
+
+          <section v-if="verificationItems.length" class="panel overflow-hidden">
+            <header class="row-between gap-3 px-3 h-11 border-b border-line"><div class="row gap-2"><AppIcon name="hash" :size="15" class="text-accent" /><strong class="text-[13px] font-medium text-fg">{{ verificationFilters.find(item => item.id === verificationFilter)?.label }}</strong><span class="text-[11px] text-fg-3">{{ verificationItems.length }} 项</span></div><span class="text-[11px] text-fg-3">只读</span></header>
+            <div class="row gap-1.5 flex-wrap px-3 py-2 border-b border-line" role="tablist" aria-label="清单验证结果类型">
+              <button v-for="item in verificationFilters" :key="item.id" class="h-7 px-2.5 rounded-full text-[11px] transition-colors" :class="verificationFilter === item.id ? 'bg-accent-solid text-accent-fg font-medium' : 'text-fg-2 hover:bg-surface-2'" :aria-selected="verificationFilter === item.id" role="tab" @click="verificationFilter = item.id">{{ item.label }} <span class="tabular-nums opacity-70">{{ item.count(verificationReport) }}</span></button>
+            </div>
+            <ul class="stack gap-0.5 p-1.5 max-h-128 overflow-y-auto">
+              <li v-for="item in verificationItems" :key="`${item.status}:${item.relativePath}`" class="row gap-2 px-2.5 py-2 rounded-sm hover:bg-surface-2">
+                <AppIcon :name="verificationStatusIcon(item.status)" :size="15" :class="verificationStatusTone(item.status)" class="shrink-0" />
+                <span class="stack gap-0.5 min-w-0 flex-1"><strong class="text-[12px] font-medium text-fg truncate" :title="item.relativePath">{{ item.relativePath || item.name }}</strong><small class="text-[11px] text-fg-3 truncate">{{ verificationStatusLabel(item.status) }} · {{ item.detail }}</small></span>
+                <span class="text-[11px] text-fg-3 tabular-nums shrink-0">{{ item.expectedSize === undefined ? `当前 ${formatBytes(item.actualSize ?? 0)}` : item.actualSize === undefined ? `清单 ${formatBytes(item.expectedSize)}` : item.expectedSize === item.actualSize ? formatBytes(item.actualSize) : `${formatBytes(item.expectedSize)} → ${formatBytes(item.actualSize)}` }}</span>
+              </li>
+            </ul>
+          </section>
+          <section v-else class="panel p-8 stack items-center gap-2 text-center"><AppIcon name="check" :size="22" class="text-success" /><p class="text-[13px] font-medium text-fg">当前筛选没有项目</p><p class="text-[11px] text-fg-3">切换验证结果类型，或重新验证文件夹。</p></section>
+
+        </template>
+      </template>
+
       <template #aside>
         <template v-if="viewMode === 'health'">
         <section class="panel p-4 stack gap-4">
@@ -546,7 +694,7 @@ function syncActionTone(action: DirectorySyncPlanAction) {
           </section>
           <section v-if="compareWarnings.length" class="panel p-4 stack gap-2"><p class="eyebrow text-warn">对比提示</p><p v-for="warning in compareWarnings.slice(0, 5)" :key="warning" class="text-[11px] text-fg-3 leading-relaxed">{{ warning }}</p><p v-if="compareWarnings.length > 5" class="text-[11px] text-fg-3">另有 {{ compareWarnings.length - 5 }} 条提示已收起。</p></section>
         </template>
-        <template v-else>
+        <template v-else-if="viewMode === 'sync'">
           <section class="panel p-4 stack gap-4">
             <p class="eyebrow">预览策略</p>
             <p class="text-[11px] text-fg-3 leading-relaxed">把一侧视为来源、另一侧视为目标。仅提示“目标缺少”的文件；不删除目标独有文件，不覆盖内容不同文件，也不在本页执行复制。</p>
@@ -561,6 +709,22 @@ function syncActionTone(action: DirectorySyncPlanAction) {
             <p v-if="syncPlan.partial" class="text-[11px] text-warn leading-relaxed">原始对比触及安全上限，不能将此预览当作完整同步清单。</p>
           </section>
           <section v-if="compareWarnings.length" class="panel p-4 stack gap-2"><p class="eyebrow text-warn">对比提示</p><p v-for="warning in compareWarnings.slice(0, 5)" :key="warning" class="text-[11px] text-fg-3 leading-relaxed">{{ warning }}</p><p v-if="compareWarnings.length > 5" class="text-[11px] text-fg-3">另有 {{ compareWarnings.length - 5 }} 条提示已收起。</p></section>
+        </template>
+        <template v-else>
+          <section class="panel p-4 stack gap-4">
+            <p class="eyebrow">验证设置</p>
+            <p class="text-[11px] text-fg-3 leading-relaxed">选择文件夹和 Knitspace 导出的 JSON 清单。验证只读取当前目录和清单；不会更改任何文件，也不会跟随符号链接或目录外路径。</p>
+            <button class="btn-primary btn-lg w-full" :disabled="!desktop || !root || !manifestPath || busy" @click="verifyManifest"><AppIcon name="hash" :size="15" />{{ busy ? '正在验证…' : verificationReport ? '重新验证' : '开始验证' }}</button>
+            <p class="text-[11px] text-fg-3 leading-relaxed" aria-live="polite">{{ message }}</p>
+          </section>
+          <section v-if="verificationReport" class="panel p-4 stack gap-2">
+            <p class="eyebrow">验证摘要</p>
+            <div class="row-between text-[11px] text-fg-3"><span>带哈希一致</span><span class="tabular-nums">{{ verificationReport.matchCount }}</span></div>
+            <div class="row-between text-[11px] text-fg-3"><span>缺失 / 额外</span><span class="tabular-nums">{{ verificationReport.missingCount }} / {{ verificationReport.extraCount }}</span></div>
+            <div class="row-between text-[11px] text-fg-3"><span>哈希内容</span><span class="tabular-nums">{{ formatBytes(verificationReport.hashedBytes) }}</span></div>
+            <p v-if="verificationReport.truncated" class="text-[11px] text-warn leading-relaxed">清单或扫描触及安全上限，未验证项目需人工复核。</p>
+          </section>
+          <section v-if="verificationWarnings.length" class="panel p-4 stack gap-2"><p class="eyebrow text-warn">验证提示</p><p v-for="warning in verificationWarnings.slice(0, 5)" :key="warning" class="text-[11px] text-fg-3 leading-relaxed">{{ warning }}</p><p v-if="verificationWarnings.length > 5" class="text-[11px] text-fg-3">另有 {{ verificationWarnings.length - 5 }} 条提示已收起。</p></section>
         </template>
       </template>
     </ToolLayout>
