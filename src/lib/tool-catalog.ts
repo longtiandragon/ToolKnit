@@ -67,6 +67,7 @@ function automationTool(id: string, title: string, description: string, icon: st
 
 export const toolCatalog: ToolCatalogItem[] = [
   { id: 'universal-intake', title: '万能处理入口', description: '拖入或粘贴内容，自动推荐下一步', group: '整理', icon: 'inbox', to: { path: '/quick' }, keywords: ['快速处理', '万能', '粘贴', '拖入', '智能推荐'], popular: true },
+  automationTool('automation-center', '自动化中心', '管理配方、规则与预览', 'task', ['配方', '规则'], 'automation'),
   { ...automationTool('smart-organizer', 'AI 智能文件收件箱', '可预览、可回滚的文件整理', 'sparkle', ['文件整理', '规则']), popular: true },
   { id: 'tool-pipeline', title: '文本流水线', description: '把多个文本工具串成一次可复用处理', group: '整理', icon: 'task', to: { path: '/tools', query: { mode: 'pipeline' } }, keywords: ['流水线', '配方', '批处理', '自动化', 'recipe', 'pipeline'], popular: true },
   { ...automationTool('file-pipeline', '文件流水线', '多文件自动化链', 'task', ['批处理']), popular: true },

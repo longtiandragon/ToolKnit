@@ -6,6 +6,7 @@ import { useUiStore } from '@/stores/ui'
 import type { FileReference, ToolRecipe } from '@/types'
 import type { PdfTaskOperation } from '@/lib/pdf-worker'
 import { buildRenamePreview, cleanOutputName, transformText, type TextTransformMode } from '@/lib/file-tools'
+import { saveToolRecipe, touchToolRecipe } from '@/lib/automation-recipes'
 import { chooseOutputDirectory, exportOutput } from '@/lib/output'
 import { isDesktop } from '@/lib/native'
 import { decryptDesktopPdf, optimizeDesktopPdf, protectDesktopPdf } from '@/lib/pdf-native'
@@ -24,6 +25,7 @@ import PhotoOrganizerView from '@/views/PhotoOrganizerView.vue'
 import SmartOrganizerView from '@/views/SmartOrganizerView.vue'
 import FilePipelineView from '@/views/FilePipelineView.vue'
 import ProjectUtilityView from '@/views/ProjectUtilityView.vue'
+import AutomationCenterView from '@/views/AutomationCenterView.vue'
 
 type ToolGroup = 'pdf' | 'image' | 'text' | 'organize'
 type ToolOption = [id: string, label: string]
@@ -33,6 +35,7 @@ const ui = useUiStore()
 const route = useRoute()
 const router = useRouter()
 const pipelineMode = computed(() => route.query.mode === 'pipeline')
+const automationMode = computed(() => route.query.mode === 'automation')
 const archiveMode = computed(() => route.query.mode === 'archive')
 const fileHealthMode = computed(() => route.query.mode === 'file-health')
 const photoOrganizerMode = computed(() => route.query.mode === 'photo-organizer')
@@ -343,14 +346,19 @@ function applyRecipe(recipe: ToolRecipe) {
   message.value = `已载入配方“${recipe.title}”。请选择本次输入文件。`
 }
 
-function saveCurrentRecipe() {
+async function saveCurrentRecipe() {
   const groupLabel = groups.find((item) => item[0] === group.value)?.[1] ?? '工具'
   const operationLabel = operations.value.find((item) => item[0] === operation.value)?.[1] ?? '操作'
   const title = recipeTitle.value.trim() || `${groupLabel} · ${operationLabel}`
-  const recipe = store.saveRecipe({ title, group: group.value, operation: operation.value, parameters: recipeParameters() })
-  recipeTitle.value = recipe.title
-  activeRecipeId.value = recipe.id
-  message.value = `已保存配方“${recipe.title}”。配方不会保存文件路径或内容。`
+  try {
+    const recipe = await saveToolRecipe(store, { title, group: group.value, operation: operation.value, parameters: recipeParameters() })
+    recipeTitle.value = recipe.title
+    activeRecipeId.value = recipe.id
+    message.value = `已保存配方“${recipe.title}”。配方不会保存文件路径或内容。`
+    ui.toast('工具配方已保存', recipe.title, 'success')
+  } catch (error) {
+    ui.toast('配方未保存', error instanceof Error ? error.message : '无法写入自动化配方库。', 'error')
+  }
 }
 
 /** The first run asks where outputs go; after that the directory lived only
@@ -364,7 +372,7 @@ async function pickOutputDirectory() {
 }
 
 watch(() => route.query, (query) => {
-  if (query.mode === 'pipeline' || query.mode === 'archive') return
+  if (typeof query.mode === 'string' && ['pipeline', 'automation', 'archive', 'file-health', 'photo-organizer', 'smart-organizer', 'file-pipeline', 'delivery-pack', 'folder-snapshot'].includes(query.mode)) return
   if (query.group === 'image') {
     router.replace({ path: '/visual', query: { tool: typeof query.operation === 'string' ? query.operation : 'convert' } })
     return
@@ -921,7 +929,7 @@ async function run() {
     const outputNames = outputs.map((item) => item.name)
     recentOutputs.value = outputs
     store.updateJob(job.id, { status: 'succeeded', progress: 100, outputNames, outputs, detail: '已生成新输出，原文件未修改。' })
-    if (activeRecipeId.value) store.touchRecipe(activeRecipeId.value)
+    if (activeRecipeId.value) void touchToolRecipe(store, activeRecipeId.value)
     message.value = `任务完成：已生成 ${outputNames.length} 个输出文件。`
     ui.toast('任务已完成', `${label} · ${outputNames.length} 个输出`, 'success', '查看历史', () => location.hash = '#/history')
   } catch (error) {
@@ -968,7 +976,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <ToolPipelineView v-if="pipelineMode" />
+  <AutomationCenterView v-if="automationMode" />
+  <ToolPipelineView v-else-if="pipelineMode" />
   <ArchiveView v-else-if="archiveMode" />
   <FileHealthView v-else-if="fileHealthMode" />
   <PhotoOrganizerView v-else-if="photoOrganizerMode" />

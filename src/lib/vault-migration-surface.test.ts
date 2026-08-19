@@ -17,10 +17,12 @@ describe('resumable browser to SQLite migration contract', () => {
     const favorites = rustFunction('hydrate_content_favorites', 'set_content_favorite')
     const recents = rustFunction('hydrate_content_recents', 'hydrate_documents')
     const documents = rustFunction('hydrate_documents', 'write_api_key')
+    const automation = rustFunction('hydrate_automation_recipes', 'list_organizer_rules')
 
-    for (const migration of [clipboard, favorites, recents, documents]) {
+    for (const migration of [clipboard, favorites, recents, documents, automation]) {
       expect(migration).not.toMatch(/count\s*==\s*0/)
     }
+    expect(automation).toContain('browser-automation-recipes-migration-v1')
     expect(documents).toContain('existing_entity_ids.insert(document.id.clone())')
     expect(documents).toContain('migrate_missing_vocabulary')
     expect(documents).toContain('self.save_relation(relation)?')

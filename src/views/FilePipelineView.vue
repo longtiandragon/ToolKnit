@@ -8,6 +8,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import ProgressTrack from '@/components/ProgressTrack.vue'
 import ToolLayout from '@/components/ToolLayout.vue'
 import { consumeArtifactHandoff, createDirectoryArtifactHandoff } from '@/lib/artifact-handoff'
+import { removeAutomationRecipe, savePipelineRecipe, touchPipelineRecipe } from '@/lib/automation-recipes'
 import { ArtifactRuntimeRegistry, createFilePipelineAdapters } from '@/lib/file-pipeline-adapters'
 import {
   artifactRecipeMatches,
@@ -198,25 +199,40 @@ function loadRecipe(recipe: ToolPipelineRecipe) {
   message.value = `已载入文件配方“${recipe.title}”；请选择输入后运行。`
 }
 
-function saveCurrentRecipe() {
+watch(() => route.query.recipe, value => {
+  if (typeof value !== 'string' || value === activeRecipeId.value) return
+  const recipe = artifactRecipes.value.find(item => item.id === value)
+  if (recipe) loadRecipe(recipe)
+  else ui.toast('文件配方不存在', '它可能已被删除，或尚未完成本地资料库迁移。', 'warning')
+}, { immediate: true })
+
+async function saveCurrentRecipe() {
   const fallback = steps.value.map(step => definition(step)?.title ?? step.toolId).join(' → ')
-  const recipe = store.savePipelineRecipe({
-    id: activeRecipeId.value,
-    title: recipeTitle.value.trim() || fallback || '文件流水线',
-    version: 1,
-    scope: 'artifact',
-    steps: artifactStepsForRecipe(steps.value),
-  })
-  recipeTitle.value = recipe.title
-  activeRecipeId.value = recipe.id
-  message.value = `已保存配方“${recipe.title}”；仅包含步骤、参数与失败策略。`
-  ui.toast('文件流水线配方已保存', recipe.title, 'success')
+  try {
+    const recipe = await savePipelineRecipe(store, {
+      id: activeRecipeId.value,
+      title: recipeTitle.value.trim() || fallback || '文件流水线',
+      version: 1,
+      scope: 'artifact',
+      steps: artifactStepsForRecipe(steps.value),
+    })
+    recipeTitle.value = recipe.title
+    activeRecipeId.value = recipe.id
+    message.value = `已保存配方“${recipe.title}”；仅包含步骤、参数与失败策略。`
+    ui.toast('文件流水线配方已保存', recipe.title, 'success')
+  } catch (error) {
+    ui.toast('配方未保存', error instanceof Error ? error.message : '无法写入自动化配方库。', 'error')
+  }
 }
 
-function removeRecipe(recipe: ToolPipelineRecipe) {
-  store.removePipelineRecipe(recipe.id)
-  if (activeRecipeId.value === recipe.id) activeRecipeId.value = undefined
-  ui.toast('已删除文件配方', recipe.title, 'success')
+async function removeRecipe(recipe: ToolPipelineRecipe) {
+  try {
+    await removeAutomationRecipe(store, recipe.id)
+    if (activeRecipeId.value === recipe.id) activeRecipeId.value = undefined
+    ui.toast('已删除文件配方', recipe.title, 'success')
+  } catch (error) {
+    ui.toast('配方未删除', error instanceof Error ? error.message : '无法更新自动化配方库。', 'error')
+  }
 }
 
 function continueToDeliveryPack() {
@@ -315,7 +331,7 @@ async function run() {
       parameters: jobParameters(result.logs),
       detail: `完成 ${result.logs.length} 步，生成 ${saved.length} 个新输出；原件未修改。`,
     })
-    if (activeRecipeId.value) store.touchPipelineRecipe(activeRecipeId.value)
+    if (activeRecipeId.value) void touchPipelineRecipe(store, activeRecipeId.value)
     message.value = `流水线完成：${result.logs.length} 步，生成 ${saved.length} 个新输出。`
     ui.toast('文件流水线完成', `${saved.length} 个新输出，原件未修改。`, 'success')
   } catch (error) {

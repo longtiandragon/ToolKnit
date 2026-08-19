@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import ToolLayout from '@/components/ToolLayout.vue'
@@ -57,6 +57,7 @@ import type {
 } from '@/types'
 
 const desktop = isDesktop()
+const route = useRoute()
 const router = useRouter()
 const ui = useUiStore()
 const store = useWorkbenchStore()
@@ -571,7 +572,19 @@ async function refreshSideData() {
   if (results[4].status === 'fulfilled') review.value = results[4].value
 }
 
-onMounted(() => { void refreshSideData() })
+async function hydrateRulePreviewFromRoute() {
+  await refreshSideData()
+  const ruleId = typeof route.query.rule === 'string' ? route.query.rule : undefined
+  if (!ruleId) return
+  const rule = rules.value.find(item => item.id === ruleId)
+  const query = { ...route.query }
+  delete query.rule
+  await router.replace({ path: route.path, query, hash: route.hash })
+  if (rule) await useRule(rule)
+  else ui.toast('规则不存在', '它可能已在其他页面或设备上删除。', 'warning')
+}
+
+onMounted(() => { void hydrateRulePreviewFromRoute() })
 </script>
 
 <template>

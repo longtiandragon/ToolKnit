@@ -467,6 +467,31 @@ export interface ToolPipelineRecipe {
   lastRunAt?: string
 }
 
+/** Portable automation knowledge stored in the Vault. Local inputs, outputs,
+ * directory bindings and file bodies are intentionally not representable. */
+export type AutomationRecipeKind = 'tool' | 'text-pipeline' | 'artifact-pipeline'
+
+export type AutomationRecipeDefinition =
+  | Pick<ToolRecipe, 'group' | 'operation' | 'parameters'>
+  | { version: 1; scope: 'text' | 'artifact'; steps: ToolPipelineStep[] }
+
+export interface AutomationRecipeRecord {
+  id: string
+  title: string
+  kind: AutomationRecipeKind
+  definition: AutomationRecipeDefinition
+  createdAt: string
+  updatedAt: string
+  lastRunAt?: string
+}
+
+export interface AutomationRecipeHydration {
+  recipes: AutomationRecipeRecord[]
+  migrated: boolean
+  importedCount: number
+  skippedCount: number
+}
+
 export interface AiProfile {
   id: string
   label: string

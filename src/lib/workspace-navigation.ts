@@ -157,6 +157,7 @@ export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] 
     navItem('/', 'toolbox', '工具', [
       { label: '全部工具', to: '/', icon: 'toolbox' },
       { label: '文件处理中心', to: '/tools', icon: 'toolbox' },
+      { label: '自动化中心', to: '/tools?mode=automation', icon: 'task' },
       { label: 'AI 智能文件收件箱', to: '/tools?mode=smart-organizer', icon: 'sparkle' },
       { label: '音视频转换', to: '/media', icon: 'play' },
       { label: '字幕校对台', to: '/subtitles', icon: 'file-text' },
@@ -320,7 +321,7 @@ const workspaceContextTargets: Record<string, readonly string[]> = {
   '/knowledge': ['/documents?kind=note', '/documents?kind=question', '/words', '/relations', '/library'],
   '/create': ['/documents?kind=note&create=note', '/documents?kind=note&template=mindmap&mode=mindmap', '/documents?kind=note&template=diagram&mode=split', '/visual', '/evidence-ai'],
   '/review': ['/review', '/words', '/documents?kind=question', '/documents?kind=question&create=question', '/documents?kind=question&import=1'],
-  '/': ['/tools?mode=smart-organizer', '/tools', '/media', '/ocr', '/developer-tools'],
+  '/': ['/tools?mode=automation', '/tools?mode=smart-organizer', '/tools', '/media', '/ocr'],
 }
 
 /** High-frequency actions shown when the user right-clicks otherwise empty

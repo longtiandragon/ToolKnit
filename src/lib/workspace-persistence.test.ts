@@ -38,6 +38,17 @@ describe('workspace persistence boundaries', () => {
     expect(createPrimaryWorkspaceSnapshot(withJob, true, true).jobs).toEqual([])
   })
 
+  it('clears portable recipes only after the desktop automation ledger is active', () => {
+    const withRecipes = {
+      ...snapshot,
+      recipes: [{ id: 'recipe-1', title: '压缩图片', group: 'image' as const, operation: 'compress', parameters: { quality: 82 }, createdAt: '2026-08-19T00:00:00Z' }],
+      pipelineRecipes: [{ id: 'pipeline-1', title: '清理文本', version: 1 as const, scope: 'text' as const, steps: [{ id: 'step-1', toolId: 'trim-lines' }], createdAt: '2026-08-19T00:00:00Z', updatedAt: '2026-08-19T00:00:00Z' }],
+    }
+    expect(createPrimaryWorkspaceSnapshot(withRecipes, true, true, false).recipes).toHaveLength(1)
+    expect(createPrimaryWorkspaceSnapshot(withRecipes, true, true, false).pipelineRecipes).toHaveLength(1)
+    expect(createPrimaryWorkspaceSnapshot(withRecipes, true, true, true)).toMatchObject({ recipes: [], pipelineRecipes: [] })
+  })
+
   it('keeps absolute paths out of the browser job fallback', () => {
     const withJob = {
       ...snapshot,

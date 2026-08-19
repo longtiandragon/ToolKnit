@@ -10,7 +10,12 @@ export type PrimaryWorkspaceSnapshot = Omit<WorkspaceSnapshot, 'codeDraft'>
 /** The desktop Vault owns heavy collections. The code-image draft has its own
  * key in both browser and desktop modes so unrelated state changes never
  * stringify a potentially multi-megabyte source string. */
-export function createPrimaryWorkspaceSnapshot(snapshot: WorkspaceSnapshot, desktopVaultActive: boolean, desktopJobsActive = desktopVaultActive): PrimaryWorkspaceSnapshot {
+export function createPrimaryWorkspaceSnapshot(
+  snapshot: WorkspaceSnapshot,
+  desktopVaultActive: boolean,
+  desktopJobsActive = desktopVaultActive,
+  desktopAutomationActive = desktopVaultActive,
+): PrimaryWorkspaceSnapshot {
   const { codeDraft: _standaloneCodeDraft, ...primary } = snapshot
   return {
     ...primary,
@@ -20,6 +25,8 @@ export function createPrimaryWorkspaceSnapshot(snapshot: WorkspaceSnapshot, desk
     relations: desktopVaultActive ? [] : snapshot.relations,
     activities: desktopVaultActive ? [] : snapshot.activities,
     jobs: desktopJobsActive ? [] : snapshot.jobs.slice(0, MAX_JOB_HISTORY).map(portableProcessingJob),
+    recipes: desktopAutomationActive ? [] : snapshot.recipes,
+    pipelineRecipes: desktopAutomationActive ? [] : snapshot.pipelineRecipes,
   }
 }
 

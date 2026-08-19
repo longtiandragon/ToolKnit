@@ -1,4 +1,5 @@
 import { containsAbsoluteDesktopPath, portableProcessingJob } from '@/lib/job-privacy'
+import { replaceAutomationRecipes } from '@/lib/automation-recipes'
 import {
   normalizeSettings,
   normalizeWorkspace,
@@ -69,4 +70,12 @@ export function parseWorkspaceBackup(serialized: string) {
   const snapshot = normalizeWorkspace(parsed)
   if (!snapshot) throw new Error('备份结构不完整或包含无效数据，未修改当前资料库。')
   return { ...snapshot, jobs: snapshot.jobs.map(portableBackupJob), activities: portableActivities(snapshot.activities), settings: portableBackupSettings(snapshot.settings) }
+}
+
+export async function prepareWorkspaceRestore(serialized: string, desktopVaultActive: boolean) {
+  const backup = parseWorkspaceBackup(serialized)
+  const automation = desktopVaultActive
+    ? await replaceAutomationRecipes(backup.recipes, backup.pipelineRecipes ?? [])
+    : { recipes: backup.recipes, pipelineRecipes: backup.pipelineRecipes ?? [] }
+  return { backup, automation }
 }
