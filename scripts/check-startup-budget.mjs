@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 export const STARTUP_BUDGETS = {
-  script: { raw: 230 * 1024, gzip: 75 * 1024 },
+  // The renderer crash hook intentionally adds a small always-on listener while
+  // its Tauri sink remains lazy. Keep the gzip ceiling unchanged, but give the
+  // uncompressed entry enough room for that diagnostic and a narrow buffer.
+  script: { raw: 232 * 1024, gzip: 75 * 1024 },
   style: { raw: 460 * 1024, gzip: 90 * 1024 },
   totalGzip: 165 * 1024,
 }
