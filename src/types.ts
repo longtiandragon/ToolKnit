@@ -180,6 +180,118 @@ export interface FileReference {
   mime?: string
 }
 
+export type ArtifactKind = 'text' | 'files' | 'directory' | 'image' | 'pdf' | 'media' | 'archive'
+export type ArtifactLocatorKind = 'runtime' | 'desktop-path' | 'vault-asset'
+
+/** Lightweight hand-off between tools. File bytes and browser `File` objects
+ * stay in a bounded runtime registry; Pinia and SQLite receive only display
+ * metadata derived from this reference. */
+export interface ArtifactRef {
+  id: string
+  kind: ArtifactKind
+  name: string
+  mime?: string
+  size?: number
+  locator?: { kind: ArtifactLocatorKind; value: string }
+  metadata?: Record<string, string | number | boolean>
+}
+
+export interface ArtifactPipelineStepLog {
+  stepId: string
+  toolId: string
+  inputCount: number
+  outputCount: number
+  failedCount: number
+  startedAt: string
+  completedAt: string
+  status: 'succeeded' | 'partial' | 'failed' | 'cancelled'
+}
+
+export type OrganizerCandidateKind = 'text' | 'pdf' | 'image' | 'archive' | 'media' | 'binary'
+export type OrganizerConflictPolicy = 'block' | 'keep-both'
+export type OrganizerTrustLevel = 'preview' | 'confirmed' | 'trusted'
+
+export interface OrganizerScanRequest {
+  sourceRoot: string
+  archiveRoot: string
+}
+
+/** A renderer-safe scan row. It contains a relative display path and a
+ * short-lived file token, never the source or archive absolute root. */
+export interface OrganizerCandidate {
+  fileId: string
+  name: string
+  relativePath: string
+  extension: string
+  mime: string
+  kind: OrganizerCandidateKind
+  size: number
+  modifiedMs: number
+  signature: string
+  duplicateHash?: string
+  duplicateCount: number
+  excerptMode: 'text' | 'pdf' | 'ocr' | 'archive' | 'metadata'
+}
+
+export interface OrganizerSuggestion {
+  fileId: string
+  category: string
+  targetRelativeDir: string
+  targetBaseName: string
+  confidence: number
+  reason: string
+}
+
+export interface OrganizerPlanItem extends OrganizerSuggestion {
+  selected: boolean
+  conflictPolicy: OrganizerConflictPolicy
+  sourceName: string
+  sourceRelativePath: string
+  size: number
+}
+
+export interface OrganizerRuleMatcher {
+  extensions: string[]
+  kinds: OrganizerCandidateKind[]
+  namePatterns: string[]
+  minSize?: number
+  maxSize?: number
+}
+
+export interface OrganizerRuleAction {
+  category: string
+  targetRelativeDirTemplate: string
+  targetBaseNameTemplate: string
+  conflictPolicy: OrganizerConflictPolicy
+}
+
+export interface OrganizerRule {
+  id: string
+  title: string
+  trustLevel: OrganizerTrustLevel
+  enabled: boolean
+  matcher: OrganizerRuleMatcher
+  action: OrganizerRuleAction
+  workflowSignature?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface OrganizerExecuteRequest {
+  scanId: string
+  trustLevel: OrganizerTrustLevel
+  ruleId?: string
+  items: Array<Pick<OrganizerPlanItem, 'fileId' | 'category' | 'targetRelativeDir' | 'targetBaseName' | 'confidence' | 'conflictPolicy'>>
+}
+
+export interface OrganizerReceiptSummary {
+  receiptId: string
+  createdAt: string
+  movedCount: number
+  copiedCount: number
+  status: 'ready' | 'manual-review'
+}
+
 export interface FavoriteTool {
   toolId: string
   order: number

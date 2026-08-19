@@ -41,7 +41,7 @@ let previewToken = 0
 
 const PIPELINE_RECIPE_MAX_BYTES = 256 * 1024
 
-const definitions = listToolDefinitions()
+const definitions = listToolDefinitions('text')
 const suggestions = computed(() => suggestToolDefinitions(input.value))
 const canRun = computed(() => !running.value && input.value.trim().length > 0 && steps.value.length > 0)
 const preview = computed(() => output.value.length ? undefined : input.value.trim().slice(0, 2400))

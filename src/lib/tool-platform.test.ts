@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createPipelineStep, getToolDefinition, runTextPipeline, runTextPipelineAsync, suggestToolDefinitions, ToolPipelineCancelledError, validatePipelineSteps } from './tool-platform'
+import { ArtifactPipelineCancelledError, createPipelineStep, getToolDefinition, runArtifactPipeline, runTextPipeline, runTextPipelineAsync, suggestToolDefinitions, ToolPipelineCancelledError, validatePipelineSteps } from './tool-platform'
+import type { ArtifactRef } from '@/types'
 
 describe('tool platform text pipelines', () => {
   it('exposes definitions for the current text tools', () => {
@@ -67,5 +68,73 @@ describe('tool platform text pipelines', () => {
     expect(suggestToolDefinitions('{"ok":true}').map((tool) => tool.id).slice(0, 2)).toEqual(['text.json', 'text.trim'])
     expect(suggestToolDefinitions('https://example.com\na@example.com').map((tool) => tool.id)).toContain('text.extract-contacts')
     expect(suggestToolDefinitions('b\na\nb').map((tool) => tool.id)).toContain('text.dedupe-lines')
+  })
+})
+
+describe('tool platform ArtifactRef pipelines', () => {
+  const inputs: ArtifactRef[] = Array.from({ length: 6 }, (_, index) => ({
+    id: `image-${index}`,
+    kind: 'image',
+    name: `image-${index}.png`,
+    mime: 'image/png',
+    size: 100 + index,
+    locator: { kind: 'runtime', value: `runtime-${index}` },
+  }))
+
+  it('publishes execution boundaries, permissions and non-destructive output contracts', () => {
+    expect(getToolDefinition('image.compress')).toMatchObject({
+      executionBoundary: 'renderer-worker',
+      destructiveLevel: 'creates-output',
+      createsNewOutput: true,
+      maxConcurrency: 2,
+    })
+    expect(getToolDefinition('media.clean-metadata')?.permissions).toContain('run-local-engine')
+  })
+
+  it('runs multiple lightweight references with bounded concurrency and step logs', async () => {
+    let active = 0
+    let peak = 0
+    const result = await runArtifactPipeline(inputs, [{ id: 'compress', toolId: 'image.compress' }], {
+      concurrency: 4,
+      adapters: {
+        async 'image.compress'(input) {
+          active += 1
+          peak = Math.max(peak, active)
+          await new Promise(resolve => setTimeout(resolve, 2))
+          active -= 1
+          return { ...input, id: `${input.id}-out`, name: `${input.name}-out` }
+        },
+      },
+    })
+    expect(peak).toBe(2)
+    expect(result.artifacts).toHaveLength(6)
+    expect(result.logs).toEqual([expect.objectContaining({ inputCount: 6, outputCount: 6, failedCount: 0, status: 'succeeded' })])
+  })
+
+  it('preserves an input when skip policy handles one failed artifact', async () => {
+    const result = await runArtifactPipeline(inputs.slice(0, 2), [{ id: 'clean', toolId: 'image.clean-metadata', onError: 'skip' }], {
+      adapters: {
+        async 'image.clean-metadata'(input) {
+          if (input.id === 'image-1') throw new Error('fixture failure')
+          return { ...input, id: `${input.id}-clean`, name: `${input.name}-clean` }
+        },
+      },
+    })
+    expect(result.artifacts.map(item => item.id)).toEqual(['image-0-clean', 'image-1'])
+    expect(result.logs[0]).toMatchObject({ failedCount: 1, status: 'partial' })
+  })
+
+  it('stops between bounded batches when cancellation is requested', async () => {
+    let cancelled = false
+    await expect(runArtifactPipeline(inputs, [{ id: 'clean', toolId: 'image.clean-metadata' }], {
+      concurrency: 2,
+      shouldCancel: () => cancelled,
+      adapters: {
+        async 'image.clean-metadata'(input) {
+          cancelled = true
+          return { ...input, id: `${input.id}-clean` }
+        },
+      },
+    })).rejects.toBeInstanceOf(ArtifactPipelineCancelledError)
   })
 })
