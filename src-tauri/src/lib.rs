@@ -51,15 +51,16 @@ use transcription::{
     cancel_transcription, probe_transcription_engine, transcribe_media_file, TranscriptionState,
 };
 use vault::{
-    AiActionRequest, AiProfileInput, ContentFavorite, ContentRecent, ImportedSource,
-    ImportedVaultSource, OrganizerAuditInput, OrganizerReviewSummary, OrganizerRule,
-    OrganizerWorkflowSuggestion, VaultBackupInspection, VaultClipboardItem, VaultDocument,
-    VaultEvent, VaultHealth, VaultHydration, VaultMarkdownAttachment, VaultMarkdownReconcile,
-    VaultProcessingJob, VaultProcessingJobHydration, VaultQuestionAttachment, VaultRelation,
-    VaultReviewAnalytics, VaultReviewCursor, VaultReviewGradeInput, VaultReviewGradeResult,
-    VaultReviewHistoryEntry, VaultReviewQueuePage, VaultReviewQueueSummary, VaultReviewUndoInput,
-    VaultSearchResult, VaultService, VaultSource, VaultVisualProject, VisualProjectImageInput,
-    VisualProjectInput, VisualProjectSummary, VocabularyEntry, VocabularySummary,
+    AiActionRequest, AiProfileInput, AutomationRecipe, AutomationRecipeHydration, ContentFavorite,
+    ContentRecent, ImportedSource, ImportedVaultSource, OrganizerAuditInput,
+    OrganizerReviewSummary, OrganizerRule, OrganizerWorkflowSuggestion, VaultBackupInspection,
+    VaultClipboardItem, VaultDocument, VaultEvent, VaultHealth, VaultHydration,
+    VaultMarkdownAttachment, VaultMarkdownReconcile, VaultProcessingJob,
+    VaultProcessingJobHydration, VaultQuestionAttachment, VaultRelation, VaultReviewAnalytics,
+    VaultReviewCursor, VaultReviewGradeInput, VaultReviewGradeResult, VaultReviewHistoryEntry,
+    VaultReviewQueuePage, VaultReviewQueueSummary, VaultReviewUndoInput, VaultSearchResult,
+    VaultService, VaultSource, VaultVisualProject, VisualProjectImageInput, VisualProjectInput,
+    VisualProjectSummary, VocabularyEntry, VocabularySummary,
 };
 
 fn default_vault_path(app: &tauri::AppHandle) -> Result<String, String> {
@@ -1775,6 +1776,62 @@ fn clear_default_finished_processing_jobs(app: tauri::AppHandle) -> Result<usize
     VaultService::open(path)
         .map_err(|error| error.to_string())?
         .clear_finished_processing_jobs()
+        .map_err(|error| error.to_string())
+}
+
+/// Imports the browser-era portable recipe ledger exactly once. Files, local
+/// directory bindings, and content bodies are rejected by the Vault validator.
+#[tauri::command]
+fn hydrate_default_automation_recipes(
+    app: tauri::AppHandle,
+    browser_recipes: Vec<AutomationRecipe>,
+) -> Result<AutomationRecipeHydration, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .hydrate_automation_recipes(browser_recipes)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_default_automation_recipes(app: tauri::AppHandle) -> Result<Vec<AutomationRecipe>, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .list_automation_recipes()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_default_automation_recipe(
+    app: tauri::AppHandle,
+    recipe: AutomationRecipe,
+) -> Result<AutomationRecipe, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .save_automation_recipe(recipe)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn delete_default_automation_recipe(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .delete_automation_recipe(id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn replace_default_automation_recipes(
+    app: tauri::AppHandle,
+    recipes: Vec<AutomationRecipe>,
+) -> Result<Vec<AutomationRecipe>, String> {
+    let path = default_vault_path(&app)?;
+    VaultService::open(path)
+        .map_err(|error| error.to_string())?
+        .replace_automation_recipes(recipes)
         .map_err(|error| error.to_string())
 }
 
@@ -7429,6 +7486,11 @@ pub fn run() {
             delete_default_processing_job,
             delete_default_processing_jobs,
             clear_default_finished_processing_jobs,
+            hydrate_default_automation_recipes,
+            list_default_automation_recipes,
+            save_default_automation_recipe,
+            delete_default_automation_recipe,
+            replace_default_automation_recipes,
             list_default_organizer_rules,
             save_default_organizer_rule,
             delete_default_organizer_rule,

@@ -24,7 +24,7 @@ pub struct VaultService {
     root: PathBuf,
 }
 
-const SCHEMA_VERSION: i64 = 25;
+const SCHEMA_VERSION: i64 = 26;
 const DOCUMENT_VERSION_LIMIT: i64 = 40;
 const DOCUMENT_VERSION_COALESCE_SECONDS: i64 = 5 * 60;
 const EDITOR_CRASH_DRAFT_LIMIT: i64 = 8;
@@ -51,6 +51,8 @@ const PROCESSING_JOB_INTERRUPTED_MESSAGE: &str = "应用上次退出时任务尚
 const ORGANIZER_RULE_LIMIT: i64 = 256;
 const ORGANIZER_AUDIT_LIMIT: i64 = 2_000;
 const MAX_ORGANIZER_AUDIT_FILES: usize = 5_000;
+const AUTOMATION_RECIPE_LIMIT: i64 = 256;
+const AUTOMATION_RECIPE_DEFINITION_MAX_BYTES: usize = 128 * 1024;
 const VISUAL_PROJECT_IMAGE_LIMIT: usize = 4;
 const VISUAL_PROJECT_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 const VISUAL_PROJECT_TOTAL_MAX_BYTES: usize = 96 * 1024 * 1024;
@@ -705,6 +707,29 @@ pub struct VaultProcessingJobHydration {
     pub imported_count: usize,
     pub skipped_count: usize,
     pub has_more: bool,
+}
+
+/// Portable tool and pipeline semantics. Inputs, outputs, directory bindings,
+/// file bodies, and local paths are deliberately excluded from this record.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationRecipe {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    pub definition: serde_json::Value,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_run_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationRecipeHydration {
+    pub recipes: Vec<AutomationRecipe>,
+    pub migrated: bool,
+    pub imported_count: usize,
+    pub skipped_count: usize,
 }
 
 /// Portable rule semantics live in the Vault. Machine-specific source and
@@ -2146,6 +2171,32 @@ impl VaultService {
             transaction.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
                 (25, Utc::now().to_rfc3339()),
+            )?;
+        }
+        if current_version < 26 {
+            // Tool and pipeline recipes are portable automation knowledge.
+            // Machine-specific directory bindings remain in app config and
+            // therefore cannot enter this table or a Vault backup.
+            transaction.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS automation_recipes (
+                  id TEXT PRIMARY KEY,
+                  title TEXT NOT NULL,
+                  kind TEXT NOT NULL CHECK(kind IN ('tool', 'text-pipeline', 'artifact-pipeline')),
+                  definition_json TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  last_run_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS automation_recipes_updated_idx
+                  ON automation_recipes(updated_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS automation_recipes_kind_updated_idx
+                  ON automation_recipes(kind, updated_at DESC, id DESC);
+                ",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                (26, Utc::now().to_rfc3339()),
             )?;
         }
         transaction.commit()?;
@@ -3788,6 +3839,369 @@ impl VaultService {
             "DELETE FROM processing_jobs WHERE status IN ('succeeded', 'failed', 'cancelled')",
             [],
         )?)
+    }
+
+    fn automation_value_contains_path(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::String(value) => Self::processing_text_contains_absolute_path(value),
+            serde_json::Value::Array(values) => {
+                values.iter().any(Self::automation_value_contains_path)
+            }
+            serde_json::Value::Object(values) => values.iter().any(|(key, value)| {
+                Self::processing_parameter_key_contains_path(key)
+                    || Self::automation_value_contains_path(value)
+            }),
+            _ => false,
+        }
+    }
+
+    fn automation_identifier_is_valid(value: &str, maximum: usize) -> bool {
+        !value.is_empty()
+            && value.len() <= maximum
+            && value
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || ".:_-".contains(character))
+    }
+
+    fn automation_parameters_are_valid(value: &serde_json::Value) -> bool {
+        let Some(parameters) = value.as_object() else {
+            return false;
+        };
+        parameters.len() <= 64
+            && parameters.iter().all(|(key, value)| {
+                Self::automation_identifier_is_valid(key, 80)
+                    && !Self::processing_parameter_key_contains_path(key)
+                    && match value {
+                        serde_json::Value::String(value) => {
+                            value.len() <= 16 * 1024
+                                && !value.chars().any(char::is_control)
+                                && !Self::processing_text_contains_absolute_path(value)
+                        }
+                        serde_json::Value::Number(_) | serde_json::Value::Bool(_) => true,
+                        _ => false,
+                    }
+            })
+    }
+
+    fn automation_definition_is_valid(kind: &str, value: &serde_json::Value) -> bool {
+        let Some(definition) = value.as_object() else {
+            return false;
+        };
+        if Self::automation_value_contains_path(value) {
+            return false;
+        }
+        if kind == "tool" {
+            if definition
+                .keys()
+                .any(|key| !matches!(key.as_str(), "group" | "operation" | "parameters"))
+            {
+                return false;
+            }
+            let group = definition.get("group").and_then(serde_json::Value::as_str);
+            let operation = definition
+                .get("operation")
+                .and_then(serde_json::Value::as_str);
+            return group
+                .is_some_and(|value| matches!(value, "pdf" | "image" | "text" | "organize"))
+                && operation.is_some_and(|value| Self::automation_identifier_is_valid(value, 80))
+                && definition
+                    .get("parameters")
+                    .is_some_and(Self::automation_parameters_are_valid);
+        }
+        if definition
+            .keys()
+            .any(|key| !matches!(key.as_str(), "version" | "scope" | "steps"))
+            || definition
+                .get("version")
+                .and_then(serde_json::Value::as_u64)
+                != Some(1)
+        {
+            return false;
+        }
+        let expected_scope = if kind == "artifact-pipeline" {
+            "artifact"
+        } else {
+            "text"
+        };
+        if definition.get("scope").and_then(serde_json::Value::as_str) != Some(expected_scope) {
+            return false;
+        }
+        let Some(steps) = definition
+            .get("steps")
+            .and_then(serde_json::Value::as_array)
+        else {
+            return false;
+        };
+        !steps.is_empty()
+            && steps.len() <= 12
+            && steps.iter().all(|step| {
+                let Some(step) = step.as_object() else {
+                    return false;
+                };
+                if step.keys().any(|key| {
+                    !matches!(
+                        key.as_str(),
+                        "id" | "toolId" | "parameters" | "onError" | "when"
+                    )
+                }) {
+                    return false;
+                }
+                let id = step.get("id").and_then(serde_json::Value::as_str);
+                let tool_id = step.get("toolId").and_then(serde_json::Value::as_str);
+                if !id.is_some_and(|value| Self::automation_identifier_is_valid(value, 160))
+                    || !tool_id.is_some_and(|value| Self::automation_identifier_is_valid(value, 80))
+                {
+                    return false;
+                }
+                if step
+                    .get("parameters")
+                    .is_some_and(|value| !Self::automation_parameters_are_valid(value))
+                {
+                    return false;
+                }
+                if step
+                    .get("onError")
+                    .is_some_and(|value| !matches!(value.as_str(), Some("stop" | "skip" | "retry")))
+                {
+                    return false;
+                }
+                !step.get("when").is_some_and(|value| {
+                    !matches!(
+                        value.as_str(),
+                        Some("always" | "non-empty" | "empty" | "changed")
+                    )
+                })
+            })
+    }
+
+    fn normalize_automation_recipe(recipe: &mut AutomationRecipe) -> Result<()> {
+        if Uuid::parse_str(&recipe.id).is_err() {
+            bail!("自动化配方 ID 无效")
+        }
+        recipe.title = recipe.title.trim().to_owned();
+        if recipe.title.is_empty()
+            || recipe.title.len() > 120
+            || recipe.title.chars().any(char::is_control)
+            || Self::processing_text_contains_absolute_path(&recipe.title)
+        {
+            bail!("自动化配方标题无效")
+        }
+        recipe.kind = recipe.kind.trim().to_ascii_lowercase();
+        if !matches!(
+            recipe.kind.as_str(),
+            "tool" | "text-pipeline" | "artifact-pipeline"
+        ) || !Self::automation_definition_is_valid(&recipe.kind, &recipe.definition)
+            || serde_json::to_vec(&recipe.definition)?.len()
+                > AUTOMATION_RECIPE_DEFINITION_MAX_BYTES
+        {
+            bail!("自动化配方定义无效或过大")
+        }
+        for value in [&recipe.created_at, &recipe.updated_at] {
+            if chrono::DateTime::parse_from_rfc3339(value).is_err() {
+                bail!("自动化配方时间无效")
+            }
+        }
+        if recipe
+            .last_run_at
+            .as_deref()
+            .is_some_and(|value| chrono::DateTime::parse_from_rfc3339(value).is_err())
+        {
+            bail!("自动化配方最近运行时间无效")
+        }
+        Ok(())
+    }
+
+    fn map_automation_recipe_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRecipe> {
+        Ok(AutomationRecipe {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            kind: row.get(2)?,
+            definition: Self::deserialize_processing_json(row, 3)?,
+            created_at: row.get(4)?,
+            updated_at: row.get(5)?,
+            last_run_at: row.get(6)?,
+        })
+    }
+
+    fn write_automation_recipe(
+        transaction: &Transaction<'_>,
+        recipe: &AutomationRecipe,
+    ) -> Result<usize> {
+        Ok(transaction.execute(
+            "INSERT INTO automation_recipes(
+               id, title, kind, definition_json, created_at, updated_at, last_run_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+               title = excluded.title,
+               kind = excluded.kind,
+               definition_json = excluded.definition_json,
+               updated_at = excluded.updated_at,
+               last_run_at = excluded.last_run_at",
+            rusqlite::params![
+                &recipe.id,
+                &recipe.title,
+                &recipe.kind,
+                serde_json::to_string(&recipe.definition)?,
+                &recipe.created_at,
+                &recipe.updated_at,
+                &recipe.last_run_at,
+            ],
+        )?)
+    }
+
+    pub fn list_automation_recipes(&self) -> Result<Vec<AutomationRecipe>> {
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        let mut statement = connection.prepare(
+            "SELECT id, title, kind, definition_json, created_at, updated_at, last_run_at
+             FROM automation_recipes ORDER BY updated_at DESC, id DESC LIMIT ?1",
+        )?;
+        let recipes = statement
+            .query_map([AUTOMATION_RECIPE_LIMIT], Self::map_automation_recipe_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(recipes)
+    }
+
+    pub fn save_automation_recipe(&self, mut recipe: AutomationRecipe) -> Result<AutomationRecipe> {
+        Self::normalize_automation_recipe(&mut recipe)?;
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        let transaction = connection.transaction()?;
+        if let Some(created_at) = transaction
+            .query_row(
+                "SELECT created_at FROM automation_recipes WHERE id = ?1",
+                [&recipe.id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            recipe.created_at = created_at;
+        }
+        recipe.updated_at = Utc::now().to_rfc3339();
+        Self::write_automation_recipe(&transaction, &recipe)?;
+        let count: i64 =
+            transaction.query_row("SELECT COUNT(*) FROM automation_recipes", [], |row| {
+                row.get(0)
+            })?;
+        if count > AUTOMATION_RECIPE_LIMIT {
+            bail!("自动化配方最多保留 {AUTOMATION_RECIPE_LIMIT} 条")
+        }
+        transaction.commit()?;
+        Ok(recipe)
+    }
+
+    pub fn delete_automation_recipe(&self, id: String) -> Result<()> {
+        if Uuid::parse_str(&id).is_err() {
+            bail!("自动化配方 ID 无效")
+        }
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        connection.execute("DELETE FROM automation_recipes WHERE id = ?1", [&id])?;
+        Ok(())
+    }
+
+    pub fn replace_automation_recipes(
+        &self,
+        mut recipes: Vec<AutomationRecipe>,
+    ) -> Result<Vec<AutomationRecipe>> {
+        if recipes.len() > AUTOMATION_RECIPE_LIMIT as usize {
+            bail!("自动化配方最多保留 {AUTOMATION_RECIPE_LIMIT} 条")
+        }
+        let mut ids = HashSet::new();
+        for recipe in &mut recipes {
+            Self::normalize_automation_recipe(recipe)?;
+            if !ids.insert(recipe.id.clone()) {
+                bail!("自动化配方 ID 重复")
+            }
+        }
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM automation_recipes", [])?;
+        for recipe in &recipes {
+            Self::write_automation_recipe(&transaction, recipe)?;
+        }
+        transaction.commit()?;
+        self.list_automation_recipes()
+    }
+
+    pub fn hydrate_automation_recipes(
+        &self,
+        browser_recipes: Vec<AutomationRecipe>,
+    ) -> Result<AutomationRecipeHydration> {
+        let mut connection = self.connection()?;
+        self.migrate(&mut connection)?;
+        let already_migrated: Option<String> = connection
+            .query_row(
+                "SELECT value FROM vault_meta WHERE key = 'browser-automation-recipes-migration-v1'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if already_migrated.is_some() {
+            drop(connection);
+            return Ok(AutomationRecipeHydration {
+                recipes: self.list_automation_recipes()?,
+                migrated: false,
+                imported_count: 0,
+                skipped_count: 0,
+            });
+        }
+
+        let received_count = browser_recipes.len();
+        let mut normalized = Vec::new();
+        let mut ids = connection
+            .prepare("SELECT id FROM automation_recipes")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<HashSet<_>, _>>()?;
+        let mut skipped_count = 0usize;
+        for mut recipe in browser_recipes {
+            if normalized.len() >= AUTOMATION_RECIPE_LIMIT as usize
+                || Self::normalize_automation_recipe(&mut recipe).is_err()
+                || !ids.insert(recipe.id.clone())
+            {
+                skipped_count += 1;
+            } else {
+                normalized.push(recipe);
+            }
+        }
+        if !normalized.is_empty() {
+            let migration_directory = self.root.join(".toolknit/migrations");
+            fs::create_dir_all(&migration_directory)?;
+            let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+            fs::write(
+                migration_directory.join(format!(
+                    "browser-automation-recipes-before-vault-{timestamp}-{}.json",
+                    Uuid::now_v7()
+                )),
+                serde_json::to_vec_pretty(&normalized)?,
+            )?;
+        }
+        let transaction = connection.transaction()?;
+        let mut imported_count = 0usize;
+        for recipe in &normalized {
+            imported_count += Self::write_automation_recipe(&transaction, recipe)?;
+        }
+        let now = Utc::now().to_rfc3339();
+        transaction.execute(
+            "INSERT INTO vault_meta(key, value, updated_at)
+             VALUES ('browser-automation-recipes-migration-v1', ?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (
+                format!(
+                    "imported={imported_count};skipped={skipped_count};received={received_count}"
+                ),
+                &now,
+            ),
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        Ok(AutomationRecipeHydration {
+            recipes: self.list_automation_recipes()?,
+            migrated: true,
+            imported_count,
+            skipped_count,
+        })
     }
 
     fn organizer_template_is_safe(value: &str, filename: bool) -> bool {
@@ -9978,6 +10392,46 @@ mod tests {
         }
     }
 
+    fn test_automation_recipe(id: String, title: &str, kind: &str) -> AutomationRecipe {
+        let definition = match kind {
+            "tool" => json!({
+                "group": "image",
+                "operation": "compress",
+                "parameters": { "quality": 82, "stripMetadata": true }
+            }),
+            "text-pipeline" => json!({
+                "version": 1,
+                "scope": "text",
+                "steps": [{
+                    "id": "trim-step",
+                    "toolId": "trim-lines",
+                    "parameters": {},
+                    "onError": "stop"
+                }]
+            }),
+            "artifact-pipeline" => json!({
+                "version": 1,
+                "scope": "artifact",
+                "steps": [{
+                    "id": "compress-step",
+                    "toolId": "image-compress",
+                    "parameters": { "quality": 82 },
+                    "onError": "stop"
+                }]
+            }),
+            _ => json!({}),
+        };
+        AutomationRecipe {
+            id,
+            title: title.into(),
+            kind: kind.into(),
+            definition,
+            created_at: "2026-08-19T00:00:00Z".into(),
+            updated_at: "2026-08-19T00:00:00Z".into(),
+            last_run_at: None,
+        }
+    }
+
     fn test_png(color: [u8; 4]) -> Result<Vec<u8>> {
         let mut encoded = Vec::new();
         image::codecs::png::PngEncoder::new(&mut encoded).write_image(
@@ -10753,6 +11207,126 @@ mod tests {
         assert!(activity_payload.contains("活动详情已省略"));
         drop(connection);
 
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn automation_recipes_migrate_once_and_keep_only_portable_definitions() -> Result<()> {
+        let root =
+            std::env::temp_dir().join(format!("knitspace-automation-recipes-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let native_id = Uuid::now_v7().to_string();
+        service.save_automation_recipe(test_automation_recipe(
+            native_id.clone(),
+            "原生配方优先",
+            "tool",
+        ))?;
+
+        let mut stale = test_automation_recipe(native_id, "浏览器旧副本", "tool");
+        stale.definition["parameters"]["quality"] = json!(35);
+        let imported_id = Uuid::now_v7().to_string();
+        let imported = test_automation_recipe(imported_id.clone(), "文本清理", "text-pipeline");
+        let mut unsafe_recipe = test_automation_recipe(
+            Uuid::now_v7().to_string(),
+            "含本机路径",
+            "artifact-pipeline",
+        );
+        unsafe_recipe.definition["steps"][0]["parameters"] =
+            json!({ "outputDirectory": r"Z:\private\exports" });
+
+        let hydration = service.hydrate_automation_recipes(vec![stale, imported, unsafe_recipe])?;
+        assert!(hydration.migrated);
+        assert_eq!(hydration.imported_count, 1);
+        assert_eq!(hydration.skipped_count, 2);
+        assert_eq!(hydration.recipes.len(), 2);
+        assert!(hydration
+            .recipes
+            .iter()
+            .any(|recipe| recipe.title == "原生配方优先"));
+        assert!(hydration
+            .recipes
+            .iter()
+            .any(|recipe| recipe.id == imported_id));
+
+        let archived = fs::read_dir(root.join(".toolknit/migrations"))?
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("browser-automation-recipes-before-vault-")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(archived.len(), 1);
+        let archive_body = fs::read_to_string(archived[0].path())?;
+        assert!(!archive_body.contains("Z:\\private"));
+
+        let ignored_id = Uuid::now_v7().to_string();
+        let second = service.hydrate_automation_recipes(vec![test_automation_recipe(
+            ignored_id.clone(),
+            "不应重复导入",
+            "tool",
+        )])?;
+        assert!(!second.migrated);
+        assert!(!second.recipes.iter().any(|recipe| recipe.id == ignored_id));
+
+        let saved = service.save_automation_recipe(test_automation_recipe(
+            Uuid::now_v7().to_string(),
+            "文件流水线",
+            "artifact-pipeline",
+        ))?;
+        assert!(saved.updated_at >= saved.created_at);
+        service.delete_automation_recipe(saved.id)?;
+        assert_eq!(service.list_automation_recipes()?.len(), 2);
+
+        let replacement =
+            test_automation_recipe(Uuid::now_v7().to_string(), "备份恢复后的配方", "tool");
+        let replaced = service.replace_automation_recipes(vec![replacement.clone()])?;
+        assert_eq!(replaced, vec![replacement]);
+
+        let connection = service.connection()?;
+        let stored: String = connection.query_row(
+            "SELECT definition_json FROM automation_recipes LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(!stored.contains(":/"));
+        assert!(!stored.contains(":\\\\"));
+        drop(connection);
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn automation_recipe_schema_migrates_from_v25() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "knitspace-automation-recipe-schema-{}",
+            Uuid::now_v7()
+        ));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        {
+            let connection = service.connection()?;
+            connection.execute_batch(
+                "DROP TABLE automation_recipes;
+                 DELETE FROM schema_migrations WHERE version >= 26;",
+            )?;
+        }
+        drop(service);
+
+        let migrated = VaultService::open(root.to_string_lossy().into_owned())?;
+        let connection = migrated.connection()?;
+        let (version, table_exists): (i64, bool) = connection.query_row(
+            "SELECT
+               (SELECT COALESCE(MAX(version), 0) FROM schema_migrations),
+               EXISTS(SELECT 1 FROM sqlite_master
+                      WHERE type = 'table' AND name = 'automation_recipes')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(version, SCHEMA_VERSION);
+        assert!(table_exists);
+        drop(connection);
         fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -13487,6 +14061,11 @@ mod tests {
         let restored_id = Uuid::now_v7().to_string();
         let restored_markdown = "# 恢复前的内容\n\n完整恢复校验词：银杏事务。";
         service.save_markdown(restored_id.clone(), "note".into(), restored_markdown.into())?;
+        let restored_recipe = service.save_automation_recipe(test_automation_recipe(
+            Uuid::now_v7().to_string(),
+            "恢复前的图片配方",
+            "tool",
+        ))?;
         let attachment = root
             .join("assets")
             .join("documents")
@@ -13501,6 +14080,11 @@ mod tests {
             "note".into(),
             "# 后写入\n\n不应保留的检索词：海盐回滚。".into(),
         )?;
+        service.replace_automation_recipes(vec![test_automation_recipe(
+            Uuid::now_v7().to_string(),
+            "不应保留的后写配方",
+            "tool",
+        )])?;
         fs::write(&attachment, b"mutated-managed-asset")?;
 
         let safety_archive = service.restore_backup(archive.to_string_lossy().into_owned())?;
@@ -13518,6 +14102,7 @@ mod tests {
             restored_id
         );
         assert!(restored.search_documents("海盐回滚".into(), 12)?.is_empty());
+        assert_eq!(restored.list_automation_recipes()?, vec![restored_recipe]);
         let health = restored.health()?;
         assert_eq!(health.integrity, "ok");
         assert_eq!(health.missing_markdown_count, 0);
