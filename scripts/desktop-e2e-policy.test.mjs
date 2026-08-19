@@ -13,6 +13,7 @@ const webdriverConfig = read('wdio.e2e.conf.mjs')
 const viteConfig = read('vite.config.ts')
 const desktopSpec = read('e2e/automation-center.e2e.mjs')
 const organizerExecutionSpec = read('e2e/organizer-execution.e2e.mjs')
+const organizerWindowsMatrixSpec = read('e2e/organizer-windows-matrix.e2e.mjs')
 const crashPrepareSpec = read('e2e/organizer-crash-prepare.e2e.mjs')
 const crashRecoverySpec = read('e2e/organizer-crash-recovery.e2e.mjs')
 const productionTauriSurface = [
@@ -66,6 +67,7 @@ describe('desktop E2E isolation policy', () => {
     const expectedSpecs = [
       './e2e/automation-center.e2e.mjs',
       './e2e/organizer-execution.e2e.mjs',
+      './e2e/organizer-windows-matrix.e2e.mjs',
       './e2e/organizer-crash-prepare.e2e.mjs',
       './e2e/organizer-crash-recovery.e2e.mjs',
     ]
@@ -99,6 +101,16 @@ describe('desktop E2E isolation policy', () => {
       'scanResult.sameVolume, false',
       'removedCopyCount, 1',
     ]) assert.match(organizerExecutionSpec, new RegExp(evidence.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+
+    for (const evidence of [
+      'chmod(sourceFile, 0o444)',
+      '[System.IO.FileShare]::None',
+      "'长'.repeat(220)",
+      'sourceFile.length > 260',
+      'KNITSPACE_E2E_ONEDRIVE_ROOT',
+      'Knitspace-E2E-OneDrive-',
+    ]) assert.match(organizerWindowsMatrixSpec, new RegExp(evidence.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    assert.doesNotMatch(organizerWindowsMatrixSpec, /process\.env\.(?:OneDrive|OneDriveConsumer|OneDriveCommercial)/)
 
     assert.match(crashPrepareSpec, /__knitspace_e2e_abort_after_operation__/)
     assert.match(crashPrepareSpec, /waitForPostMoveState/)

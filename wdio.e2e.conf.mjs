@@ -42,6 +42,7 @@ export const config = {
   specs: [
     './e2e/automation-center.e2e.mjs',
     './e2e/organizer-execution.e2e.mjs',
+    './e2e/organizer-windows-matrix.e2e.mjs',
     './e2e/organizer-crash-prepare.e2e.mjs',
     './e2e/organizer-crash-recovery.e2e.mjs',
   ],
