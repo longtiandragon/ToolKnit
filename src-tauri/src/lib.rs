@@ -1,6 +1,5 @@
-mod window_state;
-mod crash_log;
 mod archive_tools;
+mod crash_log;
 mod dictionary;
 mod engine_registry;
 mod file_health;
@@ -12,6 +11,7 @@ mod private_tools;
 mod transcription;
 mod vault;
 mod web_fetch;
+mod window_state;
 mod windows_ocr;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -83,7 +83,11 @@ fn crash_log_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// the same redaction as a Rust panic, since a stack trace is full of
 /// `file:///C:/Users/...` frames.
 #[tauri::command]
-fn record_frontend_error(app: tauri::AppHandle, kind: String, detail: String) -> Result<(), String> {
+fn record_frontend_error(
+    app: tauri::AppHandle,
+    kind: String,
+    detail: String,
+) -> Result<(), String> {
     let directory = crash_log_directory(&app)?;
     crash_log::append(&directory, &kind, &detail);
     Ok(())
@@ -201,12 +205,19 @@ impl WindowGeometryWriter {
             return;
         };
         let (x, y) = (f64::from(position.x) / scale, f64::from(position.y) / scale);
-        let (width, height) = (f64::from(size.width) / scale, f64::from(size.height) / scale);
+        let (width, height) = (
+            f64::from(size.width) / scale,
+            f64::from(size.height) / scale,
+        );
 
         let restored = if maximized {
             // Keep whatever size was last chosen unmaximized; fall back to the
             // maximized bounds only if there has never been one.
-            self.restored_size.lock().ok().and_then(|value| *value).unwrap_or((width, height))
+            self.restored_size
+                .lock()
+                .ok()
+                .and_then(|value| *value)
+                .unwrap_or((width, height))
         } else {
             if let Ok(mut value) = self.restored_size.lock() {
                 *value = Some((width, height));
@@ -6980,13 +6991,19 @@ mod temporary_sweep_tests {
 
         // Freshness has its own test below; here every entry starts new, so a
         // one-day threshold must still remove nothing.
-        assert_eq!(sweep_stale_temporary_entries(&root, now, DAY, STALE_TEMPORARY_SCAN_LIMIT), 0);
+        assert_eq!(
+            sweep_stale_temporary_entries(&root, now, DAY, STALE_TEMPORARY_SCAN_LIMIT),
+            0
+        );
         assert!(root.join("knitspace-media-output-old").is_dir());
 
         // Age every entry past the threshold by moving the clock forward instead
         // of the files back, which Windows will not always allow.
         let later = now + DAY + Duration::from_secs(60);
-        assert_eq!(sweep_stale_temporary_entries(&root, later, DAY, STALE_TEMPORARY_SCAN_LIMIT), 3);
+        assert_eq!(
+            sweep_stale_temporary_entries(&root, later, DAY, STALE_TEMPORARY_SCAN_LIMIT),
+            3
+        );
 
         // Non-empty directories go too, and nothing outside the prefix is touched.
         assert!(!root.join("knitspace-media-output-old").exists());

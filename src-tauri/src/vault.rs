@@ -9928,7 +9928,10 @@ mod tests {
             )?;
         }
         let recovered = VaultService::open(root.to_string_lossy().into_owned())?;
-        assert_eq!(recovered.get_document(document.id.clone())?.title, document.title);
+        assert_eq!(
+            recovered.get_document(document.id.clone())?.title,
+            document.title
+        );
 
         fs::remove_dir_all(root)?;
         Ok(())

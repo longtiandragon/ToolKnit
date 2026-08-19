@@ -108,7 +108,10 @@ fn path_run(text: &[char], index: usize) -> Option<usize> {
 
 fn is_path_char(character: char) -> bool {
     character.is_alphanumeric()
-        || matches!(character, '.' | '-' | '_' | '~' | '(' | ')' | '\'' | '+' | '%' | '@' | '#' | '$' | '&')
+        || matches!(
+            character,
+            '.' | '-' | '_' | '~' | '(' | ')' | '\'' | '+' | '%' | '@' | '#' | '$' | '&'
+        )
 }
 
 /// A long unbroken run of base64/hex characters — a key, a token, a hash.
@@ -164,7 +167,10 @@ fn append_checked(directory: &Path, kind: &str, detail: &str) -> std::io::Result
         redacted.push_str("…<truncated>");
     }
 
-    let mut file = fs::OpenOptions::new().create(true).append(true).open(&path)?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
     writeln!(
         file,
         "{} [{}] {}",
@@ -190,7 +196,10 @@ fn trim(path: &Path) -> std::io::Result<()> {
         .find(|(offset, character)| *offset >= keep && *character == '\n')
         .map(|(offset, _)| offset + 1)
         .unwrap_or(0);
-    let mut file = fs::OpenOptions::new().write(true).truncate(true).open(path)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)?;
     file.seek(SeekFrom::Start(0))?;
     file.write_all(&contents.as_bytes()[tail..])
 }
@@ -266,10 +275,8 @@ mod tests {
 
     #[test]
     fn appends_reads_and_stays_under_the_cap() {
-        let directory = std::env::temp_dir().join(format!(
-            "knitspace-crash-log-test-{}",
-            uuid::Uuid::now_v7()
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("knitspace-crash-log-test-{}", uuid::Uuid::now_v7()));
         append(&directory, "panic", &format!("boom at {}", home_path()));
         let contents = read(&directory);
         assert!(contents.contains("[panic]"), "{contents}");
@@ -277,14 +284,27 @@ mod tests {
 
         // Enough entries to pass the cap several times over.
         for index in 0..2000 {
-            append(&directory, "panic", &format!("entry {index} {}", "y".repeat(200)));
+            append(
+                &directory,
+                "panic",
+                &format!("entry {index} {}", "y".repeat(200)),
+            );
         }
-        let size = fs::metadata(log_path(&directory)).expect("log exists").len();
+        let size = fs::metadata(log_path(&directory))
+            .expect("log exists")
+            .len();
         assert!(size <= MAX_LOG_BYTES, "log grew to {size}");
         // Trimming keeps the newest entries and whole lines only.
         let contents = read(&directory);
-        assert!(contents.contains("entry 1999"), "newest entry was trimmed away");
-        assert!(contents.starts_with('2'), "trim left a partial line: {:?}", &contents[..40]);
+        assert!(
+            contents.contains("entry 1999"),
+            "newest entry was trimmed away"
+        );
+        assert!(
+            contents.starts_with('2'),
+            "trim left a partial line: {:?}",
+            &contents[..40]
+        );
 
         fs::remove_dir_all(directory).expect("clean test directory");
     }
@@ -300,8 +320,14 @@ mod tests {
         // collapsed to `<redacted>` long before the cap is reached.
         append(&directory, "panic", &"解析失败 ".repeat(MAX_ENTRY_BYTES));
         let contents = read(&directory);
-        assert!(contents.contains("<truncated>"), "oversized entry was not bounded");
-        assert!(contents.len() < MAX_ENTRY_BYTES * 2, "entry cap did not hold");
+        assert!(
+            contents.contains("<truncated>"),
+            "oversized entry was not bounded"
+        );
+        assert!(
+            contents.len() < MAX_ENTRY_BYTES * 2,
+            "entry cap did not hold"
+        );
         fs::remove_dir_all(directory).expect("clean test directory");
     }
 }

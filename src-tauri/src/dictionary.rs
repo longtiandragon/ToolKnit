@@ -241,7 +241,9 @@ fn database_entry_name(archive: &mut zip::ZipArchive<File>) -> Result<String> {
         }
         let name = entry.name().to_owned();
         let lowered = name.to_ascii_lowercase();
-        if !lowered.ends_with(".db") && !lowered.ends_with(".sqlite") && !lowered.ends_with(".sqlite3")
+        if !lowered.ends_with(".db")
+            && !lowered.ends_with(".sqlite")
+            && !lowered.ends_with(".sqlite3")
         {
             continue;
         }
@@ -687,7 +689,11 @@ mod tests {
         let connection = fixture()?;
         let records = lookup_in(
             &connection,
-            &["".to_string(), "zzzznotaword".to_string(), "run".to_string()],
+            &[
+                "".to_string(),
+                "zzzznotaword".to_string(),
+                "run".to_string(),
+            ],
         )?;
         if records.len() != 1 {
             bail!("expected only the known word, got {}", records.len())
@@ -707,7 +713,10 @@ mod tests {
         }
         // The reader still needs to see which form they typed.
         if records[0].query != "Running" {
-            bail!("expected the typed form to survive, got {:?}", records[0].query)
+            bail!(
+                "expected the typed form to survive, got {:?}",
+                records[0].query
+            )
         }
         Ok(())
     }
@@ -724,15 +733,27 @@ mod tests {
 
     #[test]
     fn reads_the_lemma_pointer_only_when_it_names_another_word() -> Result<()> {
-        let own = DictionaryRecord { word: "run".into(), exchange: "0:run/3:runs".into(), ..Default::default() };
+        let own = DictionaryRecord {
+            word: "run".into(),
+            exchange: "0:run/3:runs".into(),
+            ..Default::default()
+        };
         if lemma_of(&own).is_some() {
             bail!("a word that is its own lemma must not trigger a second query")
         }
-        let inflected = DictionaryRecord { word: "running".into(), exchange: "0:run/1:i".into(), ..Default::default() };
+        let inflected = DictionaryRecord {
+            word: "running".into(),
+            exchange: "0:run/1:i".into(),
+            ..Default::default()
+        };
         if lemma_of(&inflected).as_deref() != Some("run") {
             bail!("expected the lemma pointer to resolve")
         }
-        let none = DictionaryRecord { word: "run".into(), exchange: "3:runs/i:running".into(), ..Default::default() };
+        let none = DictionaryRecord {
+            word: "run".into(),
+            exchange: "3:runs/i:running".into(),
+            ..Default::default()
+        };
         if lemma_of(&none).is_some() {
             bail!("an exchange without a `0:` code names no lemma")
         }

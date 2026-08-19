@@ -111,11 +111,27 @@ pub fn save(directory: &Path, state: &WindowState) {
 mod tests {
     use super::*;
 
-    const PRIMARY: Bounds = Bounds { x: 0.0, y: 0.0, width: 1920.0, height: 1040.0 };
-    const SECOND: Bounds = Bounds { x: 1920.0, y: 0.0, width: 1280.0, height: 1024.0 };
+    const PRIMARY: Bounds = Bounds {
+        x: 0.0,
+        y: 0.0,
+        width: 1920.0,
+        height: 1040.0,
+    };
+    const SECOND: Bounds = Bounds {
+        x: 1920.0,
+        y: 0.0,
+        width: 1280.0,
+        height: 1024.0,
+    };
 
     fn state(x: f64, y: f64, width: f64, height: f64) -> WindowState {
-        WindowState { x, y, width, height, maximized: false }
+        WindowState {
+            x,
+            y,
+            width,
+            height,
+            maximized: false,
+        }
     }
 
     #[test]
@@ -154,7 +170,8 @@ mod tests {
 
     #[test]
     fn clamps_a_size_below_the_configured_minimum() {
-        let restored = restorable(state(100.0, 100.0, 400.0, 300.0), &[PRIMARY]).expect("reachable");
+        let restored =
+            restorable(state(100.0, 100.0, 400.0, 300.0), &[PRIMARY]).expect("reachable");
         assert_eq!(restored.width, MIN_WIDTH);
         assert_eq!(restored.height, MIN_HEIGHT);
     }
@@ -163,26 +180,37 @@ mod tests {
     fn clamps_a_size_larger_than_every_monitor() {
         // What a 150% monitor's physical pixels would look like if they were
         // ever written here by mistake: far larger than any logical screen.
-        let restored =
-            restorable(state(0.0, 0.0, 5760.0, 3240.0), &[PRIMARY]).expect("reachable");
+        let restored = restorable(state(0.0, 0.0, 5760.0, 3240.0), &[PRIMARY]).expect("reachable");
         assert_eq!(restored.width, PRIMARY.width);
         assert_eq!(restored.height, PRIMARY.height);
     }
 
     #[test]
     fn refuses_nonsense_and_a_headless_machine() {
-        assert_eq!(restorable(state(f64::NAN, 0.0, 1000.0, 700.0), &[PRIMARY]), None);
-        assert_eq!(restorable(state(0.0, 0.0, f64::INFINITY, 700.0), &[PRIMARY]), None);
+        assert_eq!(
+            restorable(state(f64::NAN, 0.0, 1000.0, 700.0), &[PRIMARY]),
+            None
+        );
+        assert_eq!(
+            restorable(state(0.0, 0.0, f64::INFINITY, 700.0), &[PRIMARY]),
+            None
+        );
         assert_eq!(restorable(state(0.0, 0.0, 1000.0, 700.0), &[]), None);
     }
 
     #[test]
     fn round_trips_through_disk_and_tolerates_a_corrupt_file() {
-        let directory = std::env::temp_dir()
-            .join(format!("knitspace-window-state-{}", uuid::Uuid::now_v7()));
+        let directory =
+            std::env::temp_dir().join(format!("knitspace-window-state-{}", uuid::Uuid::now_v7()));
         assert_eq!(load(&directory), None);
 
-        let saved = WindowState { x: 12.0, y: 34.0, width: 1000.0, height: 700.0, maximized: true };
+        let saved = WindowState {
+            x: 12.0,
+            y: 34.0,
+            width: 1000.0,
+            height: 700.0,
+            maximized: true,
+        };
         save(&directory, &saved);
         assert_eq!(load(&directory), Some(saved));
 
