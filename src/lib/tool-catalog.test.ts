@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { browseCommandTools, searchTools, toolCatalog, toolCatalogOwnerLocation, toolWorkflows } from './tool-catalog'
 import { toolCategories } from './toolbox-nav'
@@ -86,5 +87,31 @@ describe('tool catalog', () => {
     for (const tool of utilities) {
       expect(known).toContain(toolCatalogOwnerLocation(tool).path.slice(3))
     }
+  })
+})
+
+describe('catalog icons', () => {
+  /* `AppIcon` renders a blank placeholder for a name it does not know, so a
+     typo in the catalogue costs an icon and nothing else — no error, no warning.
+     `PDF 书签` shipped with `edit`, which has never been a name, and the flat
+     grid hid it well enough that nobody saw the gap. */
+  const appIcon = readFileSync(new URL('../components/AppIcon.vue', import.meta.url), 'utf8')
+  const declared = new Set(
+    [...appIcon.matchAll(/^\s{2}'?([a-z0-9-]+)'?:\s*[A-Z]\w+,$/gm)].map((match) => match[1]),
+  )
+
+  it('reads the icon map it is checking against', () => {
+    expect(declared.size).toBeGreaterThan(40)
+    expect(declared.has('file-pdf')).toBe(true)
+  })
+
+  it('names an icon AppIcon can actually draw', () => {
+    const missing = toolCatalog.filter((tool) => !declared.has(tool.icon)).map((tool) => `${tool.id}:${tool.icon}`)
+    expect(missing).toEqual([])
+  })
+
+  it('names a drawable icon on every workflow and category too', () => {
+    expect(toolWorkflows.filter((flow) => !declared.has(flow.icon)).map((flow) => flow.id)).toEqual([])
+    expect(toolCategories.filter((category) => !declared.has(category.icon)).map((category) => category.id)).toEqual([])
   })
 })
