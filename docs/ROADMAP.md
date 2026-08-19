@@ -62,14 +62,14 @@
 - **release 跑完整门槛**：`check:release-version`（版本号与推送的 `v*` tag 一致）、`test`、`benchmark:markdown:gate`、`build`、`check:startup`、`build:public`、`check:public`、两次 `cargo check`、`cargo test`、两次 clippy。
 - **`SHA256SUMS.txt` 可用**。`write-release-checksums.mjs` 用 `basename()` 写相对文件名，可直接 `sha256sum -c`；工作流断言 NSIS 目录里恰好只有一个 installer，不再递归哈希整个 `bundle/`。
 - **Rust 测试与 clippy 已进 CI**。`ci.yml` 含 `cargo test` 与两次 clippy，不再只有 `cargo check`。
-- **首条真实 Tauri 自动化已进 CI**。`pnpm desktop:e2e` 构建并启动隔离的 debug 二进制，验证自动化配方从 UI 写入 Vault、通过 Rust IPC 回读、WebDriver 会话重建后仍存在，以及智能整理扫描/摘要读取对来源和归档目录均为零变更。测试桥、全局 Tauri API 与 WebDriver 权限只在 `e2e` feature 和独立应用标识下启用，普通包和 Public Core 包不包含它们。
+- **真实 Tauri 自动化已进 CI**。`pnpm desktop:e2e` 构建并启动隔离的 debug 二进制，共跑 4 个 spec、10 个断言：自动化配方从 UI 写入 Vault、通过 Rust IPC 回读、WebDriver 会话重建后仍存在；智能整理只读扫描零变更；同盘移动与撤销、输入变化拒绝、目标占用不覆盖、部分失败反向回滚、跨盘复制并保留原件，以及进程被强制终止后的下一次启动恢复。崩溃场景先正常关闭 WebDriver 会话，再按 E2E IPC 返回的精确 PID 终止隔离应用，后续 worker 会启动新进程验证 pending 凭据确实被消费。测试桥、故障注入字段、全局 Tauri API 与 WebDriver 权限只在 `e2e` feature 和独立应用标识下启用，普通包和 Public Core 包不包含它们。
 
 仍然缺少：
 
 - **安装包未签名**。`tauri.conf.json` 无 `certificateThumbprint` / `signCommand`，SmartScreen 会拦截。需要代码签名证书，不是纯代码工作。
-- **原生自动化覆盖仍是基础烟测**。现有 17 个 `scripts/*-drive.mjs` 仍只是浏览器截图/QA 工具；新增的 Tauri E2E 已覆盖启动、Vault 配方持久化与智能整理只读扫描，但尚未覆盖文件执行/回滚、崩溃恢复、OneDrive、跨卷、DPI 和安装包升级。
+- **原生自动化仍未覆盖完整真机矩阵**。现有 17 个 `scripts/*-drive.mjs` 仍只是浏览器截图/QA 工具；真实 Tauri E2E 已覆盖核心文件执行、撤销、冲突、跨卷与崩溃恢复，但尚未覆盖 OneDrive 占位文件、只读/独占锁、超长路径、多 DPI、签名安装包和跨版本升级。
 
-因此可以自动声称的范围只限于上述四个烟测断言；破坏性文件流程、安装与真机矩阵仍必须人工验收。
+因此可以自动声称的范围限于上述 10 个隔离场景；OneDrive、安装与完整 Windows 真机矩阵仍必须人工验收。
 
 ## 5. 功能排期
 
