@@ -59,7 +59,8 @@ fn canonical_input(path: &str) -> Result<PathBuf> {
     if !candidate.exists() {
         bail!("找不到输入路径：{}", candidate.display());
     }
-    fs::canonicalize(&candidate).with_context(|| format!("无法读取输入路径：{}", candidate.display()))
+    fs::canonicalize(&candidate)
+        .with_context(|| format!("无法读取输入路径：{}", candidate.display()))
 }
 
 fn canonical_output(path: &str) -> Result<(PathBuf, PathBuf)> {
@@ -68,7 +69,10 @@ fn canonical_output(path: &str) -> Result<(PathBuf, PathBuf)> {
         bail!("归档输出路径不能为空。")
     }
     if candidate.exists() {
-        bail!("目标归档已存在，为避免覆盖请换一个文件名：{}", candidate.display())
+        bail!(
+            "目标归档已存在，为避免覆盖请换一个文件名：{}",
+            candidate.display()
+        )
     }
     let parent = candidate
         .parent()
@@ -103,7 +107,11 @@ fn find_seven_zip() -> Option<String> {
 
 pub fn seven_zip_engine_status() -> SevenZipEngineStatus {
     let Some(executable) = find_seven_zip() else {
-        return SevenZipEngineStatus { available: false, executable: None, version: None };
+        return SevenZipEngineStatus {
+            available: false,
+            executable: None,
+            version: None,
+        };
     };
     let version = Command::new(&executable)
         .arg("-version")
@@ -118,7 +126,11 @@ pub fn seven_zip_engine_status() -> SevenZipEngineStatus {
                 .find(|line| line.to_ascii_lowercase().contains("7-zip"))
                 .map(|line| line.trim().chars().take(160).collect())
         });
-    SevenZipEngineStatus { available: true, executable: Some(executable), version }
+    SevenZipEngineStatus {
+        available: true,
+        executable: Some(executable),
+        version,
+    }
 }
 
 fn require_seven_zip() -> Result<String> {
@@ -130,7 +142,10 @@ fn seven_zip_compatible_path(path: &Path) -> PathBuf {
     if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
         return PathBuf::from(format!(r"\\{unc}"));
     }
-    value.strip_prefix(r"\\?\").map(PathBuf::from).unwrap_or_else(|| path.to_path_buf())
+    value
+        .strip_prefix(r"\\?\")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| path.to_path_buf())
 }
 
 fn bounded_command_output(output: std::process::Output) -> Result<String> {
@@ -139,14 +154,21 @@ fn bounded_command_output(output: std::process::Output) -> Result<String> {
         bail!("7-Zip 输出超过安全上限，无法继续处理。")
     }
     if !output.status.success() {
-        let detail = [String::from_utf8_lossy(&output.stderr).trim().to_owned(), String::from_utf8_lossy(&output.stdout).trim().to_owned()]
-            .into_iter()
-            .find(|item| !item.is_empty())
-            .unwrap_or_default()
-            .chars()
-            .take(900)
-            .collect::<String>();
-        bail!(if detail.is_empty() { "7-Zip 操作失败。".to_owned() } else { detail })
+        let detail = [
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        ]
+        .into_iter()
+        .find(|item| !item.is_empty())
+        .unwrap_or_default()
+        .chars()
+        .take(900)
+        .collect::<String>();
+        bail!(if detail.is_empty() {
+            "7-Zip 操作失败。".to_owned()
+        } else {
+            detail
+        })
     }
     text.shrink_to_fit();
     Ok(text)
@@ -163,14 +185,20 @@ struct SevenZipEntryRecord {
 }
 
 fn parse_seven_zip_number(value: &str) -> Result<u64> {
-    value.trim().parse::<u64>().with_context(|| format!("7-Zip 条目大小无效：{value}"))
+    value
+        .trim()
+        .parse::<u64>()
+        .with_context(|| format!("7-Zip 条目大小无效：{value}"))
 }
 
 fn parse_seven_zip_listing(text: &str) -> Result<Vec<SevenZipEntryRecord>> {
     let mut entries = Vec::new();
     let mut record = SevenZipEntryRecord::default();
     let mut has_path = false;
-    let flush = |record: &mut SevenZipEntryRecord, has_path: &mut bool, entries: &mut Vec<SevenZipEntryRecord>| -> Result<()> {
+    let flush = |record: &mut SevenZipEntryRecord,
+                 has_path: &mut bool,
+                 entries: &mut Vec<SevenZipEntryRecord>|
+     -> Result<()> {
         if !*has_path {
             return Ok(());
         }
@@ -183,7 +211,10 @@ fn parse_seven_zip_listing(text: &str) -> Result<Vec<SevenZipEntryRecord>> {
         if record.is_link {
             bail!("7z 归档包含链接或特殊条目，已拒绝：{name}")
         }
-        entries.push(SevenZipEntryRecord { name, ..std::mem::take(record) });
+        entries.push(SevenZipEntryRecord {
+            name,
+            ..std::mem::take(record)
+        });
         *has_path = false;
         Ok(())
     };
@@ -192,7 +223,9 @@ fn parse_seven_zip_listing(text: &str) -> Result<Vec<SevenZipEntryRecord>> {
             flush(&mut record, &mut has_path, &mut entries)?;
             continue;
         }
-        let Some((key, value)) = line.split_once(" = ") else { continue };
+        let Some((key, value)) = line.split_once(" = ") else {
+            continue;
+        };
         match key.trim() {
             "Path" => {
                 if has_path {
@@ -203,13 +236,19 @@ fn parse_seven_zip_listing(text: &str) -> Result<Vec<SevenZipEntryRecord>> {
             }
             "Size" if has_path => record.uncompressed_size = parse_seven_zip_number(value)?,
             "Packed Size" if has_path => {
-                record.compressed_size = if value.trim().is_empty() { 0 } else { parse_seven_zip_number(value)? };
+                record.compressed_size = if value.trim().is_empty() {
+                    0
+                } else {
+                    parse_seven_zip_number(value)?
+                };
             }
             "Folder" if has_path => record.is_directory = value.trim() == "+",
             "Attributes" if has_path => {
                 let attributes = value.trim();
                 record.is_directory |= attributes.contains('D');
-                record.is_link |= attributes.contains('L') || attributes.contains('l') || attributes.to_ascii_lowercase().contains("reparse");
+                record.is_link |= attributes.contains('L')
+                    || attributes.contains('l')
+                    || attributes.to_ascii_lowercase().contains("reparse");
             }
             "Type" if has_path => {
                 let kind = value.trim().to_ascii_lowercase();
@@ -232,7 +271,9 @@ fn parse_seven_zip_listing(text: &str) -> Result<Vec<SevenZipEntryRecord>> {
         if !names.insert(entry.name.clone()) {
             bail!("归档包含重名条目，无法安全处理：{}", entry.name)
         }
-        total = total.checked_add(entry.uncompressed_size).context("归档展开大小超出安全范围")?;
+        total = total
+            .checked_add(entry.uncompressed_size)
+            .context("归档展开大小超出安全范围")?;
         if total > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
             bail!("归档展开大小超过 2 GB，无法安全处理。")
         }
@@ -263,7 +304,12 @@ fn safe_archive_name(value: &str) -> Result<String> {
         bail!("归档条目名称不安全：{value}")
     }
     let path = Path::new(&normalized);
-    if path.components().any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
         bail!("归档条目包含不安全路径：{value}")
     }
     if path.components().any(|component| matches!(component, Component::Normal(part) if part.to_string_lossy().contains(':'))) {
@@ -272,19 +318,30 @@ fn safe_archive_name(value: &str) -> Result<String> {
     Ok(normalized)
 }
 
-fn add_file(input: &Path, archive_name: &str, writer: &mut ZipWriter<File>, names: &mut HashSet<String>, total: &mut u64, files: &mut usize) -> Result<()> {
+fn add_file(
+    input: &Path,
+    archive_name: &str,
+    writer: &mut ZipWriter<File>,
+    names: &mut HashSet<String>,
+    total: &mut u64,
+    files: &mut usize,
+) -> Result<()> {
     let archive_name = safe_archive_name(archive_name)?;
     if !names.insert(archive_name.clone()) {
         bail!("归档条目重名，无法安全合并：{archive_name}")
     }
-    let metadata = fs::metadata(input).with_context(|| format!("无法读取文件：{}", input.display()))?;
-    let next_total = total.checked_add(metadata.len()).context("归档总大小超出安全范围")?;
+    let metadata =
+        fs::metadata(input).with_context(|| format!("无法读取文件：{}", input.display()))?;
+    let next_total = total
+        .checked_add(metadata.len())
+        .context("归档总大小超出安全范围")?;
     if next_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
         bail!("归档展开大小超过 2 GB，已停止处理。")
     }
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     writer.start_file(archive_name, options)?;
-    let mut source = File::open(input).with_context(|| format!("无法打开文件：{}", input.display()))?;
+    let mut source =
+        File::open(input).with_context(|| format!("无法打开文件：{}", input.display()))?;
     let mut buffer = [0_u8; 128 * 1024];
     loop {
         let read = source.read(&mut buffer)?;
@@ -310,16 +367,28 @@ fn collect_files(inputs: &[String], output: &Path) -> Result<Vec<(PathBuf, Strin
             continue;
         }
         if root.is_file() {
-            let name = root.file_name().context("输入文件缺少文件名")?.to_string_lossy().into_owned();
+            let name = root
+                .file_name()
+                .context("输入文件缺少文件名")?
+                .to_string_lossy()
+                .into_owned();
             if !names.insert(name.clone()) {
                 bail!("输入文件名重复，无法安全归档：{name}")
             }
             files.push((root, name));
             continue;
         }
-        let prefix = root.file_name().context("输入文件夹缺少名称")?.to_string_lossy().into_owned();
+        let prefix = root
+            .file_name()
+            .context("输入文件夹缺少名称")?
+            .to_string_lossy()
+            .into_owned();
         let mut found = false;
-        for entry in WalkDir::new(&root).follow_links(false).into_iter().filter_map(Result::ok) {
+        for entry in WalkDir::new(&root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -349,21 +418,36 @@ fn collect_files(inputs: &[String], output: &Path) -> Result<Vec<(PathBuf, Strin
     Ok(files)
 }
 
-pub fn create_zip(input_paths: Vec<String>, output_path: String) -> Result<ArchiveOperationSummary> {
+pub fn create_zip(
+    input_paths: Vec<String>,
+    output_path: String,
+) -> Result<ArchiveOperationSummary> {
     let (output, _parent) = canonical_output(&output_path)?;
     let files = collect_files(&input_paths, &output)?;
-    let file = File::create(&output).with_context(|| format!("无法创建归档：{}", output.display()))?;
+    let file =
+        File::create(&output).with_context(|| format!("无法创建归档：{}", output.display()))?;
     let mut writer = ZipWriter::new(file);
     let mut names = HashSet::with_capacity(files.len());
     let mut total = 0_u64;
     let mut file_count = 0_usize;
     for (path, name) in files {
-        add_file(&path, &name, &mut writer, &mut names, &mut total, &mut file_count)?;
+        add_file(
+            &path,
+            &name,
+            &mut writer,
+            &mut names,
+            &mut total,
+            &mut file_count,
+        )?;
     }
     writer.finish()?;
     let archive_size = fs::metadata(&output)?.len();
     Ok(ArchiveOperationSummary {
-        archive_name: output.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+        archive_name: output
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
         archive_size,
         entry_count: file_count,
         file_count,
@@ -377,8 +461,11 @@ fn append_tar_entries<W: Write>(writer: W, files: &[(PathBuf, String)]) -> Resul
     let mut builder = TarBuilder::new(writer);
     let mut total = 0_u64;
     for (path, name) in files {
-        let metadata = fs::metadata(path).with_context(|| format!("无法读取文件：{}", path.display()))?;
-        let next_total = total.checked_add(metadata.len()).context("归档总大小超出安全范围")?;
+        let metadata =
+            fs::metadata(path).with_context(|| format!("无法读取文件：{}", path.display()))?;
+        let next_total = total
+            .checked_add(metadata.len())
+            .context("归档总大小超出安全范围")?;
         if next_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
             bail!("归档展开大小超过 2 GB，已停止处理。")
         }
@@ -398,10 +485,15 @@ fn is_gzip_archive(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-pub fn create_tar(input_paths: Vec<String>, output_path: String, gzip: bool) -> Result<ArchiveOperationSummary> {
+pub fn create_tar(
+    input_paths: Vec<String>,
+    output_path: String,
+    gzip: bool,
+) -> Result<ArchiveOperationSummary> {
     let (output, _parent) = canonical_output(&output_path)?;
     let files = collect_files(&input_paths, &output)?;
-    let file = File::create(&output).with_context(|| format!("无法创建归档：{}", output.display()))?;
+    let file =
+        File::create(&output).with_context(|| format!("无法创建归档：{}", output.display()))?;
     let (file_count, total) = if gzip {
         let encoder = GzEncoder::new(file, Compression::default());
         let (encoder, count, total) = append_tar_entries(encoder, &files)?;
@@ -413,7 +505,11 @@ pub fn create_tar(input_paths: Vec<String>, output_path: String, gzip: bool) -> 
     };
     let archive_size = fs::metadata(&output)?.len();
     Ok(ArchiveOperationSummary {
-        archive_name: output.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+        archive_name: output
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
         archive_size,
         entry_count: file_count,
         file_count,
@@ -423,7 +519,11 @@ pub fn create_tar(input_paths: Vec<String>, output_path: String, gzip: bool) -> 
     })
 }
 
-fn list_tar_reader<R: Read>(reader: R, archive_name: String, archive_size: u64) -> Result<ArchiveListing> {
+fn list_tar_reader<R: Read>(
+    reader: R,
+    archive_name: String,
+    archive_size: u64,
+) -> Result<ArchiveListing> {
     let mut archive = tar::Archive::new(reader);
     let mut entries = Vec::new();
     let mut names = HashSet::new();
@@ -439,16 +539,28 @@ fn list_tar_reader<R: Read>(reader: R, archive_name: String, archive_size: u64) 
             bail!("归档包含重名条目，无法安全预览。")
         }
         let size = entry.header().size()?;
-        uncompressed_size = uncompressed_size.checked_add(size).context("归档展开大小超出安全范围")?;
+        uncompressed_size = uncompressed_size
+            .checked_add(size)
+            .context("归档展开大小超出安全范围")?;
         if uncompressed_size > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
             bail!("归档展开大小超过 2 GB，无法安全检查。")
         }
-        entries.push(ArchiveEntry { name, compressed_size: 0, uncompressed_size: size, is_directory: entry_type.is_dir() });
+        entries.push(ArchiveEntry {
+            name,
+            compressed_size: 0,
+            uncompressed_size: size,
+            is_directory: entry_type.is_dir(),
+        });
         if entries.len() > MAX_ARCHIVE_ENTRIES {
             bail!("归档包含过多文件，无法安全检查。")
         }
     }
-    Ok(ArchiveListing { archive_name, archive_size, entries, uncompressed_size })
+    Ok(ArchiveListing {
+        archive_name,
+        archive_size,
+        entries,
+        uncompressed_size,
+    })
 }
 
 pub fn list_tar(archive_path: String) -> Result<ArchiveListing> {
@@ -457,7 +569,11 @@ pub fn list_tar(archive_path: String) -> Result<ArchiveListing> {
         bail!("归档路径不是文件：{}", path.display())
     }
     let archive_size = fs::metadata(&path)?.len();
-    let archive_name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let archive_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     let file = File::open(&path)?;
     if is_gzip_archive(&path) {
         list_tar_reader(GzDecoder::new(file), archive_name, archive_size)
@@ -466,7 +582,12 @@ pub fn list_tar(archive_path: String) -> Result<ArchiveListing> {
     }
 }
 
-fn extract_tar_reader<R: Read>(reader: R, archive_path: &Path, output_root: &Path, archive_size: u64) -> Result<ArchiveOperationSummary> {
+fn extract_tar_reader<R: Read>(
+    reader: R,
+    archive_path: &Path,
+    output_root: &Path,
+    archive_size: u64,
+) -> Result<ArchiveOperationSummary> {
     let mut archive = tar::Archive::new(reader);
     let mut names = HashSet::new();
     let mut total = 0_u64;
@@ -494,12 +615,17 @@ fn extract_tar_reader<R: Read>(reader: R, archive_path: &Path, output_root: &Pat
             directory_count += 1;
             continue;
         }
-        let next_total = total.checked_add(entry.header().size()?).context("归档展开大小超出安全范围")?;
+        let next_total = total
+            .checked_add(entry.header().size()?)
+            .context("归档展开大小超出安全范围")?;
         if next_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
             bail!("归档展开大小超过 2 GB，已停止解压。")
         }
         if target.exists() {
-            bail!("解压目标已存在，为避免覆盖请换一个空目录：{}", target.display())
+            bail!(
+                "解压目标已存在，为避免覆盖请换一个空目录：{}",
+                target.display()
+            )
         }
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
@@ -509,21 +635,42 @@ fn extract_tar_reader<R: Read>(reader: R, archive_path: &Path, output_root: &Pat
         total = next_total;
         file_count += 1;
     }
-    Ok(ArchiveOperationSummary { archive_name: archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned(), archive_size, entry_count: names.len(), file_count, directory_count, uncompressed_size: total, output_path: output_root.to_string_lossy().into_owned() })
+    Ok(ArchiveOperationSummary {
+        archive_name: archive_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        archive_size,
+        entry_count: names.len(),
+        file_count,
+        directory_count,
+        uncompressed_size: total,
+        output_path: output_root.to_string_lossy().into_owned(),
+    })
 }
 
-pub fn extract_tar(archive_path: String, output_directory: String) -> Result<ArchiveOperationSummary> {
+pub fn extract_tar(
+    archive_path: String,
+    output_directory: String,
+) -> Result<ArchiveOperationSummary> {
     let archive_path = canonical_input(&archive_path)?;
     if !archive_path.is_file() {
         bail!("归档路径不是文件：{}", archive_path.display())
     }
     let output_root = PathBuf::from(&output_directory);
-    fs::create_dir_all(&output_root).with_context(|| format!("无法创建解压目录：{}", output_root.display()))?;
+    fs::create_dir_all(&output_root)
+        .with_context(|| format!("无法创建解压目录：{}", output_root.display()))?;
     let output_root = fs::canonicalize(&output_root)?;
     let archive_size = fs::metadata(&archive_path)?.len();
     let file = File::open(&archive_path)?;
     if is_gzip_archive(&archive_path) {
-        extract_tar_reader(GzDecoder::new(file), &archive_path, &output_root, archive_size)
+        extract_tar_reader(
+            GzDecoder::new(file),
+            &archive_path,
+            &output_root,
+            archive_size,
+        )
     } else {
         extract_tar_reader(file, &archive_path, &output_root, archive_size)
     }
@@ -548,22 +695,42 @@ pub fn list_zip(archive_path: String) -> Result<ArchiveListing> {
         if !names.insert(name.clone()) {
             bail!("归档包含重名条目，无法安全预览。")
         }
-        uncompressed_size = uncompressed_size.checked_add(entry.size()).context("归档展开大小超出安全范围")?;
+        uncompressed_size = uncompressed_size
+            .checked_add(entry.size())
+            .context("归档展开大小超出安全范围")?;
         if uncompressed_size > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
             bail!("归档展开大小超过 2 GB，无法安全检查。")
         }
-        entries.push(ArchiveEntry { name, compressed_size: entry.compressed_size(), uncompressed_size: entry.size(), is_directory: entry.is_dir() });
+        entries.push(ArchiveEntry {
+            name,
+            compressed_size: entry.compressed_size(),
+            uncompressed_size: entry.size(),
+            is_directory: entry.is_dir(),
+        });
     }
-    Ok(ArchiveListing { archive_name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(), archive_size, entries, uncompressed_size })
+    Ok(ArchiveListing {
+        archive_name: path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        archive_size,
+        entries,
+        uncompressed_size,
+    })
 }
 
-pub fn extract_zip(archive_path: String, output_directory: String) -> Result<ArchiveOperationSummary> {
+pub fn extract_zip(
+    archive_path: String,
+    output_directory: String,
+) -> Result<ArchiveOperationSummary> {
     let archive_path = canonical_input(&archive_path)?;
     if !archive_path.is_file() {
         bail!("归档路径不是文件：{}", archive_path.display())
     }
     let output_root = PathBuf::from(&output_directory);
-    fs::create_dir_all(&output_root).with_context(|| format!("无法创建解压目录：{}", output_root.display()))?;
+    fs::create_dir_all(&output_root)
+        .with_context(|| format!("无法创建解压目录：{}", output_root.display()))?;
     let output_root = fs::canonicalize(&output_root)?;
     let archive_size = fs::metadata(&archive_path)?.len();
     let mut archive = ZipArchive::new(File::open(&archive_path)?).context("ZIP 归档无法读取")?;
@@ -586,18 +753,26 @@ pub fn extract_zip(archive_path: String, output_directory: String) -> Result<Arc
         }
         if entry.is_dir() {
             if target.exists() {
-                bail!("解压目标已存在，为避免覆盖请换一个空目录：{}", target.display())
+                bail!(
+                    "解压目标已存在，为避免覆盖请换一个空目录：{}",
+                    target.display()
+                )
             }
             fs::create_dir_all(&target)?;
             directory_count += 1;
             continue;
         }
-        let next_total = total.checked_add(entry.size()).context("归档展开大小超出安全范围")?;
+        let next_total = total
+            .checked_add(entry.size())
+            .context("归档展开大小超出安全范围")?;
         if next_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
             bail!("归档展开大小超过 2 GB，已停止解压。")
         }
         if target.exists() {
-            bail!("解压目标已存在，为避免覆盖请换一个空目录：{}", target.display())
+            bail!(
+                "解压目标已存在，为避免覆盖请换一个空目录：{}",
+                target.display()
+            )
         }
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
@@ -607,7 +782,19 @@ pub fn extract_zip(archive_path: String, output_directory: String) -> Result<Arc
         total = next_total;
         file_count += 1;
     }
-    Ok(ArchiveOperationSummary { archive_name: archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned(), archive_size, entry_count: archive.len(), file_count, directory_count, uncompressed_size: total, output_path: output_root.to_string_lossy().into_owned() })
+    Ok(ArchiveOperationSummary {
+        archive_name: archive_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        archive_size,
+        entry_count: archive.len(),
+        file_count,
+        directory_count,
+        uncompressed_size: total,
+        output_path: output_root.to_string_lossy().into_owned(),
+    })
 }
 
 fn seven_zip_common_base(inputs: &[PathBuf]) -> Result<PathBuf> {
@@ -618,7 +805,9 @@ fn seven_zip_common_base(inputs: &[PathBuf]) -> Result<PathBuf> {
         .context("归档输入缺少父目录")?;
     for input in inputs.iter().skip(1) {
         while !input.starts_with(&base) {
-            let Some(parent) = base.parent() else { bail!("归档输入不在同一文件系统路径下。") };
+            let Some(parent) = base.parent() else {
+                bail!("归档输入不在同一文件系统路径下。")
+            };
             if parent == base {
                 bail!("归档输入不在同一文件系统路径下。")
             }
@@ -637,9 +826,15 @@ fn ensure_seven_zip_output_is_safe(output: &Path, inputs: &[PathBuf]) -> Result<
     Ok(())
 }
 
-pub fn create_seven_zip(input_paths: Vec<String>, output_path: String) -> Result<ArchiveOperationSummary> {
+pub fn create_seven_zip(
+    input_paths: Vec<String>,
+    output_path: String,
+) -> Result<ArchiveOperationSummary> {
     let (output, _parent) = canonical_output(&output_path)?;
-    let input_roots = input_paths.iter().map(|path| canonical_input(path)).collect::<Result<Vec<_>>>()?;
+    let input_roots = input_paths
+        .iter()
+        .map(|path| canonical_input(path))
+        .collect::<Result<Vec<_>>>()?;
     if input_roots.is_empty() {
         bail!("至少选择一个要归档的文件或文件夹。")
     }
@@ -649,7 +844,9 @@ pub fn create_seven_zip(input_paths: Vec<String>, output_path: String) -> Result
     let relative_inputs = input_roots
         .iter()
         .map(|input| {
-            let relative = input.strip_prefix(&base).map_err(|_| anyhow::anyhow!("无法计算 7z 归档相对路径。"))?;
+            let relative = input
+                .strip_prefix(&base)
+                .map_err(|_| anyhow::anyhow!("无法计算 7z 归档相对路径。"))?;
             safe_archive_name(&relative.to_string_lossy())
         })
         .collect::<Result<Vec<_>>>()?;
@@ -676,7 +873,11 @@ pub fn create_seven_zip(input_paths: Vec<String>, output_path: String) -> Result
         bail!("7z 输出条目与输入不一致，已删除异常输出。")
     }
     Ok(ArchiveOperationSummary {
-        archive_name: archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+        archive_name: archive_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
         archive_size,
         entry_count: entries.len(),
         file_count,
@@ -690,17 +891,33 @@ pub fn list_seven_zip(archive_path: String) -> Result<ArchiveListing> {
     let (path, archive_size, entries) = seven_zip_listing(Path::new(&archive_path))?;
     let uncompressed_size = entries.iter().map(|entry| entry.uncompressed_size).sum();
     Ok(ArchiveListing {
-        archive_name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+        archive_name: path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
         archive_size,
-        entries: entries.into_iter().map(|entry| ArchiveEntry { name: entry.name, compressed_size: entry.compressed_size, uncompressed_size: entry.uncompressed_size, is_directory: entry.is_directory }).collect(),
+        entries: entries
+            .into_iter()
+            .map(|entry| ArchiveEntry {
+                name: entry.name,
+                compressed_size: entry.compressed_size,
+                uncompressed_size: entry.uncompressed_size,
+                is_directory: entry.is_directory,
+            })
+            .collect(),
         uncompressed_size,
     })
 }
 
-pub fn extract_seven_zip(archive_path: String, output_directory: String) -> Result<ArchiveOperationSummary> {
+pub fn extract_seven_zip(
+    archive_path: String,
+    output_directory: String,
+) -> Result<ArchiveOperationSummary> {
     let (archive, archive_size, entries) = seven_zip_listing(Path::new(&archive_path))?;
     let output_root = PathBuf::from(&output_directory);
-    fs::create_dir_all(&output_root).with_context(|| format!("无法创建解压目录：{}", output_root.display()))?;
+    fs::create_dir_all(&output_root)
+        .with_context(|| format!("无法创建解压目录：{}", output_root.display()))?;
     let output_root = fs::canonicalize(&output_root)?;
     if fs::read_dir(&output_root)?.next().is_some() {
         bail!("7z 解压目标必须是空目录，为避免覆盖已有文件已停止。")
@@ -711,7 +928,10 @@ pub fn extract_seven_zip(archive_path: String, output_directory: String) -> Resu
     let executable = require_seven_zip()?;
     let output = Command::new(executable)
         .args(["x", "-y", "-aos", "-bd"])
-        .arg(format!("-o{}", seven_zip_compatible_path(&output_root).to_string_lossy()))
+        .arg(format!(
+            "-o{}",
+            seven_zip_compatible_path(&output_root).to_string_lossy()
+        ))
         .arg(seven_zip_compatible_path(&archive))
         .stdin(Stdio::null())
         .output()
@@ -721,7 +941,11 @@ pub fn extract_seven_zip(archive_path: String, output_directory: String) -> Resu
     let directory_count = entries.iter().filter(|entry| entry.is_directory).count();
     let uncompressed_size = entries.iter().map(|entry| entry.uncompressed_size).sum();
     Ok(ArchiveOperationSummary {
-        archive_name: archive.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+        archive_name: archive
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
         archive_size,
         entry_count: entries.len(),
         file_count,
@@ -750,14 +974,27 @@ mod tests {
         fs::create_dir_all(source.join("nested"))?;
         fs::write(source.join("hello.txt"), "你好")?;
         fs::write(source.join("nested/data.csv"), "a,b\n1,2")?;
-        let summary = create_zip(vec![source.to_string_lossy().into_owned()], output.to_string_lossy().into_owned())?;
+        let summary = create_zip(
+            vec![source.to_string_lossy().into_owned()],
+            output.to_string_lossy().into_owned(),
+        )?;
         assert_eq!(summary.file_count, 2);
         let listing = list_zip(output.to_string_lossy().into_owned())?;
         assert_eq!(listing.entries.len(), 2);
-        let restored = extract_zip(output.to_string_lossy().into_owned(), extracted.to_string_lossy().into_owned())?;
+        let restored = extract_zip(
+            output.to_string_lossy().into_owned(),
+            extracted.to_string_lossy().into_owned(),
+        )?;
         assert_eq!(restored.file_count, 2);
-        assert_eq!(fs::read_to_string(extracted.join("source/hello.txt"))?, "你好");
-        assert!(extract_zip(output.to_string_lossy().into_owned(), extracted.to_string_lossy().into_owned()).is_err());
+        assert_eq!(
+            fs::read_to_string(extracted.join("source/hello.txt"))?,
+            "你好"
+        );
+        assert!(extract_zip(
+            output.to_string_lossy().into_owned(),
+            extracted.to_string_lossy().into_owned()
+        )
+        .is_err());
         fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -771,14 +1008,28 @@ mod tests {
         fs::create_dir_all(source.join("nested"))?;
         fs::write(source.join("hello.txt"), "你好")?;
         fs::write(source.join("nested/data.csv"), "a,b\n1,2")?;
-        let summary = create_tar(vec![source.to_string_lossy().into_owned()], output.to_string_lossy().into_owned(), true)?;
+        let summary = create_tar(
+            vec![source.to_string_lossy().into_owned()],
+            output.to_string_lossy().into_owned(),
+            true,
+        )?;
         assert_eq!(summary.file_count, 2);
         let listing = list_tar(output.to_string_lossy().into_owned())?;
         assert_eq!(listing.entries.len(), 2);
-        let restored = extract_tar(output.to_string_lossy().into_owned(), extracted.to_string_lossy().into_owned())?;
+        let restored = extract_tar(
+            output.to_string_lossy().into_owned(),
+            extracted.to_string_lossy().into_owned(),
+        )?;
         assert_eq!(restored.file_count, 2);
-        assert_eq!(fs::read_to_string(extracted.join("source/hello.txt"))?, "你好");
-        assert!(extract_tar(output.to_string_lossy().into_owned(), extracted.to_string_lossy().into_owned()).is_err());
+        assert_eq!(
+            fs::read_to_string(extracted.join("source/hello.txt"))?,
+            "你好"
+        );
+        assert!(extract_tar(
+            output.to_string_lossy().into_owned(),
+            extracted.to_string_lossy().into_owned()
+        )
+        .is_err());
         fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -792,7 +1043,8 @@ mod tests {
         writer.start_file("../escape.txt", SimpleFileOptions::default())?;
         writer.write_all(b"no")?;
         writer.finish()?;
-        let error = list_zip(archive.to_string_lossy().into_owned()).expect_err("unsafe names must be rejected");
+        let error = list_zip(archive.to_string_lossy().into_owned())
+            .expect_err("unsafe names must be rejected");
         assert!(error.to_string().contains("不安全路径"));
         fs::remove_dir_all(root)?;
         Ok(())
@@ -829,13 +1081,29 @@ mod tests {
         fs::create_dir_all(source.join("nested"))?;
         fs::write(source.join("hello.txt"), "你好")?;
         fs::write(source.join("nested/data.csv"), "a,b\n1,2")?;
-        let summary = create_seven_zip(vec![source.to_string_lossy().into_owned()], output.to_string_lossy().into_owned())?;
+        let summary = create_seven_zip(
+            vec![source.to_string_lossy().into_owned()],
+            output.to_string_lossy().into_owned(),
+        )?;
         assert_eq!(summary.file_count, 2);
         let listing = list_seven_zip(output.to_string_lossy().into_owned())?;
-        assert_eq!(listing.entries.iter().filter(|entry| !entry.is_directory).count(), 2);
-        let restored = extract_seven_zip(output.to_string_lossy().into_owned(), extracted.to_string_lossy().into_owned())?;
+        assert_eq!(
+            listing
+                .entries
+                .iter()
+                .filter(|entry| !entry.is_directory)
+                .count(),
+            2
+        );
+        let restored = extract_seven_zip(
+            output.to_string_lossy().into_owned(),
+            extracted.to_string_lossy().into_owned(),
+        )?;
         assert_eq!(restored.file_count, 2);
-        assert_eq!(fs::read_to_string(extracted.join("source/hello.txt"))?, "你好");
+        assert_eq!(
+            fs::read_to_string(extracted.join("source/hello.txt"))?,
+            "你好"
+        );
         fs::remove_dir_all(root)?;
         Ok(())
     }
