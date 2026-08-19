@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import { applyStoredTheme } from '@/lib/theme'
+import { installCrashReporting } from '@/lib/crash-report'
 
 // Order is load-bearing. Tokens and the frame come first; the legacy layers
 // (still owning a handful of un-migrated controls, but speaking the design
@@ -21,6 +22,8 @@ import './styles/reading.css'
 import 'katex/dist/katex.min.css'
 import 'virtual:uno.css'
 
+// Before the app mounts, so a failure during setup is still recorded.
+installCrashReporting()
 applyStoredTheme()
 
 createApp(App).use(createPinia()).use(router).mount('#app')

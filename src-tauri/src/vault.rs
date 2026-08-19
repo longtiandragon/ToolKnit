@@ -839,6 +839,30 @@ fn extend_ai_response_bytes(buffer: &mut Vec<u8>, chunk: &[u8], max_bytes: usize
     Ok(())
 }
 
+/// The schema a database file already carries, without opening it as a Vault.
+///
+/// `VaultService::open` migrates, and now refuses a newer schema outright, so
+/// the restore paths can no longer use it to *inspect* an archive and still say
+/// something specific about the archive. Reading the stamp directly keeps their
+/// wording — and moves the refusal ahead of the staging work rather than after
+/// it.
+fn stamped_schema_version(database: &Path) -> Result<i64> {
+    let connection = rusqlite::Connection::open(database)?;
+    let stamped: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !stamped {
+        return Ok(0);
+    }
+    Ok(connection.query_row(
+        "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 impl VaultService {
     pub fn open(path: String) -> Result<Self> {
         let root = PathBuf::from(path);
@@ -1048,7 +1072,30 @@ impl VaultService {
             [],
             |row| row.get(0),
         )?;
-        if current_version >= SCHEMA_VERSION {
+        // A Vault written by a newer Knitspace must not be opened by this one.
+        //
+        // Migrations only ever run forwards, so a higher version means tables,
+        // columns and indexes this build has never heard of. Reading is the
+        // lesser problem; the real one is that every write path here would keep
+        // working — inserting rows that satisfy this build's idea of the schema
+        // and silently violating whatever the newer version added. By the time
+        // the user goes back to the newer build, the damage is already in the
+        // file.
+        //
+        // Both restore paths already refuse a newer schema (`schema_version >
+        // SCHEMA_VERSION`, twice below). They stay as a backstop, but the guard
+        // belongs here: restore was never the only way to meet a newer Vault —
+        // syncing a folder, restoring a machine backup, or simply downgrading
+        // the app all reach this function instead, and until now all three
+        // opened the Vault and started writing to it.
+        if current_version > SCHEMA_VERSION {
+            bail!(
+                "这个资料库由更新版本的 Knitspace 写入（schema v{}，本版本支持 v{}）。请升级 Knitspace 后再打开；当前版本不会写入，以免损坏数据。",
+                current_version,
+                SCHEMA_VERSION
+            )
+        }
+        if current_version == SCHEMA_VERSION {
             return Ok(());
         }
 
@@ -8677,19 +8724,23 @@ impl VaultService {
             drop(database_output);
             drop(database_entry);
 
+            // Refuse a newer schema before staging it, not after: opening the
+            // copy would migrate it, and this build cannot migrate forwards to
+            // a version it has never seen.
+            let stamped = stamped_schema_version(&database_path)?;
+            if stamped > SCHEMA_VERSION {
+                bail!(
+                    "归档需要更新版本的 Knitspace（schema v{}，当前支持 v{}）",
+                    stamped,
+                    SCHEMA_VERSION
+                )
+            }
             // Open a throwaway copy so old supported schema versions can be
             // migrated and checked without mutating the selected ZIP.
             let staged = VaultService::open(temporary_root.to_string_lossy().into_owned())?;
             let health = staged.health()?;
             if health.integrity != "ok" {
                 bail!("归档中的 SQLite 完整性检查失败：{}", health.integrity)
-            }
-            if health.schema_version > SCHEMA_VERSION {
-                bail!(
-                    "归档需要更新版本的 Knitspace（schema v{}，当前支持 v{}）",
-                    health.schema_version,
-                    SCHEMA_VERSION
-                )
             }
             let connection = staged.connection()?;
             let markdown_paths = {
@@ -8814,23 +8865,23 @@ impl VaultService {
             if !stage.join(".toolknit/index.sqlite3").is_file() {
                 bail!("这不是可恢复的 Knitspace Vault 归档")
             }
+            let stamped = stamped_schema_version(&stage.join(".toolknit/index.sqlite3"))?;
+            if stamped > SCHEMA_VERSION {
+                bail!(
+                    "归档需要更新版本的 Knitspace（schema v{}，当前支持 v{}）",
+                    stamped,
+                    SCHEMA_VERSION
+                )
+            }
             // Open/migrate and run the same health checks shown in Settings
-            // while still staged. A corrupt index, incompatible schema, or
-            // database row whose Markdown body is absent therefore cannot
-            // replace the live Vault.
+            // while still staged. A corrupt index or a database row whose
+            // Markdown body is absent therefore cannot replace the live Vault.
             let staged = VaultService::open(stage.to_string_lossy().into_owned())?;
             let staged_health = staged.health()?;
             if staged_health.integrity != "ok" {
                 bail!(
                     "归档中的 SQLite 完整性检查失败：{}",
                     staged_health.integrity
-                )
-            }
-            if staged_health.schema_version > SCHEMA_VERSION {
-                bail!(
-                    "归档需要更新版本的 Knitspace（schema v{}，当前支持 v{}）",
-                    staged_health.schema_version,
-                    SCHEMA_VERSION
                 )
             }
             if staged_health.missing_markdown_count > 0 {
@@ -9830,6 +9881,73 @@ mod tests {
         )?;
         assert_eq!(version, SCHEMA_VERSION);
         assert!(table_exists);
+        drop(connection);
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn refuses_a_vault_written_by_a_newer_knitspace() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("knitspace-downgrade-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        let document = test_document(Uuid::now_v7().to_string(), "降级保护题目");
+        service.save_document(document.clone())?;
+
+        // Stamp a schema this build has never seen, the way a newer Knitspace
+        // would have left it.
+        {
+            let connection = service.connection()?;
+            connection.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                rusqlite::params![SCHEMA_VERSION + 1, Utc::now().to_rfc3339()],
+            )?;
+        }
+        drop(service);
+
+        let reopened = VaultService::open(root.to_string_lossy().into_owned());
+        let message = match reopened {
+            Ok(_) => panic!("a newer schema must not open"),
+            Err(error) => error.to_string(),
+        };
+        // The message has to name both versions, or the user cannot tell
+        // whether to upgrade the app or restore a backup.
+        assert!(
+            message.contains(&(SCHEMA_VERSION + 1).to_string())
+                && message.contains(&SCHEMA_VERSION.to_string()),
+            "unhelpful downgrade message: {message}"
+        );
+
+        // Refusing must not have touched the data. Drop back to a schema this
+        // build does support and confirm the document survived intact.
+        {
+            let connection = rusqlite::Connection::open(root.join(".toolknit/index.sqlite3"))?;
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version > ?1",
+                rusqlite::params![SCHEMA_VERSION],
+            )?;
+        }
+        let recovered = VaultService::open(root.to_string_lossy().into_owned())?;
+        assert_eq!(recovered.get_document(document.id.clone())?.title, document.title);
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn opens_a_vault_already_at_the_current_schema_without_migrating() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("knitspace-same-schema-{}", Uuid::now_v7()));
+        let service = VaultService::open(root.to_string_lossy().into_owned())?;
+        drop(service);
+        // The equality case is the ordinary one — every launch after the first
+        // takes it — so the new inequality must not have broken it.
+        let reopened = VaultService::open(root.to_string_lossy().into_owned())?;
+        let connection = reopened.connection()?;
+        let version: i64 =
+            connection.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(version, SCHEMA_VERSION);
         drop(connection);
 
         fs::remove_dir_all(root)?;
