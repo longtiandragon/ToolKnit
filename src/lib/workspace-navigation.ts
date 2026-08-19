@@ -127,6 +127,7 @@ export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] 
       { label: '滚动截图拼接', to: '/visual?tool=stitch', icon: 'sort' },
       { label: '代码分享工作室', to: '/code-image', icon: 'terminal' },
       { label: 'AI 内容工作台', to: '/ai', icon: 'sparkle' },
+      { label: '资料库证据型 AI', to: '/evidence-ai', icon: 'search' },
     ], [
       { label: '公式图片识别', to: '/documents?kind=note&create=note&mode=split&insert=formula&recognize=formula', icon: 'math' },
       { label: '新建自由画布', to: '/visual?canvas=blank', icon: 'plus' },
@@ -156,6 +157,7 @@ export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] 
     navItem('/', 'toolbox', '工具', [
       { label: '全部工具', to: '/', icon: 'toolbox' },
       { label: '文件处理中心', to: '/tools', icon: 'toolbox' },
+      { label: 'AI 智能文件收件箱', to: '/tools?mode=smart-organizer', icon: 'sparkle' },
       { label: '音视频转换', to: '/media', icon: 'play' },
       { label: '字幕校对台', to: '/subtitles', icon: 'file-text' },
       { label: '本机语音转写', to: '/subtitles?transcribe=1', icon: 'play' },
@@ -316,9 +318,9 @@ export function workspaceFeatureGroups(): WorkspaceFeatureGroup[] {
 const workspaceContextTargets: Record<string, readonly string[]> = {
   '/today': ['/today#today-focus-timer', '/today#today-focus-ledger', '/today#today-anniversaries', '/quick'],
   '/knowledge': ['/documents?kind=note', '/documents?kind=question', '/words', '/relations', '/library'],
-  '/create': ['/documents?kind=note&create=note', '/documents?kind=note&template=mindmap&mode=mindmap', '/documents?kind=note&template=diagram&mode=split', '/visual', '/code-image'],
+  '/create': ['/documents?kind=note&create=note', '/documents?kind=note&template=mindmap&mode=mindmap', '/documents?kind=note&template=diagram&mode=split', '/visual', '/evidence-ai'],
   '/review': ['/review', '/words', '/documents?kind=question', '/documents?kind=question&create=question', '/documents?kind=question&import=1'],
-  '/': ['/tools', '/media', '/subtitles', '/ocr', '/developer-tools'],
+  '/': ['/tools?mode=smart-organizer', '/tools', '/media', '/ocr', '/developer-tools'],
 }
 
 /** High-frequency actions shown when the user right-clicks otherwise empty

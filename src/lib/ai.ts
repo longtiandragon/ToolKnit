@@ -137,6 +137,27 @@ export async function runContentAi(profile: AiProfile, apiKey: string, action: C
   return runCompatibleChat(profile, apiKey, request, signal)
 }
 
+/** Sends the exact, already-previewed organizer messages. Building or
+ * enriching the payload here would make the privacy preview diverge from the
+ * bytes actually sent, so this boundary deliberately accepts no file data. */
+export async function runOrganizerAi(
+  profile: AiProfile,
+  apiKey: string,
+  messages: Array<{ role: 'system' | 'user'; content: string }>,
+  signal?: AbortSignal,
+) {
+  return runCompatibleChat(profile, apiKey, makeChatCompletionRequest(profile.model, .1, messages), signal)
+}
+
+export async function runEvidenceAi(
+  profile: AiProfile,
+  apiKey: string,
+  messages: Array<{ role: 'system' | 'user'; content: string }>,
+  signal?: AbortSignal,
+) {
+  return runCompatibleChat(profile, apiKey, makeChatCompletionRequest(profile.model, .15, messages), signal)
+}
+
 export async function testAiConnection(profile: AiProfile, apiKey: string, signal?: AbortSignal) {
   const messages = [
     { role: 'system', content: '你正在执行连接检查。不要解释，只回复 KNITSPACE_OK。' },

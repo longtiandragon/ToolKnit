@@ -61,10 +61,18 @@ function imageTool(id: string, title: string, description: string, icon: string,
   return { id: `image-${id}`, title, description, group: '图片', icon, to: { path: '/visual', query: { tool: id } }, keywords }
 }
 
+function automationTool(id: string, title: string, description: string, icon: string, keywords: string[] = [], mode = id): ToolCatalogItem {
+  return { id, title, description, group: '整理', icon, to: { path: '/tools', query: { mode } }, keywords }
+}
+
 export const toolCatalog: ToolCatalogItem[] = [
   { id: 'universal-intake', title: '万能处理入口', description: '拖入或粘贴内容，自动推荐下一步', group: '整理', icon: 'inbox', to: { path: '/quick' }, keywords: ['快速处理', '万能', '粘贴', '拖入', '智能推荐'], popular: true },
+  { ...automationTool('smart-organizer', 'AI 智能文件收件箱', '可预览、可回滚的文件整理', 'sparkle', ['文件整理', '规则']), popular: true },
   { id: 'tool-pipeline', title: '文本流水线', description: '把多个文本工具串成一次可复用处理', group: '整理', icon: 'task', to: { path: '/tools', query: { mode: 'pipeline' } }, keywords: ['流水线', '配方', '批处理', '自动化', 'recipe', 'pipeline'], popular: true },
-  { id: 'archive-zip', title: '归档', description: 'ZIP、7Z、TAR', group: '整理', icon: 'archive', to: { path: '/tools', query: { mode: 'archive' } }, keywords: ['zip', '7z', 'tar'] },
+  { ...automationTool('file-pipeline', '文件流水线', '多文件自动化链', 'task', ['批处理']), popular: true },
+  { ...automationTool('project-delivery-pack', '项目交付包', '清单与校验归档', 'archive', ['交付'], 'delivery-pack'), popular: true },
+  automationTool('folder-snapshot', '文件夹时间切片', '比较目录变化', 'clock'),
+  automationTool('archive-zip', '归档', 'ZIP、7Z、TAR', 'archive', ['zip', '7z', 'tar'], 'archive'),
   { id: 'local-ocr', title: '离线文字识别', description: '框选矫正拍歪的书页，再用本机语言包识别文字', group: '文本', icon: 'file-text', to: { path: '/ocr' }, keywords: ['OCR', '识字', '图片文字', '扫描', '矫正', '纠偏', '拍照', '裁边', '截图'], popular: true },
   { ...fileTool('merge', '合并 PDF', '把多份 PDF 按顺序合成一份', 'pdf', 'merge', ['拼接', 'combine', 'merge']), popular: true },
   fileTool('split', '拆分 PDF', '把每一页导出为独立 PDF', 'pdf', 'split', ['分页', 'split']),
@@ -124,6 +132,7 @@ export const toolCatalog: ToolCatalogItem[] = [
   imageTool('concat', '图片拼成长图', '多张图片上下或左右拼接，可留白或叠压', 'gallery', ['拼长图', '拼接', '荣誉墙', '照片墙', 'long image', 'wall']),
   { id: 'code-image', title: '代码分享图', description: '高亮并按行分页导出 PNG 或 PDF', group: '表达', icon: 'terminal', to: { path: '/code-image' }, keywords: ['代码截图', '高亮', 'code'], popular: true },
   { id: 'ai-content', title: 'AI 内容处理', description: '摘要、翻译、改写与信息提取', group: 'AI', icon: 'sparkle', to: { path: '/ai' }, keywords: ['摘要', '翻译', '改写', '邮件'] },
+  { id: 'evidence-ai', title: '资料库证据型 AI', description: '带本地定位的问答', group: 'AI', icon: 'search', to: { path: '/evidence-ai' }, keywords: ['引用'] },
   { id: 'formula-image-recognition', title: '公式图片识别', description: '确认发送预览图后生成可校对的 LaTeX 草稿', group: 'AI', icon: 'math', to: { path: '/documents', query: { kind: 'note', create: 'note', mode: 'split', insert: 'formula', recognize: 'formula' } }, keywords: ['公式识别', '图片转公式', 'latex', '数学公式', 'mathpix', 'vision', '截图'] },
   { id: 'library', title: '收集与归档', description: '保存截图、PDF、文本和代码来源', group: '资料', icon: 'inbox', to: { path: '/library' }, keywords: ['资料库', '导入', 'archive'] }
 ]
