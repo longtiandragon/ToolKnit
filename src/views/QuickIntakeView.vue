@@ -419,7 +419,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @paste.capture="handlePaste">
+  <div class="page-enter page-shell px-8 py-6" @paste.capture="handlePaste">
     <PageHeader title="快速处理" subtitle="拖进来就行,Knitspace 判断类型后给出可直接执行的下一步">
       <template #actions>
         <span class="row gap-1.5 h-9 px-3 rounded-sm bg-surface-2 border border-line text-[12px] text-fg-2">

@@ -248,7 +248,7 @@ async function runRecentAction(action: 'open' | 'edit' | 'read' | 'mindmap' | 'f
        with them. The page also loses a heading that only introduced the block
        under it ("七类工作流，具体能力不再隐藏") — a section that has to
        explain itself has not earned the space twice. -->
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeCreateMenus()">
+  <div class="page-enter page-shell px-8 py-6" @click="closeCreateMenus()">
     <PageHeader
       title="创作空间"
       subtitle="从一段文字、一张图或一段代码开始，七类工作流直接进入"

@@ -21,7 +21,7 @@ body {
     var(--bg);
   background-size: 100% 32px;
   font-family: var(--font-family-ui);
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.55;
   text-rendering: optimizeLegibility;
 }
@@ -32,7 +32,7 @@ textarea,
 select {
   color: var(--fg);
   font-family: inherit;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 button,
@@ -84,7 +84,7 @@ textarea:focus-visible,
   color: var(--accent-fg);
   background: var(--accent-solid);
   box-shadow: var(--shadow-lg);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 700;
   transform: translateY(-160%);
 }
@@ -136,7 +136,7 @@ textarea:focus-visible,
   border-radius: 9px;
   color: var(--fg-2);
   background: var(--surface-2);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 
@@ -168,7 +168,7 @@ textarea:focus-visible,
   color: var(--accent-fg);
   background: var(--accent-solid);
   box-shadow: 0 5px 14px var(--accent-soft);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 700;
 }
 
@@ -180,11 +180,11 @@ textarea:focus-visible,
   transform: translateY(-1px);
 }
 
-/* Dashboard hero */
+/* Dashboard hero. The width cap came out with the global one above; Today has
+   no reason to be narrower than every other route. */
 .workbench-dashboard {
-  max-width: 1440px;
   margin: 0 auto;
-  padding-top: 32px;
+  padding-top: 2rem;
 }
 
 
@@ -306,20 +306,20 @@ textarea:focus-visible,
 
 .favorite-card h4 {
   margin: 14px 0 4px;
-  font-size: 15px;
+  font-size: 0.9375rem;
   font-weight: 700;
 }
 
 .favorite-card p {
   color: var(--fg-3);
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
 .favorite-card > i {
   margin-top: 12px;
   color: var(--accent);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-style: normal;
   font-weight: 650;
 }
@@ -334,7 +334,7 @@ textarea:focus-visible,
 
 .favorite-card menu button {
   color: var(--fg-2);
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 
@@ -479,7 +479,7 @@ textarea:focus-visible,
 .source-row p,
 .document-row p {
   color: var(--fg-3);
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.65;
 }
 
@@ -513,7 +513,7 @@ textarea:focus-visible,
 .file-flow time,
 .activity-log time,
 .app-toast small {
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .visual-quick-tools > div > button strong,
@@ -525,13 +525,18 @@ textarea:focus-visible,
 .clipboard-card pre,
 .activity-log article strong,
 .app-toast > button {
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
-/* Workspace density pass — one calm desktop grammar across every view. */
+/* Workspace density pass — one calm desktop grammar across every view.
+ *
+ * The `max-width` is gone. It pinned every route to 1440px, and at 0,2,0 it
+ * outranked the `page-shell` utility that is supposed to own the ceiling — so
+ * maximising on a 2000px window added dead canvas instead of showing more. The
+ * ceiling now comes from `--content-max` in `shell.css`, which widens with the
+ * viewport. Centring stays here; only the cap moved. */
 .workspace-content > .page-enter {
   width: 100%;
-  max-width: 1440px;
   margin-right: auto;
   margin-left: auto;
 }

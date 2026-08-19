@@ -422,7 +422,7 @@ onBeforeUnmount(() => {
   <!-- No `private-tools__*` classes. The 01 参数 / 02 预览 / 03 执行 order
        stays — running someone's own script against their own files is the one
        flow in this app where the steps are the safety story. -->
-  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6" @click="closeContext">
+  <div class="page-enter h-full page-shell px-8 py-6" @click="closeContext">
     <PageHeader title="私人工具包" subtitle="按清单加载你自己的脚本；改文件的操作一律先预览再执行">
       <template #actions>
         <span class="row gap-1.5 h-9 px-3 rounded-sm bg-surface-2 border border-line text-[12px] text-fg-2">

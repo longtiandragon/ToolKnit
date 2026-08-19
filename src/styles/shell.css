@@ -18,10 +18,21 @@
  */
 
 :root {
-  /* The rail's width, so the workspace never has to guess it. */
-  --rail-w: 240px;
+  /* The rail's width, so the workspace never has to guess it.
+   *
+   * `rem`, not `px`: the root size follows the viewport (`theme.css`), so the
+   * rail grows with the type inside it instead of squeezing 21px labels into a
+   * box measured for 13px ones. The breakpoints below are the *other* half —
+   * they change how many rem the rail gets, on top of the rem growing. */
+  --rail-w: 15rem;
   /* The top bar's height, for the scroll container below it. */
-  --topbar-h: 56px;
+  --topbar-h: 3.5rem;
+  /* The work area's ceiling. A line of text that runs the full width of a
+     2560px window is unreadable, but the previous fixed 1280px left over a
+     thousand pixels of dead canvas on either side of every page. */
+  --content-max: 80rem;
+  /* The gutter between the rail and the work area. */
+  --workspace-pad: 1.75rem;
 }
 
 .app-shell {
@@ -42,7 +53,7 @@
   width: calc(100% - var(--rail-w));
   height: calc(100vh - var(--titlebar-h));
   margin-left: var(--rail-w);
-  padding: 0 28px;
+  padding: 0 var(--workspace-pad);
   overflow: hidden;
 }
 
@@ -126,5 +137,52 @@
 
   .workspace {
     padding-inline: 14px;
+  }
+}
+
+/* Wide windows.
+ *
+ * The rail was a fixed 240px and the work area a fixed 1280px, so maximising on
+ * a 2000px display moved nothing: it added a 260px void to each side of the
+ * page and left the navigation the same size it is on a laptop. These give both
+ * of them somewhere to go.
+ *
+ * Widths are in rem and the root size is already growing with the viewport, so
+ * each step compounds — at 2400px the rail is 20rem of 21px type, not 20rem of
+ * 16px type. That is deliberate: a wider window should show more *and* larger,
+ * not one or the other. */
+@media (min-width: 1600px) {
+  :root {
+    --content-max: 92rem;
+    --workspace-pad: 2.25rem;
+  }
+}
+
+@media (min-width: 1920px) {
+  :root {
+    /* Fewer rem, not more. The root size is already 26% larger here, so holding
+       the rail at 15rem would have made it 300px and 17rem made it 357px — a
+       fifth of the window given to navigation. Backing the multiplier off keeps
+       the rail growing in absolute terms while shrinking as a share of the
+       window, which is what "more room for the work" means. */
+    --rail-w: 14.5rem;
+    --content-max: 108rem;
+    --workspace-pad: 2.25rem;
+  }
+
+  .app-shell .rail {
+    width: var(--rail-w);
+  }
+}
+
+@media (min-width: 2400px) {
+  :root {
+    --rail-w: 14rem;
+    --content-max: 126rem;
+    --workspace-pad: 2.5rem;
+  }
+
+  .app-shell .rail {
+    width: var(--rail-w);
   }
 }

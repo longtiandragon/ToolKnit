@@ -154,7 +154,7 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
 
 <template>
   <!-- No `relation-graph__*` classes; the scoped block goes with them. -->
-  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6" @click="closeMenu()">
+  <div class="page-enter h-full page-shell px-8 py-6" @click="closeMenu()">
     <PageHeader
       title="知识关系图谱"
       subtitle="以一条内容为中心，看它引用了谁、又被谁引用"

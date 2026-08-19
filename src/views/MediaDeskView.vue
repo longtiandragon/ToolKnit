@@ -483,7 +483,7 @@ onBeforeUnmount(() => {
   <!-- No `media-desk__*` classes: two scoped blocks, ~130 declarations, most
        of them `color-mix(in srgb, var(--green) …)` from before the theme
        tokens existed, and a workspace pinned to 474px. -->
-  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6" @click="closeContextMenus">
+  <div class="page-enter h-full page-shell px-8 py-6" @click="closeContextMenus">
     <PageHeader title="媒体转换台" subtitle="先读元信息再决定；每次只完成一个明确的输出">
       <template #actions>
         <button class="btn-default" :disabled="refreshing" :title="engine.version || '检查媒体引擎'" @click.stop="refreshEngine">

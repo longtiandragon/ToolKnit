@@ -235,7 +235,7 @@ textarea,
   color: var(--fg);
   background: var(--surface);
   font-family: var(--font-family-ui);
-  font-size: 13px;
+  font-size: 0.8125rem;
   transition:
     border-color var(--motion-fast) var(--motion-ease),
     box-shadow var(--motion-fast) var(--motion-ease);
@@ -318,7 +318,7 @@ textarea { line-height: 1.7; resize: vertical; }
   padding: 48px 24px;
   color: var(--fg-3);
   text-align: center;
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.75;
 }
 

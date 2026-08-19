@@ -336,7 +336,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
+  <div class="page-enter page-shell px-8 py-6">
     <PageHeader
       title="文本流水线"
       subtitle="把多个常用文本工具串成一次可复用处理，输入与输出都留在本机。"

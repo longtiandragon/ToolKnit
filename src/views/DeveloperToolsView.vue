@@ -449,7 +449,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
+  <div class="page-enter page-shell px-8 py-6">
     <PageHeader :title="activeTool.title" :subtitle="activeTool.description">
       <template #actions>
         <!-- One segmented control, shared by the four tools that have a mode.

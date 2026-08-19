@@ -949,7 +949,7 @@ onBeforeUnmount(() => {
   <!-- No `review` / `review-card` class: the legacy sheets cap those at
        1040px and 920px and centre them, which left the card floating in two
        wide gutters inside the rebuilt page column. -->
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeReviewMenu()">
+  <div class="page-enter page-shell px-8 py-6" @click="closeReviewMenu()">
     <PageHeader title="学习复习" subtitle="题面、错因和词义各自排期，熟的那一面不会替你把生的那面盖过去">
       <template #actions>
         <button v-if="canUndoLastRating" class="btn-default" :disabled="ratingInProgress" @click="undoLastRating">

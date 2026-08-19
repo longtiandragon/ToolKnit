@@ -279,7 +279,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
+  <div class="page-enter page-shell px-8 py-6">
     <PageHeader title="按拍摄日期整理照片" subtitle="读取 EXIF 拍摄时间，预览“年/月”目录与新文件名，确认后再移动；不覆盖，支持撤销。">
       <template #actions>
         <span class="row gap-1.5 h-9 px-3 rounded-sm bg-surface-2 text-[12px] text-fg-3">

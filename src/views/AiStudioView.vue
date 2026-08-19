@@ -164,7 +164,7 @@ onBeforeUnmount(() => activeRunController?.abort())
   <!-- No `ai-workbench__*` classes; the scoped block that styled them is gone
        with them. The 01 / 02 / 03 order stays — sending content to a model is
        a linear, consequential task and the steps are the reassurance. -->
-  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6" @click="closeOutputContextMenu()">
+  <div class="page-enter h-full page-shell px-8 py-6" @click="closeOutputContextMenu()">
     <PageHeader title="AI 工作台" subtitle="三步走：选任务、确认要发送的材料、校对生成的草稿">
       <template #actions>
         <span class="row gap-1.5 h-9 px-3 rounded-sm bg-surface-2 border border-line text-[12px] text-fg-2">

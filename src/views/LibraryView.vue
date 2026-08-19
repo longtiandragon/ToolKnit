@@ -548,7 +548,7 @@ onBeforeUnmount(() => {
 <template>
   <!-- No `library` / `library-layout` class: the legacy sheets pin that grid
        to a 280px first column and give the page its own width. -->
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
+  <div class="page-enter page-shell px-8 py-6">
     <PageHeader
       title="收集与归档"
       subtitle="原件复制进库并留下指纹，之后移动或改名也能找回来源"

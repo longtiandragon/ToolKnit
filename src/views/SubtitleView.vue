@@ -581,7 +581,7 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
   <!-- No `subtitle-studio` / `subtitle-workflows` / `subtitle-workspace`
        classes: the scoped block that styled them capped the timeline at a
        hard 570px and put three stacked cards above it. -->
-  <div class="page-enter h-full mx-auto w-full max-w-320 px-8 py-6" @pointerdown="closeMenu(); closeMediaMenu()">
+  <div class="page-enter h-full page-shell px-8 py-6" @pointerdown="closeMenu(); closeMediaMenu()">
     <PageHeader
       title="字幕校对台"
       :subtitle="cues.length ? '逐条校对时间轴；导出前不写入 Vault' : '导入 SRT / WebVTT 逐条校对，或用本机 Whisper 先转写'"

@@ -319,7 +319,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="history-view page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeContext(); closeActivityContext()">
+  <div class="history-view page-enter page-shell px-8 py-6" @click="closeContext(); closeActivityContext()">
     <AppBreadcrumbs :items="[{ label: '工作', to: '/' }, { label: '处理历史' }]" />
     <PageHeader
       title="处理历史"

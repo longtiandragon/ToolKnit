@@ -349,7 +349,7 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
        and a five-item "快速开始" list in the sidebar that repeated most of
        the same destinations. The area cards are the filter row now, the quick
        tasks are one strip, and the duplicated sidebar list is gone. -->
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeKnowledgeMenus()">
+  <div class="page-enter page-shell px-8 py-6" @click="closeKnowledgeMenus()">
     <PageHeader
       title="知识空间"
       :subtitle="store.vaultError ? '本地资料库需要处理' : '笔记、题目、单词、资料和画布在同一个库里互相引用'"
@@ -366,7 +366,7 @@ onBeforeUnmount(() => window.removeEventListener('knitspace:close-context-menus'
       </template>
     </PageHeader>
 
-    <nav class="grid gap-2 mb-4 grid-cols-2 md:grid-cols-4 2xl:grid-cols-8" aria-label="知识空间常用任务">
+    <nav class="grid gap-2 mb-4 grid-cols-[repeat(auto-fit,minmax(13rem,1fr))]" aria-label="知识空间常用任务">
       <RouterLink
         v-for="action in knowledgeWorkflowActions"
         :key="action.id"

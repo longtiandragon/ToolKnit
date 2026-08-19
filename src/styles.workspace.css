@@ -17,7 +17,7 @@ body {
   min-width: 760px;
   overflow: hidden;
   background: var(--bg);
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1.55;
 }
 
@@ -25,7 +25,7 @@ button,
 input,
 textarea,
 select {
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 button:hover,
@@ -48,7 +48,7 @@ a:hover {
   min-height: 36px;
   border-radius: 6px;
   box-shadow: none;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .new-task:hover,
@@ -99,7 +99,7 @@ a:hover {
 }
 
 .workspace-content .eyebrow {
-  font-size: 12px;
+  font-size: 0.75rem;
   letter-spacing: 0.09em;
 }/* Selected document workspace */
 
@@ -446,7 +446,7 @@ a:hover {
 
 
 
-.build-profile-card > footer .quiet-button { min-height: 32px; padding: 0 10px; color: var(--accent-strong); background: var(--surface-2); font-size: 12px; }
+.build-profile-card > footer .quiet-button { min-height: 32px; padding: 0 10px; color: var(--accent-strong); background: var(--surface-2); font-size: 0.75rem; }
 
 
 .settings-panel .setting-control,
@@ -464,7 +464,7 @@ a:hover {
 .settings-panel .setting-control b,
 .settings-panel .setting-toggle b {
   color: var(--fg);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 650;
 }
 
@@ -472,7 +472,7 @@ a:hover {
 .settings-panel .setting-toggle small {
   max-width: 510px;
   margin-top: 5px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .settings-panel .setting-control select {
@@ -480,7 +480,7 @@ a:hover {
   height: 36px;
   padding: 0 30px 0 11px;
   border-color: var(--line-strong);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .settings-panel .setting-toggle > input[type="checkbox"] {

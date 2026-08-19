@@ -488,7 +488,7 @@ const formatBytes = (value: number) => value < 1024
 </script>
 
 <template>
-  <div class="dashboard workbench-dashboard page-enter mx-auto w-full max-w-320 px-8 py-6" @click="contextTool = ''; quickActionMenu = null; closeRecentDocumentMenu(); favoritePickerOpen = false">
+  <div class="dashboard workbench-dashboard page-enter page-shell px-8 py-6" @click="contextTool = ''; quickActionMenu = null; closeRecentDocumentMenu(); favoritePickerOpen = false">
     <!-- The old header was a marketing hero: a 47px headline, a paragraph of
          positioning copy, and a floating status card. On a tool that opens
          every morning, none of that is read twice. What is used daily — the
@@ -550,7 +550,7 @@ const formatBytes = (value: number) => value < 1024
       <!-- ── Start something ─────────────────────────────────────────────── -->
       <SectionCard title="从一件小事开始">
         <template #actions><kbd class="kbd">Ctrl K</kbd></template>
-        <div class="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+        <div class="grid gap-2 grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]">
           <button
             v-for="action in quickActions"
             :key="action.id"
@@ -659,7 +659,7 @@ const formatBytes = (value: number) => value < 1024
           <p v-else class="py-8 text-center text-[12px] text-fg-3">没有匹配的工具，换个关键词试试。</p>
         </section>
 
-        <div v-if="favorites.length" class="grid gap-2 grid-cols-2 sm:grid-cols-3 xl:grid-cols-5">
+        <div v-if="favorites.length" class="grid gap-2 grid-cols-[repeat(auto-fit,minmax(12rem,1fr))]">
           <article
             v-for="item in favorites"
             :key="item.toolId"

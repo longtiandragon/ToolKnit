@@ -333,7 +333,7 @@ const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN', { 
 </script>
 
 <template>
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeCardMenu()">
+  <div class="page-enter page-shell px-8 py-6" @click="closeCardMenu()">
     <AppBreadcrumbs :items="[{ label: '工作', to: '/' }, { label: '剪贴板' }]"/>
     <PageHeader title="剪贴板" subtitle="找回刚刚复制过的内容,把反复要用的存成常用片段">
       <template #actions>

@@ -966,7 +966,7 @@ onBeforeUnmount(() => {
   <ArchiveView v-else-if="archiveMode" />
   <FileHealthView v-else-if="fileHealthMode" />
   <PhotoOrganizerView v-else-if="photoOrganizerMode" />
-  <div v-else class="page-enter mx-auto w-full max-w-320 px-8 py-6">
+  <div v-else class="page-enter page-shell px-8 py-6">
     <PageHeader :title="activeOperationLabel" :subtitle="activeOperationNote">
       <template #actions>
         <span

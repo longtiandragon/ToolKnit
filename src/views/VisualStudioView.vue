@@ -2157,7 +2157,7 @@ async function openLocation(path?: string) {
        names. The legacy sheets pin this page to a seven-card mode strip, a 62px
        icon rail, a 610px minimum grid and a 230px properties column — that is
        the layout being replaced, not a skin on top of it. -->
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6">
+  <div class="page-enter page-shell px-8 py-6">
     <PageHeader title="图像画布" subtitle="一块画布，多种处理；原件只读，导出前的每一步都在本机完成">
       <template #actions>
         <button class="btn-default" :disabled="copying || exporting || !outputReady" @click="copyCard">

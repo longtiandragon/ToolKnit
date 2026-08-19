@@ -98,6 +98,14 @@ export default defineConfig({
   },
 
   shortcuts: [
+    // ── Page shell ────────────────────────────────────────────────────────
+    // Every route root was `mx-auto w-full max-w-320` — a hard 1280px ceiling
+    // repeated in 26 files, which on a 2000px window put 260px of dead canvas
+    // on each side of the page and made maximising the window do nothing. The
+    // ceiling now comes from `--content-max` in `shell.css`, which widens with
+    // the viewport, and lives in exactly one place.
+    ['page-shell', 'mx-auto w-full max-w-[var(--content-max)]'],
+
     // ── Surfaces ──────────────────────────────────────────────────────────
     ['panel', 'bg-surface border border-line rounded-lg'],
     ['panel-2', 'bg-surface-2 border border-line rounded-md'],
@@ -245,6 +253,27 @@ export default defineConfig({
   ),
 
   rules: [
+    /**
+     * Arbitrary font sizes, in rem rather than the px that was typed.
+     *
+     * The product has 1609 hard-coded `text-[13px]`-style sizes across 59
+     * files, and presetWind4 emits them literally — which pins every one of
+     * them to the same size no matter how large the window is. On a 2560px
+     * display the interface was 11px text in a 1280px column.
+     *
+     * Rewriting all 1609 call sites would be a huge, risky diff for what is one
+     * unit conversion, so the conversion happens here instead: the markup keeps
+     * saying `text-[13px]`, meaning "13px at the base root size", and the root
+     * size itself scales with the viewport (`theme.css`). Anything that must not
+     * scale can still say `text-[13rpx]`… there is no such case yet, and if one
+     * appears it should use an explicit `rem`/`px` value rather than a variant.
+     */
+    [
+      /^text-\[(\d+(?:\.\d+)?)px\]$/,
+      ([, size]) => ({ 'font-size': `${Number(size) / 16}rem` }),
+      { autocomplete: 'text-[<num>px]' },
+    ],
+
     // Lets a container declare its category once (`cat-pdf`) and have every
     // child read it through `--cat`.
     [

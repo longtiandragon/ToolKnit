@@ -175,6 +175,22 @@ html {
      text is the norm here, so it is on globally. */
   text-autospace: normal;
   -webkit-font-smoothing: antialiased;
+
+  /* The whole interface scales from this one value.
+   *
+   * Every size in the product is a rem: UnoCSS's spacing utilities already were,
+   * and a rule in `uno.config.ts` now converts the 1609 hand-written
+   * `text-[13px]` classes as well. So the root size is the single dial for how
+   * large the interface is, and tying it to the viewport is what stops a 2560px
+   * window from showing the same 11px text as a 1280px one.
+   *
+   * The floor is 16px, which is exactly what the browser default was — an
+   * ordinary desktop window looks precisely as it did, and only genuinely wide
+   * windows grow. Growth starts around 1520px and reaches the 21px ceiling near
+   * 2000px, which is where the reports of "字太小" came from.
+   *
+   * `vw`, not `%` or `em`: this must follow the window, not inherit anything. */
+  font-size: clamp(16px, 1.05vw, 21px);
 }
 
 body {
@@ -183,7 +199,8 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-family-ui);
-  font-size: 14px;
+  /* rem, so the body inherits the responsive root rather than pinning itself. */
+  font-size: 0.875rem;
   line-height: 1.6;
 }
 
@@ -265,6 +282,42 @@ input[type='color']:hover { border-color: var(--line-strong); }
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Context menus.
+ *
+ * `menu-item` (a UnoCSS shortcut) is `justify-between`, which is right: the
+ * label belongs on the left and a shortcut or submenu arrow on the right. But
+ * an item written as an icon and a label — two bare children — makes the *icon*
+ * the left group and the *label* the right one, so the label lands against the
+ * far edge of the panel with a void between it and its own icon. That shape was
+ * in twenty-six of App.vue's menu items.
+ *
+ * The fix belongs here rather than in the markup: wrapping every item's icon and
+ * label in a `.row` span costs about a kilobyte of raw JS in the startup bundle,
+ * which is already within two kilobytes of its budget, and this is one rule.
+ *
+ * "Whatever directly follows the first child absorbs the free space" is correct
+ * for an icon-plus-label pair and for an icon, label and shortcut alike. Items
+ * that already group their label in a `.row` are excluded — they hand
+ * `justify-between` the two groups it wants, and pushing their trailing element
+ * left would undo that. */
+/* `:where()` keeps all three rules at the specificity of `.menu-item` alone, so
+   a utility class on the element still wins — UnoCSS is imported last. Without
+   it `.menu-item small` would outrank `text-fg-2` and quietly restyle every
+   already-styled hint in the product. */
+.menu-item > :where(:first-child:not(.row)) + * { margin-right: auto; }
+
+/* A title-plus-hint label. `b` and `small` are inline, so without this the hint
+   runs straight on from the title with nothing between them:
+   `打开本地 MarkdownCtrl+O · 关联并监听磁盘文件`. */
+.menu-item :where(b) { display: block; }
+.menu-item :where(small) {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--fg-3);
 }
 
 /* Scrollbars are part of the surface, not an OS artefact pasted on top. */

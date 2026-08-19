@@ -172,7 +172,7 @@ onMounted(() => { void refreshChecks() })
 </script>
 
 <template>
-  <div class="page-enter mx-auto w-full max-w-320 px-8 py-6" @click="closeMenu()">
+  <div class="page-enter page-shell px-8 py-6" @click="closeMenu()">
     <PageHeader
       title="本机能力"
       subtitle="看看这台机器上哪些能力已经就绪,哪些还需要装东西"
