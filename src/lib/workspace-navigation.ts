@@ -5,14 +5,14 @@ export type WorkspaceNavAction = { label: string; to: string; icon: string }
  * arrival — a new subtitle, an import, a filtered view of a page that already
  * has that filter. Both are reachable from Ctrl+K and the right-click menu, but
  * only places belong in a permanent list of destinations. */
-export type WorkspaceNavItem = { to: string; icon: string; label: string; children: WorkspaceNavAction[]; actions: WorkspaceNavAction[]; menu: WorkspaceNavAction[] }
+export type WorkspaceNavItem = { to: string; icon: string; label: string; children: WorkspaceNavAction[]; actions: WorkspaceNavAction[]; menu: WorkspaceNavAction[]; owns: string[] }
 export type WorkspaceCommandItem = WorkspaceNavAction & { id: string; detail: string; kind: 'space' | 'action'; keywords: string }
 export type WorkspaceFeatureGroup = { space: WorkspaceNavItem; features: WorkspaceNavAction[] }
 export type WorkspaceContextActionGroups = { primary: WorkspaceNavAction[]; more: WorkspaceNavAction[] }
 export type WorkspaceRouteLocation = { path: string; query?: Record<string, unknown>; hash?: string }
 
-function navItem(to: string, icon: string, label: string, children: WorkspaceNavAction[], actions: WorkspaceNavAction[] = []): WorkspaceNavItem {
-  return { to, icon, label, children, actions, menu: [{ label: `打开${label}`, to, icon }, ...children, ...actions] }
+function navItem(to: string, icon: string, label: string, children: WorkspaceNavAction[], actions: WorkspaceNavAction[] = [], owns: string[] = []): WorkspaceNavItem {
+  return { to, icon, label, children, actions, owns, menu: [{ label: `打开${label}`, to, icon }, ...children, ...actions] }
 }
 
 /** Everything a space leads to, listed or not. Every consumer except the rail
@@ -53,7 +53,13 @@ export function activeWorkspaceChildTarget(children: readonly WorkspaceNavAction
 
 /** Whether a space owns the current route, directly or through a child. */
 export function workspaceSpaceOwnsRoute(space: WorkspaceNavItem, current: WorkspaceRouteLocation) {
-  return targetScore(space.to, current) >= 0 || workspaceSpaceTargets(space).some((child) => targetScore(child.to, current) >= 0)
+  if (targetScore(space.to, current) >= 0) return true
+  // A launcher hands you off to a page owned by another space: 创作 starts a
+  // note and the document workspace takes over, rewriting the URL without the
+  // parameters that started it. Owning the bare path is what keeps the rail
+  // from yanking you into 知识库 the moment the note opens.
+  if (space.owns.includes(current.path)) return true
+  return workspaceSpaceTargets(space).some((child) => targetScore(child.to, current) >= 0)
 }
 
 /**
@@ -96,8 +102,6 @@ export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] 
     ]),
     navItem('/knowledge', 'book', '知识库', [
       { label: '知识空间总览', to: '/knowledge', icon: 'book' },
-      { label: '最近打开', to: '/knowledge?filter=recent', icon: 'clock' },
-      { label: '收藏内容', to: '/knowledge?filter=favorites', icon: 'star' },
       { label: '知识关系图谱', to: '/relations', icon: 'link' },
       { label: 'Markdown 笔记', to: '/documents?kind=note', icon: 'book' },
       { label: '全部学习内容', to: '/documents', icon: 'sort' },
@@ -105,6 +109,9 @@ export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] 
       { label: '资料与摘录', to: '/library', icon: 'inbox' },
       { label: '单词库', to: '/words', icon: 'book' },
     ], [
+      // The knowledge overview carries these two as its own filter chips.
+      { label: '最近打开', to: '/knowledge?filter=recent', icon: 'clock' },
+      { label: '收藏内容', to: '/knowledge?filter=favorites', icon: 'star' },
       { label: '打开本机 Markdown', to: '/documents?kind=note&action=open-file', icon: 'folder-open' },
       { label: '批量导入题目', to: '/documents?kind=question&import=1', icon: 'inbox' },
       { label: '录入新单词', to: '/words?action=create', icon: 'plus' },
@@ -123,7 +130,7 @@ export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] 
     ], [
       { label: '公式图片识别', to: '/documents?kind=note&create=note&mode=split&insert=formula&recognize=formula', icon: 'math' },
       { label: '新建自由画布', to: '/visual?canvas=blank', icon: 'plus' },
-    ]),
+    ], ['/documents', '/visual']),
     // 复习 is where you *do* a review; 知识库 is where the material is authored.
     //
     // Five of its seven entries used to be byte-identical to entries under
@@ -139,9 +146,11 @@ export const workspaceNavGroups: { label: string; items: WorkspaceNavItem[] }[] 
     // already open, which is what makes a shared destination safe.
     navItem('/review', 'review', '复习', [
       { label: '今日复习队列', to: '/review', icon: 'review' },
+    ], [
+      // Reaching the material from here still matters — it is simply the same
+      // page 知识库 already lists, so it stops being a second row saying so.
       { label: '题目与错题', to: '/documents?kind=question', icon: 'book' },
       { label: '单词库', to: '/words', icon: 'book' },
-    ], [
       { label: '记录新错题', to: '/documents?kind=question&create=question', icon: 'plus' },
     ]),
     navItem('/', 'toolbox', '工具', [

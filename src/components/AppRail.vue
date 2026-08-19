@@ -146,7 +146,10 @@ function cycleTheme() {
             <AppIcon :name="space.icon" :size="15" class="shrink-0 text-fg-3" />
             <span class="truncate">{{ space.label }}</span>
           </RouterLink>
+          <!-- 复习 is a single page. A chevron that expands to nothing is a
+               promise the rail cannot keep. -->
           <button
+            v-if="visibleChildren(space).length"
             type="button"
             class="rail-space__toggle center w-7 h-8 shrink-0 rounded-sm text-fg-3 transition-colors duration-120 hover:bg-surface-2 hover:text-fg"
             :aria-label="`${expandedSpace === space.to ? '收起' : '展开'}${space.label}功能`"

@@ -24,7 +24,9 @@ describe('workspace navigation', () => {
   it('gives every primary space persistent child entries', () => {
     const items = workspaceNavGroups.flatMap(group => group.items)
     expect(items.map(item => item.label)).toEqual(['今天', '知识库', '创作', '复习', '工具'])
-    expect(items.every(item => item.children.length >= 3)).toBe(true)
+    // 复习 is one page. A space is allowed to be a single destination; what it
+    // may not be is an empty expander.
+    expect(items.every(item => item.children.length >= 1)).toBe(true)
   })
 
   it('keeps every feature route owned by a primary space', () => {
@@ -64,7 +66,9 @@ describe('workspace navigation', () => {
       expect(actions.every(action => workspaceSpaceTargets(space).some(child => child.to === action.to))).toBe(true)
     }
     expect(workspaceContextActions('/review').map(action => action.label)).toContain('单词库')
-    expect(workspaceRouteOwners().get('/words')).toEqual(['/knowledge', '/review'])
+    // 单词库 is listed once, by the space the material belongs to. 复习 still
+    // reaches it through its actions, just not as a second identical row.
+    expect(workspaceRouteOwners().get('/words')).toEqual(['/knowledge'])
     expect(workspaceContextActions('/unknown')).toEqual([])
   })
 
@@ -120,7 +124,10 @@ describe('workspace navigation', () => {
 
     expect(activeWorkspaceChildTarget(knowledge.children, { path: '/documents', query: { kind: 'note', document: 'note-1' } })).toBe('/documents?kind=note')
     expect(activeWorkspaceChildTarget(knowledge.children, { path: '/documents', query: { document: 'note-1' } })).toBe('/documents')
-    expect(activeWorkspaceChildTarget(knowledge.children, { path: '/knowledge', query: { filter: 'favorites' } })).toBe('/knowledge?filter=favorites')
+    // The overview owns its own filter chips, so the rail highlights the page
+    // rather than listing each filter as a destination of its own.
+    expect(activeWorkspaceChildTarget(knowledge.children, { path: '/knowledge', query: { filter: 'favorites' } })).toBe('/knowledge')
+    expect(activeWorkspaceChildTarget(workspaceSpaceTargets(knowledge), { path: '/knowledge', query: { filter: 'favorites' } })).toBe('/knowledge?filter=favorites')
     // The rail lists places, so an action route highlights the place it acts
     // on; ranking still prefers the exact target when one is in the list.
     expect(activeWorkspaceChildTarget(knowledge.children, { path: '/documents', query: { kind: 'note', action: 'open-file' } })).toBe('/documents?kind=note')
@@ -198,8 +205,23 @@ describe('active space', () => {
   it('respects query parameters rather than matching the bare path', () => {
     const knowledge = spaces.find(space => space.to === '/knowledge')!
     expect(workspaceSpaceOwnsRoute(knowledge, at('/knowledge', { filter: 'favorites' }))).toBe(true)
-    // A child asking for `?import=1` must not be matched by a bare route.
-    const create = spaces.find(space => space.to === '/create')!
-    expect(workspaceSpaceOwnsRoute(create, at('/documents'))).toBe(false)
+    // A target asking for `?transcribe=1` must not be matched by a bare route.
+    const review = spaces.find(space => space.to === '/review')!
+    expect(workspaceSpaceOwnsRoute(review, at('/subtitles'))).toBe(false)
+  })
+
+  it('lets a launcher keep the click that left it', () => {
+    const create = workspaceNavGroups.flatMap(group => group.items).find(space => space.to === '/create')!
+    // 创作 starts a note; the document workspace then rewrites the URL without
+    // the parameters that started it. Owning the bare path is what stops the
+    // rail from yanking the reader into 知识库 the moment the note opens.
+    expect(workspaceSpaceOwnsRoute(create, at('/documents', { kind: 'note', document: 'note-1', mode: 'mindmap' }))).toBe(true)
+    expect(workspaceSpaceOwnsRoute(create, at('/visual', { project: 'p1' }))).toBe(true)
+    expect(workspaceSpaceOwnsRoute(create, at('/words'))).toBe(false)
+    // Arriving with 知识库 already open keeps it there — ownership is shared,
+    // not stolen.
+    const all = workspaceNavGroups.flatMap(group => group.items)
+    expect(activeWorkspaceSpace(all, at('/documents', { kind: 'note' }), '/knowledge')?.to).toBe('/knowledge')
+    expect(activeWorkspaceSpace(all, at('/documents', { kind: 'note' }), '/create')?.to).toBe('/create')
   })
 })
