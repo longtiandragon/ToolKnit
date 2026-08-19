@@ -46,7 +46,8 @@ const suggestions = computed(() => suggestToolDefinitions(input.value))
 const canRun = computed(() => !running.value && input.value.trim().length > 0 && steps.value.length > 0)
 const preview = computed(() => output.value.length ? undefined : input.value.trim().slice(0, 2400))
 const inputLabel = computed(() => files.value[0]?.name || '粘贴文本')
-const recipeCount = computed(() => store.pipelineRecipes.length)
+const textRecipes = computed(() => store.pipelineRecipes.filter(recipe => recipe.scope !== 'artifact'))
+const recipeCount = computed(() => textRecipes.value.length)
 
 function cloneSteps(value: readonly ToolPipelineStep[]) {
   return value.map((step) => ({ ...step, onError: step.onError ?? 'stop', when: step.when ?? 'always', ...(step.parameters ? { parameters: { ...step.parameters } } : {}) }))
@@ -129,6 +130,7 @@ function saveCurrentRecipe() {
     id: activeRecipeId.value,
     title,
     version: 1,
+    scope: 'text',
     steps: cloneSteps(steps.value),
   })
   recipeTitle.value = recipe.title
@@ -200,7 +202,7 @@ async function importRecipeFile(event: Event) {
     const source = payload.recipe && typeof payload.recipe === 'object' ? payload.recipe : payload
     const importedSteps = normalizedRecipeSteps(source.steps)
     const title = typeof source.title === 'string' && source.title.trim() ? source.title.trim().slice(0, 120) : '导入的文本流水线'
-    const recipe = store.savePipelineRecipe({ title, version: 1, steps: importedSteps })
+    const recipe = store.savePipelineRecipe({ title, version: 1, scope: 'text', steps: importedSteps })
     loadRecipe(recipe)
     recipeFormOpen.value = true
     message.value = `已导入配方“${recipe.title}”，输入内容后即可运行。`
@@ -236,7 +238,7 @@ function loadStagedInput() {
   if (stagedFiles.length) files.value = stagedFiles.slice(0, 1)
   const recipeId = typeof route.query.recipe === 'string' ? route.query.recipe : undefined
   if (recipeId) {
-    const recipe = store.pipelineRecipes.find((item) => item.id === recipeId)
+    const recipe = textRecipes.value.find((item) => item.id === recipeId)
     if (recipe) loadRecipe(recipe)
   }
 }
@@ -270,7 +272,7 @@ async function run() {
   output.value = []
   const label = `文本流水线 · ${steps.value.length} 步`
   const inputs: FileReference[] = files.value.length
-    ? [{ name: files.value[0].name, size: files.value[0].size, mime: files.value[0].type, path: (files.value[0] as File & { path?: string }).path }]
+    ? [{ name: files.value[0].name, size: files.value[0].size, mime: files.value[0].type }]
     : [{ name: '粘贴文本', size: new Blob([input.value]).size, mime: 'text/plain;charset=utf-8' }]
   const job = store.addJob('text', label, [inputLabel.value], {
     toolId: 'pipeline:text',
@@ -296,7 +298,11 @@ async function run() {
     const filename = `${base}-pipeline.${result.extension}`
     const saved = await exportOutput(store.settings.outputDirectory, filename, result.content, `text/${result.extension};charset=utf-8`)
     output.value = [saved]
-    store.updateJob(job.id, { status: 'succeeded', progress: 100, outputNames: [saved.name], outputs: [saved], detail: '流水线完成，原始输入未修改。' })
+    store.updateJob(job.id, {
+      status: 'succeeded', progress: 100, outputNames: [saved.name],
+      outputs: [{ name: saved.name, size: saved.size, mime: saved.mime }],
+      detail: '流水线完成，原始输入未修改。',
+    })
     if (activeRecipeId.value) store.touchPipelineRecipe(activeRecipeId.value)
     message.value = `任务完成：已生成 ${saved.name}。`
     ui.toast('流水线已完成', saved.name, 'success', '查看历史', () => location.hash = '#/history')
@@ -496,9 +502,9 @@ onBeforeUnmount(() => {
             <button class="btn-default btn-sm flex-1" :disabled="running" @click="exportRecipe">导出 JSON</button>
             <input ref="recipeFileInput" class="hidden" type="file" accept="application/json,.json" @change="importRecipeFile" />
           </div>
-          <div v-if="store.pipelineRecipes.length" class="stack gap-1 border-t border-line pt-3">
+          <div v-if="textRecipes.length" class="stack gap-1 border-t border-line pt-3">
             <p class="text-[11px] text-fg-3">已保存</p>
-            <div v-for="recipe in store.pipelineRecipes.slice(0, 6)" :key="recipe.id" class="row gap-2">
+            <div v-for="recipe in textRecipes.slice(0, 6)" :key="recipe.id" class="row gap-2">
               <button class="min-w-0 flex-1 truncate text-left text-[12px] text-fg-2 hover:text-accent" :title="recipe.title" @click="loadRecipe(recipe)">{{ recipe.title }}</button>
               <button class="text-[11px] text-fg-3 hover:text-danger" title="删除配方" @click="removeRecipe(recipe)">删除</button>
             </div>

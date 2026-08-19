@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { open, save as saveDialog } from '@tauri-apps/plugin-dialog'
+import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import { consumeArtifactHandoff } from '@/lib/artifact-handoff'
+import { portableJobDetail } from '@/lib/job-privacy'
 import { isDesktop, revealDesktopFile } from '@/lib/native'
 import {
   compareDesktopFolderSnapshot,
@@ -20,6 +23,8 @@ import { useUiStore } from '@/stores/ui'
 import { useWorkbenchStore } from '@/stores/workbench'
 
 const props = defineProps<{ mode: 'delivery-pack' | 'folder-snapshot' }>()
+const route = useRoute()
+const router = useRouter()
 const desktop = isDesktop()
 const ui = useUiStore()
 const store = useWorkbenchStore()
@@ -32,6 +37,7 @@ const label = ref('')
 const busy = ref(false)
 const deletingId = ref('')
 const message = ref('')
+const handoffNotice = ref('')
 
 const isDelivery = computed(() => props.mode === 'delivery-pack')
 const title = computed(() => isDelivery.value ? '项目交付包' : '文件夹时间切片')
@@ -56,7 +62,8 @@ function formatDate(value: string) {
 }
 
 function errorText(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : typeof error === 'string' && error ? error : fallback
+  const detail = error instanceof Error ? error.message : typeof error === 'string' && error ? error : undefined
+  return portableJobDetail(detail, `${fallback.replace(/[。.]$/, '')}；包含本机路径的详情已省略。`) ?? fallback
 }
 
 function statusLabel(status: FolderSnapshotDiff['items'][number]['status']) {
@@ -72,6 +79,7 @@ async function chooseSource() {
   const value = await open({ title: isDelivery.value ? '选择要交付的项目文件夹' : '选择要记录的文件夹', directory: true, multiple: false })
   if (typeof value !== 'string') return
   sourceRoot.value = value
+  handoffNotice.value = ''
   plan.value = undefined
   report.value = undefined
   diff.value = undefined
@@ -202,8 +210,26 @@ watch(() => props.mode, () => {
   report.value = undefined
   diff.value = undefined
   message.value = ''
+  handoffNotice.value = ''
   if (!isDelivery.value) void refreshSnapshots()
 })
+
+watch([() => route.query.handoff, isDelivery], ([value, delivery]) => {
+  if (typeof value !== 'string' || !delivery) return
+  const payload = consumeArtifactHandoff(value)
+  const query = { ...route.query }
+  delete query.handoff
+  void router.replace({ path: route.path, query, hash: route.hash })
+  if (!payload || payload.kind !== 'directory') {
+    ui.toast('交接已失效', '一次性交接可能已使用、过期或因页面刷新被清除。', 'warning')
+    return
+  }
+  sourceRoot.value = payload.path
+  plan.value = undefined
+  report.value = undefined
+  handoffNotice.value = payload.name
+  message.value = '已接收流水线输出目录。点击扫描后会先展示整个目录的交付清单，不会直接生成 ZIP。'
+}, { immediate: true })
 
 onMounted(() => {
   if (!isDelivery.value) void refreshSnapshots()
@@ -213,6 +239,9 @@ onMounted(() => {
 <template>
   <div class="page-enter page-shell px-8 py-6">
     <PageHeader :title="title" :subtitle="subtitle">
+      <template v-if="isDelivery" #lead>
+        <button class="btn-ghost btn-sm" @click="router.push({ path: '/tools', query: { mode: 'file-pipeline' } })"><AppIcon name="chevron-left" :size="14" />返回文件流水线</button>
+      </template>
       <template #actions>
         <span class="row gap-1.5 h-9 px-3 rounded-sm bg-success-soft text-success text-[12px]">
           <AppIcon name="shield" :size="14" />本地处理 · 不覆盖
@@ -227,6 +256,16 @@ onMounted(() => {
 
     <div v-else class="grid grid-cols-[minmax(0,1fr)_320px] gap-5 mt-5 items-start">
       <main class="stack gap-4 min-w-0">
+        <section v-if="isDelivery && handoffNotice" class="panel p-4 stack gap-3 border-accent/35 bg-accent-soft">
+          <div class="row-between gap-4 flex-wrap">
+            <span class="stack gap-1"><span class="row gap-2 text-[13px] font-medium text-accent"><AppIcon name="task" :size="15" />已接收“{{ handoffNotice }}”输出目录</span><small class="text-[11px] text-fg-3">一次性交接已消费；目录路径只用于当前页面，不进入任务历史或备份。</small></span>
+            <button class="btn-primary btn-sm" :disabled="busy || !sourceRoot" @click="scanDelivery">扫描并预览</button>
+          </div>
+          <div class="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2 text-[11px]">
+            <span class="rounded-sm bg-success-soft text-success px-2.5 py-2 text-center">智能整理</span><span class="text-fg-3">→</span><span class="rounded-sm bg-success-soft text-success px-2.5 py-2 text-center">文件流水线</span><span class="text-fg-3">→</span><span class="rounded-sm bg-surface-1 text-accent px-2.5 py-2 text-center">交付包预览</span>
+          </div>
+        </section>
+
         <section class="panel p-5 stack gap-4">
           <div class="row-between gap-4">
             <div class="stack gap-1 min-w-0">

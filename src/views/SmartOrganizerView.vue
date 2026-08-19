@@ -6,7 +6,9 @@ import AppIcon from '@/components/AppIcon.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import ToolLayout from '@/components/ToolLayout.vue'
 import { getSessionApiKey, runOrganizerAi } from '@/lib/ai'
+import { createOrganizerArtifactHandoff } from '@/lib/artifact-handoff'
 import { newId } from '@/lib/id'
+import { portableJobDetail } from '@/lib/job-privacy'
 import { isDesktop } from '@/lib/native'
 import { recognizeDesktopImageBytes } from '@/lib/ocr-native'
 import {
@@ -84,6 +86,7 @@ const workflowSuggestions = ref<OrganizerWorkflowSuggestion[]>([])
 const review = ref<OrganizerReviewSummary>()
 const receipts = ref<OrganizerReceiptSummary[]>([])
 const undoingId = ref('')
+const lastHandoff = ref<{ id: string; itemCount: number; receiptId: string }>()
 const message = ref(desktop
   ? '先选择来源目录和归档根。扫描只读，确认前不会发生任何文件变更。'
   : 'AI 智能文件收件箱需要 Windows 桌面端。')
@@ -116,6 +119,13 @@ const currentStage = computed(() => {
 })
 const steps = ['选择目录', '本地扫描', '选择文件', '载荷预览', '编辑计划', '执行 / 撤销']
 
+function continueToFilePipeline() {
+  const handoff = lastHandoff.value
+  if (!handoff) return
+  lastHandoff.value = undefined
+  void router.push({ path: '/tools', query: { mode: 'file-pipeline', handoff: handoff.id } })
+}
+
 function formatBytes(value: number) {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
@@ -128,9 +138,10 @@ function excerptBytes(value?: string) {
 }
 
 function errorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message.trim()) return error.message
-  if (typeof error === 'string' && error.trim()) return error
-  return fallback
+  const detail = error instanceof Error && error.message.trim()
+    ? error.message
+    : typeof error === 'string' && error.trim() ? error : undefined
+  return portableJobDetail(detail, `${fallback.replace(/[。.]$/, '')}；包含本机路径的详情已省略。`) ?? fallback
 }
 
 function resetAfterScan() {
@@ -404,6 +415,18 @@ async function executePlan() {
       outputs: result.outputs.map(item => ({ name: item.name })),
       detail: `已移动 ${result.movedCount} 项、跨盘复制 ${result.copiedCount} 项；回滚凭据已保存在本机。`,
     })
+    try {
+      const sizes = new Map(items.map(item => [item.fileId, item.size]))
+      const ticket = createOrganizerArtifactHandoff(archiveRoot.value, result.outputs.map(output => ({
+        name: output.name,
+        relativePath: output.relativePath,
+        size: sizes.get(output.fileId),
+      })))
+      lastHandoff.value = { id: ticket.id, itemCount: ticket.itemCount, receiptId: result.receiptId }
+    } catch {
+      lastHandoff.value = undefined
+      ui.toast('整理已完成', '文件已安全处理，但无法创建到文件流水线的一次性交接。', 'warning')
+    }
     await audit('succeeded', result.movedCount, result.copiedCount, 0)
     message.value = `整理完成：移动 ${result.movedCount} 项、复制 ${result.copiedCount} 项（${formatBytes(result.processedBytes)}）。`
     ui.toast('智能整理完成', '本次运行已生成可撤销凭据。', 'success')
@@ -522,6 +545,7 @@ async function undoReceipt(receipt: OrganizerReceiptSummary) {
   undoingId.value = receipt.receiptId
   try {
     const result = await undoDesktopSmartOrganizer(receipt.receiptId)
+    if (lastHandoff.value?.receiptId === receipt.receiptId) lastHandoff.value = undefined
     ui.toast('已撤销智能整理', `恢复 ${result.restoredCount} 项，移除 ${result.removedCopyCount} 个安全副本。`, 'success')
     await refreshSideData()
   } catch (error) {
@@ -569,6 +593,16 @@ onMounted(() => { void refreshSideData() })
     </ol>
 
     <ToolLayout>
+      <section v-if="lastHandoff" class="panel p-4 stack gap-3 border-success/35 bg-success-soft">
+        <div class="row-between gap-4 flex-wrap">
+          <span class="stack gap-1"><span class="row gap-2 text-[13px] font-medium text-success"><AppIcon name="task" :size="15" />{{ lastHandoff.itemCount }} 个整理结果已就绪</span><small class="text-[11px] text-fg-3">可在 15 分钟内一次性交给文件流水线；历史和备份中不会保存绝对路径。</small></span>
+          <button class="btn-primary btn-sm shrink-0" @click="continueToFilePipeline">继续批量处理 <span aria-hidden="true">→</span></button>
+        </div>
+        <div class="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2 text-[11px]">
+          <span class="rounded-sm bg-success text-white px-2.5 py-2 text-center">智能整理完成</span><span class="text-success">→</span><span class="rounded-sm bg-surface-1 text-fg-2 px-2.5 py-2 text-center">文件流水线</span><span class="text-fg-3">→</span><span class="rounded-sm bg-surface-1 text-fg-3 px-2.5 py-2 text-center">项目交付包</span>
+        </div>
+      </section>
+
       <section class="panel p-4 stack gap-3">
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <button class="stack gap-1 p-3 rounded-md border border-line text-left hover:bg-surface-2 disabled:opacity-55" :disabled="!desktop || scanning || executing" @click="chooseDirectory('source')">

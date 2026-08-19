@@ -458,6 +458,9 @@ export interface ToolPipelineRecipe {
   id: string
   title: string
   version: 1
+  /** Missing means a legacy text recipe. Artifact recipes use the same
+   * serializable step contract but never appear in the text editor picker. */
+  scope?: 'text' | 'artifact'
   steps: ToolPipelineStep[]
   createdAt: string
   updatedAt: string
